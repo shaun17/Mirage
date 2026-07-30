@@ -1,0 +1,17 @@
+.DS_Store
+
+# 构建与发行产物
+build/
+dist/
+DerivedData/
+*.xcarchive
+*.xcresult
+*.dmg
+
+# Xcode 的用户级状态
+**/xcuserdata/
+*.xcuserstate
+
+# Swift Package Manager 的本机状态
+.build/
+.swiftpm/

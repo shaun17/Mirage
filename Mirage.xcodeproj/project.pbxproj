@@ -1,0 +1,846 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02AF44E803398CF5ADE3F7D2 /* ProviderSearchCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */; };
+		11347E44DB49B28C351FD56A /* SearchEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B056F3E07F529D27482171E /* SearchEnumerator.swift */; };
+		149DBC44BEDF226B92940B2A /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
+		15220F9D9D4587AE7B8AF69A /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
+		16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */; };
+		1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91490DF02E6BF161DA088775 /* OpenverseClient.swift */; };
+		23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
+		265F7B297127DC301663C68E /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
+		2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
+		2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */; };
+		2F7EEFF8EED40EE2DA3589D5 /* ImageDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */; };
+		371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712852E84B8494D2634B17A9 /* ImageSearchService.swift */; };
+		4DC1042CB44FE1C0264AB243 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86D01A404320AA471FC8774F /* Assets.xcassets */; };
+		548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */; };
+		552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */; };
+		55FA24C51C2F45CDB36B0F41 /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
+		61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
+		619EB03775C37070DAD75119 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
+		705CBFFD8A543C52F747FA19 /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
+		7077B5D834EE7563D1E76A84 /* ProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */; };
+		79F0BD0C9F2EAC0B4D8D24FD /* FileProviderExtension+Content.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */; };
+		95C654E1F2BC055482310595 /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA52EF87F1F723064DA348D /* LibraryGridView.swift */; };
+		9B2B3683BDD6F188F4FF94B4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4317C2B9AEBF745304572E2B /* AppModel.swift */; };
+		A044C48E7A09C0FD50AF12B2 /* RemoteImageRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */; };
+		A8FDD253FD3F538032A1CCC5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 948E8761E82C9C91131B7E14 /* ContentView.swift */; };
+		AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */; };
+		AD19852316BE7E8859C3D769 /* QueryAndIdentifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE6043B99B3B749FF04D061F /* QueryAndIdentifierTests.swift */; };
+		B0C8CAB8A4875F0079440D60 /* AppGroupStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */; };
+		B0CFF1592C3D28FE35C328BC /* MirageDomainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE78B29069C55E789E46142 /* MirageDomainManager.swift */; };
+		C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */; };
+		C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
+		CF8A61AA6CDE23FAFFBFEB4D /* MirageFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		D83524EE60AD3659D83DC624 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */; };
+		D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2514621218B785F24793DCD /* OpenverseClientTests.swift */; };
+		EE3A13990CD6E446839381D6 /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
+		EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239F4289745FA622404CE85B /* ImageTranscoderTests.swift */; };
+		F14EDABAF01604AC0C9D0CB5 /* MirageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE02568E93053F434F591C23 /* MirageApp.swift */; };
+		F32C1EFE00479572FBC681D7 /* BoundedDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		545E47ABF3126927E89B83EA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
+			remoteInfo = MirageCore;
+		};
+		8F8BB69B13A13F70E2CF1370 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
+			remoteInfo = MirageCore;
+		};
+		ACE4AF9C2C4A77314B285CCC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
+			remoteInfo = MirageCore;
+		};
+		D9280912B01F1C196C203453 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3A0FF057342715E723BB0EA5;
+			remoteInfo = MirageFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AD7B2684D149D719DF1528B1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				CF8A61AA6CDE23FAFFBFEB4D /* MirageFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCatalog.swift; sourceTree = "<group>"; };
+		15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepository.swift; sourceTree = "<group>"; };
+		1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mirage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderIdentifiers.swift; sourceTree = "<group>"; };
+		239F4289745FA622404CE85B /* ImageTranscoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageTranscoderTests.swift; sourceTree = "<group>"; };
+		28FBD235ACD44F4965213D6E /* libMirageCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libMirageCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchCache.swift; sourceTree = "<group>"; };
+		4317C2B9AEBF745304572E2B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCard.swift; sourceTree = "<group>"; };
+		4B056F3E07F529D27482171E /* SearchEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchEnumerator.swift; sourceTree = "<group>"; };
+		4BA52EF87F1F723064DA348D /* LibraryGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryGridView.swift; sourceTree = "<group>"; };
+		5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderEnumerator.swift; sourceTree = "<group>"; };
+		63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDownloader.swift; sourceTree = "<group>"; };
+		68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorageTests.swift; sourceTree = "<group>"; };
+		6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAsyncSupport.swift; sourceTree = "<group>"; };
+		712852E84B8494D2634B17A9 /* ImageSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchService.swift; sourceTree = "<group>"; };
+		7468E9F22C1E176BF9AE5B75 /* MirageCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MirageCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		776D9B6CEBBABF0D607449A2 /* SearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResult.swift; sourceTree = "<group>"; };
+		86D01A404320AA471FC8774F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MirageFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		91490DF02E6BF161DA088775 /* OpenverseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseClient.swift; sourceTree = "<group>"; };
+		948E8761E82C9C91131B7E14 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearClient.swift; sourceTree = "<group>"; };
+		A5032B6A2667C9906D3A2948 /* ProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderItem.swift; sourceTree = "<group>"; };
+		ABE78B29069C55E789E46142 /* MirageDomainManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirageDomainManager.swift; sourceTree = "<group>"; };
+		AE6043B99B3B749FF04D061F /* QueryAndIdentifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryAndIdentifierTests.swift; sourceTree = "<group>"; };
+		AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDetailPopover.swift; sourceTree = "<group>"; };
+		B2514621218B785F24793DCD /* OpenverseClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseClientTests.swift; sourceTree = "<group>"; };
+		B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchQueryParser.swift; sourceTree = "<group>"; };
+		CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
+		D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteImageRecord.swift; sourceTree = "<group>"; };
+		D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageTranscoder.swift; sourceTree = "<group>"; };
+		EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		EE02568E93053F434F591C23 /* MirageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirageApp.swift; sourceTree = "<group>"; };
+		EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileProviderExtension+Content.swift"; sourceTree = "<group>"; };
+		FE5E2B42AD514018FDA6A230 /* AppViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewState.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2158FB08F6CA749CD94B7C41 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EE3A13990CD6E446839381D6 /* libMirageCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D685DA08310A8C12F6E29BB0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F8A744096229BB2D637F92C9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				265F7B297127DC301663C68E /* libMirageCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0554EEE4443352378E1D0611 /* MirageCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */,
+				239F4289745FA622404CE85B /* ImageTranscoderTests.swift */,
+				B2514621218B785F24793DCD /* OpenverseClientTests.swift */,
+				AE6043B99B3B749FF04D061F /* QueryAndIdentifierTests.swift */,
+			);
+			path = MirageCoreTests;
+			sourceTree = "<group>";
+		};
+		21A32C13E0AFDDCC6D54B568 /* MirageApp */ = {
+			isa = PBXGroup;
+			children = (
+				4317C2B9AEBF745304572E2B /* AppModel.swift */,
+				FE5E2B42AD514018FDA6A230 /* AppViewState.swift */,
+				86D01A404320AA471FC8774F /* Assets.xcassets */,
+				948E8761E82C9C91131B7E14 /* ContentView.swift */,
+				CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */,
+				4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */,
+				AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */,
+				4BA52EF87F1F723064DA348D /* LibraryGridView.swift */,
+				EE02568E93053F434F591C23 /* MirageApp.swift */,
+				ABE78B29069C55E789E46142 /* MirageDomainManager.swift */,
+				8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */,
+			);
+			path = MirageApp;
+			sourceTree = "<group>";
+		};
+		24387585CA16DC177598C777 /* MirageCore */ = {
+			isa = PBXGroup;
+			children = (
+				EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */,
+				9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */,
+				712852E84B8494D2634B17A9 /* ImageSearchService.swift */,
+				D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */,
+				91490DF02E6BF161DA088775 /* OpenverseClient.swift */,
+				D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */,
+				B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */,
+			);
+			path = MirageCore;
+			sourceTree = "<group>";
+		};
+		3E514C3C34FE85763C0BDEC4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				28FBD235ACD44F4965213D6E /* libMirageCore.a */,
+				1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */,
+				7468E9F22C1E176BF9AE5B75 /* MirageCoreTests.xctest */,
+				8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6580B39032C8F305B226686B /* MirageFileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */,
+				D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */,
+				EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */,
+				6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */,
+				01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */,
+				5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */,
+				203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */,
+				A5032B6A2667C9906D3A2948 /* ProviderItem.swift */,
+				15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */,
+				3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */,
+				4B056F3E07F529D27482171E /* SearchEnumerator.swift */,
+				776D9B6CEBBABF0D607449A2 /* SearchResult.swift */,
+			);
+			path = MirageFileProvider;
+			sourceTree = "<group>";
+		};
+		B9F48D57148EF83D82970E3B /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				21A32C13E0AFDDCC6D54B568 /* MirageApp */,
+				24387585CA16DC177598C777 /* MirageCore */,
+				6580B39032C8F305B226686B /* MirageFileProvider */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		CA1F54A8C4CAA0117425397F = {
+			isa = PBXGroup;
+			children = (
+				B9F48D57148EF83D82970E3B /* Sources */,
+				E5218CA4379F3F56FE9067DC /* Tests */,
+				3E514C3C34FE85763C0BDEC4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E5218CA4379F3F56FE9067DC /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				0554EEE4443352378E1D0611 /* MirageCoreTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3A0FF057342715E723BB0EA5 /* MirageFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 94710EF524EEB07D9F2E411D /* Build configuration list for PBXNativeTarget "MirageFileProvider" */;
+			buildPhases = (
+				D7404C60CFE5C47B894C53A7 /* Sources */,
+				2158FB08F6CA749CD94B7C41 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A9416535DFD6FAD1724F488F /* PBXTargetDependency */,
+			);
+			name = MirageFileProvider;
+			packageProductDependencies = (
+			);
+			productName = MirageFileProvider;
+			productReference = 8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		8FCB00055803C7EBC98F9606 /* MirageCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E8177F80C601459F456C764D /* Build configuration list for PBXNativeTarget "MirageCoreTests" */;
+			buildPhases = (
+				A572ED7D380F8074D57FA6A2 /* Sources */,
+				F8A744096229BB2D637F92C9 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D74567365CE73CCBC8565CB6 /* PBXTargetDependency */,
+			);
+			name = MirageCoreTests;
+			packageProductDependencies = (
+			);
+			productName = MirageCoreTests;
+			productReference = 7468E9F22C1E176BF9AE5B75 /* MirageCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		B4444DA00E0FD2333EA8648F /* MirageCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9716C5CAA8A2BB3972AB278E /* Build configuration list for PBXNativeTarget "MirageCore" */;
+			buildPhases = (
+				6B683B250A492C8543A338FE /* Sources */,
+				C28D98A989EE9037CD40CB1D /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MirageCore;
+			packageProductDependencies = (
+			);
+			productName = MirageCore;
+			productReference = 28FBD235ACD44F4965213D6E /* libMirageCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		B48E88F0AED84BCCAF04F865 /* Mirage */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FE72F8760A20C3845CB01CE3 /* Build configuration list for PBXNativeTarget "Mirage" */;
+			buildPhases = (
+				454DA222E1FEEBC5F51C41C4 /* Sources */,
+				B357F57091F2F21E65636BD7 /* Resources */,
+				D685DA08310A8C12F6E29BB0 /* Frameworks */,
+				AD7B2684D149D719DF1528B1 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AEFF4EADE775976710FECC38 /* PBXTargetDependency */,
+				E6C9ECA1D054666CC0A82A8E /* PBXTargetDependency */,
+			);
+			name = Mirage;
+			packageProductDependencies = (
+			);
+			productName = Mirage;
+			productReference = 1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		64BB6AA7F87D7B7DEDE3C3FE /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					3A0FF057342715E723BB0EA5 = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
+					8FCB00055803C7EBC98F9606 = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
+					B4444DA00E0FD2333EA8648F = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
+					B48E88F0AED84BCCAF04F865 = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FA753B8BD8333853E63810A1 /* Build configuration list for PBXProject "Mirage" */;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = CA1F54A8C4CAA0117425397F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 3E514C3C34FE85763C0BDEC4 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B48E88F0AED84BCCAF04F865 /* Mirage */,
+				B4444DA00E0FD2333EA8648F /* MirageCore */,
+				8FCB00055803C7EBC98F9606 /* MirageCoreTests */,
+				3A0FF057342715E723BB0EA5 /* MirageFileProvider */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B357F57091F2F21E65636BD7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4DC1042CB44FE1C0264AB243 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C28D98A989EE9037CD40CB1D /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		454DA222E1FEEBC5F51C41C4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B2B3683BDD6F188F4FF94B4 /* AppModel.swift in Sources */,
+				705CBFFD8A543C52F747FA19 /* AppViewState.swift in Sources */,
+				A8FDD253FD3F538032A1CCC5 /* ContentView.swift in Sources */,
+				D83524EE60AD3659D83DC624 /* DiscoverView.swift in Sources */,
+				2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */,
+				2F7EEFF8EED40EE2DA3589D5 /* ImageDetailPopover.swift in Sources */,
+				95C654E1F2BC055482310595 /* LibraryGridView.swift in Sources */,
+				F14EDABAF01604AC0C9D0CB5 /* MirageApp.swift in Sources */,
+				B0CFF1592C3D28FE35C328BC /* MirageDomainManager.swift in Sources */,
+				16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6B683B250A492C8543A338FE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */,
+				C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */,
+				371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */,
+				AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */,
+				1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */,
+				A044C48E7A09C0FD50AF12B2 /* RemoteImageRecord.swift in Sources */,
+				548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A572ED7D380F8074D57FA6A2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0C8CAB8A4875F0079440D60 /* AppGroupStorageTests.swift in Sources */,
+				EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */,
+				D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */,
+				AD19852316BE7E8859C3D769 /* QueryAndIdentifierTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D7404C60CFE5C47B894C53A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F32C1EFE00479572FBC681D7 /* BoundedDownloader.swift in Sources */,
+				79F0BD0C9F2EAC0B4D8D24FD /* FileProviderExtension+Content.swift in Sources */,
+				C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */,
+				61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */,
+				619EB03775C37070DAD75119 /* ProviderCatalog.swift in Sources */,
+				7077B5D834EE7563D1E76A84 /* ProviderEnumerator.swift in Sources */,
+				23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */,
+				55FA24C51C2F45CDB36B0F41 /* ProviderItem.swift in Sources */,
+				15220F9D9D4587AE7B8AF69A /* ProviderRepository.swift in Sources */,
+				02AF44E803398CF5ADE3F7D2 /* ProviderSearchCache.swift in Sources */,
+				11347E44DB49B28C351FD56A /* SearchEnumerator.swift in Sources */,
+				149DBC44BEDF226B92940B2A /* SearchResult.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A9416535DFD6FAD1724F488F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B4444DA00E0FD2333EA8648F /* MirageCore */;
+			targetProxy = ACE4AF9C2C4A77314B285CCC /* PBXContainerItemProxy */;
+		};
+		AEFF4EADE775976710FECC38 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B4444DA00E0FD2333EA8648F /* MirageCore */;
+			targetProxy = 8F8BB69B13A13F70E2CF1370 /* PBXContainerItemProxy */;
+		};
+		D74567365CE73CCBC8565CB6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B4444DA00E0FD2333EA8648F /* MirageCore */;
+			targetProxy = 545E47ABF3126927E89B83EA /* PBXContainerItemProxy */;
+		};
+		E6C9ECA1D054666CC0A82A8E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3A0FF057342715E723BB0EA5 /* MirageFileProvider */;
+			targetProxy = D9280912B01F1C196C203453 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		36770B327A09334FCE861BB7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageFileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "Config/MirageFileProvider-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.FileProvider;
+				PRODUCT_NAME = MirageFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		79C1EAB9F8AFBD873672F40F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Mirage.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "Config/Mirage-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage;
+				PRODUCT_NAME = Mirage;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		7ED2C06C70BA0870E633CB37 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_NAME = MirageCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		97DC09AF0D71A80CA16AE45C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.CoreTests;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		9BDBF0A9A30DF09C501350A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageFileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "Config/MirageFileProvider-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.FileProvider;
+				PRODUCT_NAME = MirageFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		9D8C3F682E846E92C1216F90 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = N4TQ2P9B46;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		C2BA74F5B3A36CAC9AEB273A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.CoreTests;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		D4C2A33C80D68A03455FA199 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = N4TQ2P9B46;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		DA7D5F1090BB5AB3D3CA6913 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_NAME = MirageCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		F892431146CEB0352DEBF2E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Mirage.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "Config/Mirage-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage;
+				PRODUCT_NAME = Mirage;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		94710EF524EEB07D9F2E411D /* Build configuration list for PBXNativeTarget "MirageFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9BDBF0A9A30DF09C501350A5 /* Debug */,
+				36770B327A09334FCE861BB7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9716C5CAA8A2BB3972AB278E /* Build configuration list for PBXNativeTarget "MirageCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA7D5F1090BB5AB3D3CA6913 /* Debug */,
+				7ED2C06C70BA0870E633CB37 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E8177F80C601459F456C764D /* Build configuration list for PBXNativeTarget "MirageCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C2BA74F5B3A36CAC9AEB273A /* Debug */,
+				97DC09AF0D71A80CA16AE45C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FA753B8BD8333853E63810A1 /* Build configuration list for PBXProject "Mirage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9D8C3F682E846E92C1216F90 /* Debug */,
+				D4C2A33C80D68A03455FA199 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FE72F8760A20C3845CB01CE3 /* Build configuration list for PBXNativeTarget "Mirage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79C1EAB9F8AFBD873672F40F /* Debug */,
+				F892431146CEB0352DEBF2E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+}

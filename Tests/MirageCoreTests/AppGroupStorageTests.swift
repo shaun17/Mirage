@@ -1,0 +1,460 @@
+import Foundation
+import XCTest
+@testable import MirageCore
+
+final class AppGroupStorageTests: XCTestCase {
+    private var temporaryURL: URL!
+
+    /// 每个测试使用独立目录，避免磁盘状态影响结果。
+    override func setUpWithError() throws {
+        temporaryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MirageTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryURL, withIntermediateDirectories: true)
+    }
+
+    /// 测试结束后删除本测试创建的临时目录。
+    override func tearDownWithError() throws {
+        if let temporaryURL, FileManager.default.fileExists(atPath: temporaryURL.path) {
+            try FileManager.default.removeItem(at: temporaryURL)
+        }
+    }
+
+    /// 并发写入不能丢记录、产生半个 JSON，读取顺序必须稳定。
+    func testConcurrentRecentWritesAndLimit() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let date = Date(timeIntervalSince1970: 1_000)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<25 {
+                group.addTask {
+                    try await storage.writeRecent(Self.record(index), at: date, limit: 100)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let recent = try await storage.readRecent(limit: 10)
+        XCTAssertEqual(recent.count, 10)
+        XCTAssertEqual(recent.map(\.id), recent.map(\.id).sorted())
+        let files = try FileManager.default.contentsOfDirectory(
+            at: temporaryURL.appendingPathComponent("recent"), includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(files.filter { $0.pathExtension == "json" }.count, 25)
+    }
+
+    /// 两个 actor 实例共享同一目录时，写入与裁剪必须形成跨进程等价的完整事务。
+    func testConcurrentRecentTransactionsAcrossStorageInstancesRespectLimit() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let limit = 10
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<40 {
+                group.addTask {
+                    let storage = index.isMultiple(of: 2) ? firstStorage : secondStorage
+                    try await storage.writeRecent(
+                        Self.record(index),
+                        at: Date(timeIntervalSince1970: TimeInterval(index)),
+                        limit: limit
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let recent = try await firstStorage.readRecent(limit: 100)
+        XCTAssertEqual(recent.count, limit)
+        XCTAssertEqual(recent.map(\.id), (30..<40).reversed().map { Self.record($0).id })
+    }
+
+    /// 收藏去重应保留首次出现的顺序，且条目元数据独立可读。
+    func testItemsAndFavoritesRoundTrip() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = Self.record(1)
+        let second = Self.record(2)
+        try await storage.writeItem(first)
+        try await storage.writeItem(second)
+        try await storage.writeFavoriteIDs([second.id, first.id, second.id])
+
+        let loadedFirst = try await storage.readItem(id: first.id)
+        let favoriteIDs = try await storage.readFavoriteIDs()
+        let itemIDs = try await storage.readItems().map(\.id)
+        XCTAssertEqual(loadedFirst, first)
+        XCTAssertEqual(favoriteIDs, [second.id, first.id])
+        XCTAssertEqual(itemIDs, [first.id, second.id])
+    }
+
+    /// 两个 storage 实例并发切换收藏也必须共享同一事务锁，不能丢失任何一次新增。
+    func testConcurrentFavoriteTransactionsDoNotLoseUpdates() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<25 {
+                group.addTask {
+                    let storage = index.isMultiple(of: 2) ? firstStorage : secondStorage
+                    _ = try await storage.toggleFavorite(Self.record(index))
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let snapshot = try await firstStorage.readLibrarySnapshot()
+        XCTAssertEqual(snapshot.favoriteIDs.count, 25)
+        XCTAssertEqual(Set(snapshot.favorites.map(\.id)), snapshot.favoriteIDs)
+    }
+
+    /// 资料库快照只按收藏 ID 读取，损坏但未收藏的搜索缓存不能拖垮整个刷新。
+    func testLibrarySnapshotIgnoresUnrelatedCorruptItem() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(1)
+        _ = try await storage.toggleFavorite(favorite)
+        let corruptURL = temporaryURL
+            .appendingPathComponent("items", isDirectory: true)
+            .appendingPathComponent("unrelated.json")
+        try Data("not-json".utf8).write(to: corruptURL, options: .atomic)
+
+        let first = try await storage.readLibrarySnapshot()
+        let second = try await storage.readLibrarySnapshot()
+        XCTAssertEqual(first.favorites, [favorite])
+        XCTAssertGreaterThan(second.revision, first.revision)
+    }
+
+    /// 发现快照必须保留顺序、来源和查询 key，并在新 actor 中恢复同一个 generation。
+    func testDiscoverySnapshotPersistsAcrossStorageRestart() async throws {
+        let independentItem = Self.record(2, title: "全局记录")
+        let records = [Self.record(2, title: "发现记录"), Self.record(1)]
+        let refreshedAt = Date(timeIntervalSince1970: 2_000)
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        try await firstStorage.writeItem(independentItem)
+        let committed = try await firstStorage.commitDiscoveryFeed(
+            records: records,
+            refreshedAt: refreshedAt,
+            source: .network,
+            catalogKey: "root-v1",
+            queryKey: "portrait"
+        )
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let restored = try await restartedStorage.readDiscoveryFeedSnapshot()
+        let restoredItem = try await restartedStorage.readItem(id: records[0].id)
+        XCTAssertEqual(restored, committed)
+        XCTAssertEqual(restored?.records.map(\.id), records.map(\.id))
+        XCTAssertEqual(restoredItem, independentItem)
+
+        let next = try await restartedStorage.commitDiscoveryFeed(
+            records: records,
+            refreshedAt: refreshedAt.addingTimeInterval(60),
+            source: .fallback,
+            catalogKey: "root-v1",
+            queryKey: "fallback-v1"
+        )
+        XCTAssertEqual(next.generation, committed.generation + 1)
+    }
+
+    /// 两个 storage 实例并发提交发现快照时，每次提交都必须获得唯一且连续的 generation。
+    func testConcurrentDiscoveryCommitsAcrossStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let commitCount = 30
+        let generations = try await withThrowingTaskGroup(of: UInt64.self) { group in
+            for index in 0..<commitCount {
+                group.addTask {
+                    let storage = index.isMultiple(of: 2) ? firstStorage : secondStorage
+                    let snapshot = try await storage.commitDiscoveryFeed(
+                        records: [Self.record(index)],
+                        refreshedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                        source: .network,
+                        catalogKey: "root-v1",
+                        queryKey: "query-\(index)"
+                    )
+                    return snapshot.generation
+                }
+            }
+            return try await group.reduce(into: []) { $0.append($1) }
+        }
+
+        let restored = try await firstStorage.readDiscoveryFeedSnapshot()
+        XCTAssertEqual(Set(generations), Set(1...UInt64(commitCount)))
+        XCTAssertEqual(restored?.generation, UInt64(commitCount))
+    }
+
+    /// 搜索索引与单条元数据一起持久化，扩展重启后仍按原顺序恢复 backing。
+    func testSearchBackingPersistsAcrossStorageRestart() async throws {
+        let records = [Self.record(3), Self.record(1), Self.record(2)]
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        try await storage.commitSearchBacking(queryKey: "cat", records: records)
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let restored = try await restartedStorage.readSearchBackingRecords()
+        XCTAssertEqual(restored.map(\.id), records.map(\.id))
+    }
+
+    /// 新查询替换当前 backing 后，旧搜索 occurrence 仍须通过独立权威记录回查。
+    func testSearchRecordsSurviveLaterBackingReplacementAcrossInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let oldRecord = Self.record(1, title: "旧查询记录")
+        let newRecord = Self.record(2, title: "新查询记录")
+
+        try await firstStorage.commitSearchBacking(queryKey: "old", records: [oldRecord])
+        try await secondStorage.commitSearchBacking(queryKey: "new", records: [newRecord])
+
+        let active = try await firstStorage.readSearchBackingRecords()
+        let restoredOld = try await secondStorage.readSearchRecord(id: oldRecord.id)
+        let restoredNew = try await firstStorage.readSearchRecord(id: newRecord.id)
+        XCTAssertEqual(active, [newRecord])
+        XCTAssertEqual(restoredOld, oldRecord)
+        XCTAssertEqual(restoredNew, newRecord)
+    }
+
+    /// 收藏和搜索遇到同一 ID 时必须各自保留提交时的元数据，不受全局 item 后写覆盖。
+    func testFavoriteAndSearchSnapshotsIsolateMetadataForSameID() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(7, title: "收藏版本")
+        let search = Self.record(7, title: "搜索版本")
+        let global = Self.record(7, title: "全局后写版本")
+
+        _ = try await storage.toggleFavorite(favorite)
+        try await storage.commitSearchBacking(queryKey: "same-id", records: [search])
+        try await storage.writeItem(global)
+
+        let favoriteRecords = try await storage.readFavoriteRecords()
+        let searchRecords = try await storage.readSearchBackingRecords()
+        let library = try await storage.readLibrarySnapshot()
+        XCTAssertEqual(favoriteRecords, [favorite])
+        XCTAssertEqual(searchRecords, [search])
+        XCTAssertEqual(library.favorites, [favorite])
+    }
+
+    /// 旧 favorites.json 的 [String] 格式应回填一次记录并迁移，之后不再跟随全局 item 改写。
+    func testLegacyFavoriteIDsMigrateToAuthoritativeRecords() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = Self.record(1, title: "迁移收藏一")
+        let second = Self.record(2, title: "迁移收藏二")
+        try await storage.writeItem(first)
+        try await storage.writeItem(second)
+        let favoritesURL = temporaryURL.appendingPathComponent("favorites.json")
+        try JSONEncoder().encode([second.id, first.id]).write(to: favoritesURL, options: .atomic)
+
+        let migrated = try await storage.readFavoriteRecords()
+        try await storage.writeItem(Self.record(2, title: "全局覆盖"))
+        let restored = try await storage.readFavoriteRecords()
+        let migratedIDs = try await storage.readFavoriteIDs()
+        XCTAssertEqual(migrated, [second, first])
+        XCTAssertEqual(restored, [second, first])
+        XCTAssertEqual(migratedIDs, [second.id, first.id])
+    }
+
+    /// 旧 search-backing.json 的 recordIDs 格式应迁移为记录快照并脱离全局 item。
+    func testLegacySearchBackingMigratesToAuthoritativeRecords() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = Self.record(1, title: "迁移搜索一")
+        let second = Self.record(2, title: "迁移搜索二")
+        try await storage.writeItem(first)
+        try await storage.writeItem(second)
+        let legacy = LegacySearchBackingFixture(
+            queryKey: "legacy",
+            recordIDs: [first.id, second.id],
+            committedAt: Date(timeIntervalSince1970: 123)
+        )
+        let backingURL = temporaryURL.appendingPathComponent("search-backing.json")
+        try JSONEncoder().encode(legacy).write(to: backingURL, options: .atomic)
+
+        let migrated = try await storage.readSearchBackingRecords()
+        try await storage.writeItem(Self.record(1, title: "全局覆盖"))
+        let restored = try await storage.readSearchBackingRecords()
+        XCTAssertEqual(migrated, [first, second])
+        XCTAssertEqual(restored, [first, second])
+    }
+
+    /// generation 必须跨 actor 重启继续递增，差异同时包含删除、新增与元数据变化。
+    func testProviderAnchorAndDiffPersistAcrossRestart() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let initialAnchor = try await firstStorage.commitProviderScope(
+            "root",
+            items: [
+                ProviderStoredItemState(identifier: "discover:a", fingerprint: "v1"),
+                ProviderStoredItemState(identifier: "discover:b", fingerprint: "v1")
+            ]
+        )
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let restoredAnchor = try await restartedStorage.currentProviderAnchor()
+        XCTAssertEqual(restoredAnchor, initialAnchor)
+        let nextAnchor = try await restartedStorage.commitProviderScope(
+            "root",
+            items: [
+                ProviderStoredItemState(identifier: "discover:b", fingerprint: "v2"),
+                ProviderStoredItemState(identifier: "discover:c", fingerprint: "v1")
+            ]
+        )
+        let changes = try await restartedStorage.providerChanges(in: "root", after: initialAnchor)
+        XCTAssertGreaterThan(nextAnchor, initialAnchor)
+        XCTAssertEqual(changes.anchor, nextAnchor)
+        XCTAssertEqual(changes.deletedIdentifiers, ["discover:a"])
+        XCTAssertEqual(changes.updatedIdentifiers, ["discover:b", "discover:c"])
+    }
+
+    /// 两个 storage 实例并发提交不同 scope 时，全局 generation 与每个 scope 都不能丢失。
+    func testConcurrentProviderCommitsAcrossStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let initialAnchor = try await firstStorage.currentProviderAnchor()
+        let commitCount = 30
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<commitCount {
+                group.addTask {
+                    let storage = index.isMultiple(of: 2) ? firstStorage : secondStorage
+                    _ = try await storage.commitProviderScope(
+                        "scope-\(index)",
+                        items: [
+                            ProviderStoredItemState(
+                                identifier: "item-\(index)",
+                                fingerprint: "v1"
+                            )
+                        ]
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let finalAnchor = try await firstStorage.currentProviderAnchor()
+        XCTAssertEqual(finalAnchor, initialAnchor + UInt64(commitCount))
+        for index in 0..<commitCount {
+            let changes = try await secondStorage.providerChanges(
+                in: "scope-\(index)",
+                after: initialAnchor
+            )
+            XCTAssertEqual(changes.updatedIdentifiers, ["item-\(index)"])
+        }
+    }
+
+    /// provider 状态损坏后应保留原始字节、过期旧锚点，并允许全量快照重新建立差异历史。
+    func testCorruptProviderStateRecoversForFullEnumeration() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let oldAnchor = try await firstStorage.commitProviderScope(
+            "root",
+            items: [ProviderStoredItemState(identifier: "old", fingerprint: "v1")]
+        )
+        let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        let corruptData = Data("{broken-provider-state".utf8)
+        try corruptData.write(to: stateURL, options: .atomic)
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let recoveryAnchor = try await restartedStorage.currentProviderAnchor()
+        XCTAssertGreaterThan(recoveryAnchor, oldAnchor)
+        do {
+            _ = try await restartedStorage.providerChanges(in: "root", after: oldAnchor)
+            XCTFail("恢复前的 provider anchor 必须明确过期")
+        } catch let error as ProviderChangeStorageError {
+            XCTAssertEqual(error, .anchorExpired)
+        }
+
+        let recoveredItems = [
+            ProviderStoredItemState(identifier: "new-a", fingerprint: "v1"),
+            ProviderStoredItemState(identifier: "new-b", fingerprint: "v1")
+        ]
+        _ = try await restartedStorage.commitProviderScope("root", items: recoveredItems)
+        let changes = try await restartedStorage.providerChanges(in: "root", after: recoveryAnchor)
+        XCTAssertEqual(changes.updatedIdentifiers, ["new-a", "new-b"])
+
+        let archivedURLs = try FileManager.default.contentsOfDirectory(
+            at: temporaryURL,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("provider-sync-state.invalid-") }
+        XCTAssertEqual(archivedURLs.count, 1)
+        let archivedURL = try XCTUnwrap(archivedURLs.first)
+        XCTAssertEqual(try Data(contentsOf: archivedURL), corruptData)
+    }
+
+    /// 缺少当前 schemaVersion 的旧 provider 文件也应升级纪元，而不是永久解码失败。
+    func testLegacyProviderSchemaExpiresOldAnchorAndRecovers() async throws {
+        let oldAnchor: UInt64 = 77
+        let legacyData = Data("{\"generation\":77,\"scopes\":{}}".utf8)
+        let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        try legacyData.write(to: stateURL, options: .atomic)
+
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let recoveryAnchor = try await storage.currentProviderAnchor()
+        XCTAssertGreaterThan(recoveryAnchor, oldAnchor)
+        do {
+            _ = try await storage.providerChanges(in: "root", after: oldAnchor)
+            XCTFail("旧 schema 的 anchor 必须明确过期")
+        } catch let error as ProviderChangeStorageError {
+            XCTAssertEqual(error, .anchorExpired)
+        }
+        _ = try await storage.commitProviderScope(
+            "root",
+            items: [ProviderStoredItemState(identifier: "restored", fingerprint: "v1")]
+        )
+        let changes = try await storage.providerChanges(in: "root", after: recoveryAnchor)
+        XCTAssertEqual(changes.updatedIdentifiers, ["restored"])
+    }
+
+    /// 重复提交完全相同的 scope 不得制造虚假 generation 或刷新循环。
+    func testUnchangedProviderScopeDoesNotAdvanceAnchor() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let items = [ProviderStoredItemState(identifier: "discover:a", fingerprint: "v1")]
+        let first = try await storage.commitProviderScope("root", items: items)
+        let second = try await storage.commitProviderScope("root", items: items)
+        let changes = try await storage.providerChanges(in: "root", after: first)
+        XCTAssertEqual(second, first)
+        XCTAssertTrue(changes.deletedIdentifiers.isEmpty)
+        XCTAssertTrue(changes.updatedIdentifiers.isEmpty)
+    }
+
+    /// 首次迁移把旧 search occurrence 报为删除，同时保留仍在当前索引中的 ID。
+    func testInitialSearchMigrationDeletesOnlyGhostOccurrences() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let current = ProviderStoredItemState(identifier: "search:current", fingerprint: "v1")
+        let anchorBeforeMigration = try await storage.currentProviderAnchor()
+        _ = try await storage.commitProviderScope(
+            "search",
+            items: [current],
+            initialDeletedIdentifiers: ["search:old", "search:current"]
+        )
+        let changes = try await storage.providerChanges(in: "search", after: anchorBeforeMigration)
+        XCTAssertEqual(changes.deletedIdentifiers, ["search:old"])
+        XCTAssertEqual(changes.updatedIdentifiers, ["search:current"])
+    }
+
+    /// 超出每个 scope 的历史窗口后旧锚点必须明确过期，不能静默返回不完整差异。
+    func testProviderAnchorExpiresAfterHistoryWindow() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let oldAnchor = try await storage.currentProviderAnchor()
+        for index in 0..<70 {
+            _ = try await storage.commitProviderScope(
+                "root",
+                items: [ProviderStoredItemState(identifier: "discover:a", fingerprint: "v\(index)")]
+            )
+        }
+
+        do {
+            _ = try await storage.providerChanges(in: "root", after: oldAnchor)
+            XCTFail("超出历史窗口的锚点不应继续返回部分差异")
+        } catch let error as ProviderChangeStorageError {
+            XCTAssertEqual(error, .anchorExpired)
+        }
+    }
+
+    /// 创建结构完整、HTTPS 且稳定 ID 的测试记录，可覆盖标题验证同 ID 元数据隔离。
+    private static func record(_ index: Int, title: String? = nil) -> RemoteImageRecord {
+        RemoteImageRecord(
+            id: String(format: "ov:00000000-0000-4000-8000-%012d", index),
+            title: title ?? "Image \(index)",
+            source: .openverse,
+            imageURL: URL(string: "https://example.com/\(index).png")!,
+            thumbnailURL: URL(string: "https://example.com/t\(index).png")!,
+            license: .cc0,
+            width: 512,
+            height: 512,
+            mimeType: "image/png"
+        )
+    }
+
+    /// 模拟旧版只保存 recordIDs 的搜索 backing 文件。
+    private struct LegacySearchBackingFixture: Encodable {
+        let queryKey: String
+        let recordIDs: [String]
+        let committedAt: Date
+    }
+}
