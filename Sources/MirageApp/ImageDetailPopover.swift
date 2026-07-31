@@ -1,3 +1,4 @@
+import AppKit
 import MirageCore
 import MirageDetailWindow
 import SwiftUI
@@ -13,15 +14,21 @@ struct ImageDetailPopover: View {
             HStack {
                 Text("图片详情")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
                 Button(action: onDismiss) {
                     Label("收起详情", systemImage: "chevron.right.2")
                         .labelStyle(.iconOnly)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
-                .help("收起详情")
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
+                .help("收起详情（Esc）")
                 .accessibilityLabel("收起详情")
+                .accessibilityHint("也可按 Escape 键收起")
             }
 
             ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: 512)
@@ -49,6 +56,10 @@ struct ImageDetailPopover: View {
         .padding(18)
         .frame(width: DetailDrawerMetrics.width)
         .accessibilityElement(children: .contain)
+        .background {
+            DetailDrawerEscapeMonitor(onEscape: onDismiss)
+                .allowsHitTesting(false)
+        }
     }
 
     /// 作者有主页时提供可点击链接，否则保留纯文本归属。
@@ -76,5 +87,79 @@ struct ImageDetailPopover: View {
     /// 使用服务品牌名表达来源，避免向用户暴露内部枚举值。
     private var sourceName: String {
         record.source == .openverse ? "Openverse" : "DiceBear"
+    }
+}
+
+/// 搜索框会优先消费第一次 Escape，因此只在抽屉所在窗口的事件分发前拦截。
+private struct DetailDrawerEscapeMonitor: NSViewRepresentable {
+    let onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> WindowTrackingView {
+        let view = WindowTrackingView()
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.window = window
+        }
+        context.coordinator.startMonitoring()
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowTrackingView, context: Context) {
+        context.coordinator.window = nsView.window
+        context.coordinator.onEscape = onEscape
+    }
+
+    static func dismantleNSView(_ nsView: WindowTrackingView, coordinator: Coordinator) {
+        nsView.onWindowChange = nil
+        coordinator.stopMonitoring()
+    }
+
+    @MainActor
+    final class Coordinator {
+        weak var window: NSWindow?
+        var onEscape: () -> Void
+        private var eventMonitor: Any?
+
+        init(onEscape: @escaping () -> Void) {
+            self.onEscape = onEscape
+        }
+
+        func startMonitoring() {
+            guard eventMonitor == nil else { return }
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard
+                    event.keyCode == 53,
+                    event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+                    let self,
+                    let window,
+                    event.window === window
+                else {
+                    return event
+                }
+
+                onEscape()
+                return nil
+            }
+        }
+
+        func stopMonitoring() {
+            guard let eventMonitor else { return }
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+
+    }
+
+    @MainActor
+    final class WindowTrackingView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChange?(window)
+        }
     }
 }

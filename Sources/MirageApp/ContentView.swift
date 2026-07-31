@@ -9,6 +9,7 @@ struct ContentView: View {
 
     /// 场景阶段用于在窗口重新进入前台时同步 File Provider 写入的数据。
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     /// 整个窗口共用一个覆盖式详情抽屉；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
     @State private var inspectedRecord: RemoteImageRecord?
@@ -26,7 +27,7 @@ struct ContentView: View {
             if let inspectedRecord {
                 ImageDetailPopover(
                     record: inspectedRecord,
-                    onDismiss: dismissInspector
+                    onDismiss: dismissDetailDrawer
                 )
                 .frame(width: DetailDrawerMetrics.width)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -40,7 +41,8 @@ struct ContentView: View {
                 }
                 .contentShape(Rectangle())
                 .shadow(color: .black.opacity(0.12), radius: 10, x: -3)
-                .transition(.identity)
+                .transition(detailDrawerTransition)
+                .zIndex(1)
             }
         }
         .toolbar {
@@ -82,7 +84,7 @@ struct ContentView: View {
             DiscoverView(
                 model: model,
                 searchModel: model.searchModel,
-                onShowDetails: { presentInspector(for: $0) }
+                onShowDetails: { presentDetailDrawer(for: $0) }
             )
         case .favorites:
             libraryContent(title: "收藏") {
@@ -97,7 +99,7 @@ struct ContentView: View {
                     onToggleFavorite: { record in
                         Task { await model.toggleFavorite(record) }
                     },
-                    onShowDetails: { presentInspector(for: $0) }
+                    onShowDetails: { presentDetailDrawer(for: $0) }
                 )
             }
         case .recent:
@@ -105,7 +107,7 @@ struct ContentView: View {
                 RecentGridView(
                     records: model.recent,
                     favoriteIDs: model.favoriteIDs,
-                    onShowDetails: { presentInspector(for: $0) }
+                    onShowDetails: { presentDetailDrawer(for: $0) }
                 )
             }
         }
@@ -135,24 +137,38 @@ struct ContentView: View {
     }
 
     /// 覆盖式抽屉不参与主内容布局；已打开时选择其他图片只替换详情内容。
-    private func presentInspector(for record: RemoteImageRecord) {
-        withoutPresentationAnimation {
+    private func presentDetailDrawer(for record: RemoteImageRecord) {
+        guard inspectedRecord == nil else {
+            inspectedRecord = record
+            return
+        }
+
+        withAnimation(detailDrawerPresentationAnimation) {
             inspectedRecord = record
         }
     }
 
     /// 所有收起入口只更新一次展示状态，避免触发额外的窗口级布局。
-    private func dismissInspector() {
-        withoutPresentationAnimation {
+    private func dismissDetailDrawer() {
+        guard inspectedRecord != nil else { return }
+        withAnimation(detailDrawerDismissalAnimation) {
             inspectedRecord = nil
         }
     }
 
-    /// 禁用抽屉自身过渡，避免出现时产生额外的位移动画。
-    private func withoutPresentationAnimation(_ updates: () -> Void) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction, updates)
+    /// 减少动态效果时直接切换，其他情况下沿窗口右缘滑入和滑出。
+    private var detailDrawerTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .identity
+            : .move(edge: .trailing)
+    }
+
+    private var detailDrawerPresentationAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .easeOut(duration: 0.22)
+    }
+
+    private var detailDrawerDismissalAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .easeIn(duration: 0.18)
     }
 
     /// 把可选错误消息转换成 SwiftUI Alert 所需的绑定。
