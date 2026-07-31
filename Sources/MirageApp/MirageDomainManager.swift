@@ -29,7 +29,10 @@ struct MirageDomainManager: Sendable {
         NSFileProviderDomainIdentifier("mirage-default-v9"),
         // v10 副本沿用了串行缩略图与无节流重扫时代的目录状态，且实机已出现
         // 「最近使用 2」这类重名残渣；迁移到 v11 由 removeAll 连副本一起清掉。
-        NSFileProviderDomainIdentifier("mirage-default-v10")
+        NSFileProviderDomainIdentifier("mirage-default-v10"),
+        // v11 在同一目录动态追加推荐图片，Finder 按名称重排时会造成可见内容跳动；
+        // 迁移到 v12 清除旧副本，改为每层固定 50 张的递归分页目录。
+        NSFileProviderDomainIdentifier("mirage-default-v11")
     ]
     static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
 
@@ -65,7 +68,7 @@ struct MirageDomainManager: Sendable {
         return migratesLegacyDomain ? .repaired : .installed
     }
 
-    /// 旧域已经缓存了完整推荐流；迁移只删除系统占位符，App Group 资料库保持不变。
+    /// 旧域已经缓存了过时目录结构；迁移只删除系统占位符，App Group 资料库保持不变。
     private func removeLegacyDomainIfNeeded(
         from domains: [NSFileProviderDomain]
     ) async throws {
@@ -75,14 +78,23 @@ struct MirageDomainManager: Sendable {
         }
     }
 
-    /// 收藏变化后同时通知收藏目录和工作集，保证 Finder 与文件面板一致。
+    /// Replicated File Provider 只接受 working set signal，系统会把收藏差异投影到目录。
     func signalFavoritesChanged() async throws {
+        try await signalWorkingSet()
+    }
+
+    /// 主 App 持久化推荐快照变更后主动唤醒扩展，避免 Finder 长期停留在旧批次。
+    func signalDiscoveryChanged() async throws {
+        try await signalWorkingSet()
+    }
+
+    /// 所有 App 侧变更共用系统唯一支持的 Replicated File Provider 刷新入口。
+    private func signalWorkingSet() async throws {
         guard let domain = try await installedDomains().first(where: {
             $0.identifier == Self.domainIdentifier
         }), let manager = NSFileProviderManager(for: domain) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        try await manager.signalEnumerator(for: Self.favoritesIdentifier)
         try await manager.signalEnumerator(for: .workingSet)
     }
 
@@ -99,10 +111,8 @@ struct MirageDomainManager: Sendable {
             throw ProviderAvailabilityError.managerUnavailable
         }
         _ = try await manager.getUserVisibleURL(for: .rootContainer)
-        // 只发轻量 signal 促使系统拉取差异。App 侧不再触发 reimportItems：
-        // 整树重扫会引发全目录缩略图重放，被扩展的滚动泵误读成触底信号后
-        // 会形成补页自激循环；副本真正滞后时由扩展侧泵按需升级重扫修复。
-        try await manager.signalEnumerator(for: .rootContainer)
+        // 只发系统支持的 working set signal；每个推荐目录都是固定批次，
+        // 后续 50 张仅在用户显式打开“更多图片”目录时发布。
         try await manager.signalEnumerator(for: .workingSet)
         return .ready
     }

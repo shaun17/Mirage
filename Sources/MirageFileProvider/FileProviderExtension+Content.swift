@@ -76,8 +76,6 @@ extension FileProviderExtension {
                     try Task.checkCancellation()
                     try await repository.markRecent(record)
                     try Task.checkCancellation()
-                    try? await manager.signalEnumerator(for: ProviderIdentifiers.recent)
-                    try Task.checkCancellation()
                     try? await manager.signalEnumerator(for: .workingSet)
                     try Task.checkCancellation()
                     relay.finish({
@@ -117,9 +115,6 @@ extension FileProviderExtension {
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: Int64(max(itemIdentifiers.count, 1)))
-        // 系统只为视口内条目请求缩略图，这是 File Provider 里唯一跟随滚动位置的回调；
-        // 交给泵判断用户是否已接近列表尾部，从而决定要不要向同一目录追加下一页。
-        Task { [feedPump] in await feedPump.noteVisible(itemIdentifiers) }
         let perItem = ProviderCallbackBox(perThumbnailCompletionHandler)
         let completed = ProviderCallbackBox(completionHandler)
         // 系统的 per-item 回调没有声明并发安全，交付统一串行化；下载仍是并行的。
@@ -171,6 +166,7 @@ extension FileProviderExtension {
     private static func isDirectory(_ identifier: NSFileProviderItemIdentifier) -> Bool {
         identifier == .rootContainer || identifier == ProviderIdentifiers.recent
             || identifier == ProviderIdentifiers.favorites || identifier == ProviderIdentifiers.searchBacking
+            || ProviderIdentifiers.discoveryPageReference(from: identifier) != nil
     }
 
     /// 把下载与转码错误归入系统允许的 Cocoa/FileProvider 错误域。

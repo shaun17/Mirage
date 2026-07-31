@@ -47,36 +47,56 @@ public enum DiscoveryFeedError: Error, LocalizedError, Equatable, Sendable {
 
 /// 共享推荐仓库负责 TTL、网络超时、离线兜底、分页追加和 generation 冻结。
 public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
-    private static let networkTimeout: Duration = .seconds(6)
-
     private let storage: AppGroupStorage
     private let service: ImageSearchService
     private let diceBear: any DiceBearProviding
+    private let networkTimeout: Duration
     private let now: @Sendable () -> Date
+    private let snapshotMutationNotifier: DiscoveryFeedSnapshotMutationNotifier?
     private var inFlightPages: [DiscoveryFeedRequestKey: Task<DiscoveryFeedPage, Error>] = [:]
 
     public init(
         storage: AppGroupStorage,
         service: ImageSearchService = ImageSearchService(),
         diceBear: any DiceBearProviding = DiceBearClient(),
-        now: @escaping @Sendable () -> Date = Date.init
+        networkTimeout: Duration = .seconds(6),
+        now: @escaping @Sendable () -> Date = Date.init,
+        snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
+        snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) {
         self.storage = storage
         self.service = service
         self.diceBear = diceBear
+        self.networkTimeout = networkTimeout
         self.now = now
+        self.snapshotMutationNotifier = snapshotDidChange.map {
+            DiscoveryFeedSnapshotMutationNotifier(
+                signal: $0,
+                initialRetryDelay: snapshotNotificationRetryDelay
+            )
+        }
     }
 
     /// 生产环境直接打开固定 App Group；失败由调用方决定是否降级为普通搜索。
     public init(
         service: ImageSearchService = ImageSearchService(),
         diceBear: any DiceBearProviding = DiceBearClient(),
-        now: @escaping @Sendable () -> Date = Date.init
+        networkTimeout: Duration = .seconds(6),
+        now: @escaping @Sendable () -> Date = Date.init,
+        snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
+        snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) throws {
         self.storage = try AppGroupStorage()
         self.service = service
         self.diceBear = diceBear
+        self.networkTimeout = networkTimeout
         self.now = now
+        self.snapshotMutationNotifier = snapshotDidChange.map {
+            DiscoveryFeedSnapshotMutationNotifier(
+                signal: $0,
+                initialRetryDelay: snapshotNotificationRetryDelay
+            )
+        }
     }
 
     /// 优先切出已缓存页面；只有走到当前快照尾部时才发起下一次网络请求。
@@ -165,12 +185,16 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             nextPage: Self.logicalNextPage(after: requestedPage, hasMore: loaded.nextCursor != nil),
             remoteCursor: loaded.nextCursor
         )
+        let didMutateSnapshot = updated != snapshot
+        if didMutateSnapshot {
+            await snapshotMutationNotifier?.setNeedsSignal()
+        }
         // CAS 输家必须从赢家快照取页和游标，不能泄漏自己已被拒绝的网络结果。
         guard let resolved = try Self.cachedPage(
             in: updated,
             page: requestedPage,
             pageSize: pageSize,
-            didMutate: updated != snapshot
+            didMutate: didMutateSnapshot
         ) else {
             throw DiscoveryFeedError.invalidPage
         }
@@ -207,6 +231,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         )
         switch result {
         case let .committed(committed):
+            await snapshotMutationNotifier?.setNeedsSignal()
             return (committed, true)
         case let .superseded(current):
             // 跨进程竞速输家必须直接采用胜者首页，不能把自己的迟到网络结果再次提交。
@@ -218,7 +243,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         }
     }
 
-    /// 网络页必须在六秒内完成；失败时生成同页唯一的本地头像元数据。
+    /// 网络页必须在调用方预算内完成；失败时生成同页唯一的本地头像元数据。
     /// 游标决定「向哪个关键词的第几页」抓取；逻辑页只用于本地兜底的稳定 seed 区间。
     private func loadPage(
         at cursor: DiscoveryRemoteCursor,
@@ -241,7 +266,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
                 service: service,
                 query: catalog[cursor.queryIndex],
                 page: cursor.remotePage,
-                pageSize: pageSize
+                pageSize: pageSize,
+                timeout: networkTimeout
             )
             try Task.checkCancellation()
             let records = await completePage(
@@ -405,7 +431,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         service: ImageSearchService,
         query: String,
         page: Int,
-        pageSize: Int
+        pageSize: Int,
+        timeout: Duration
     ) async throws -> ImageSearchPage {
         try await withThrowingTaskGroup(of: ImageSearchPage.self) { group in
             group.addTask {
@@ -416,7 +443,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
                 )
             }
             group.addTask {
-                try await Task.sleep(for: networkTimeout)
+                try await Task.sleep(for: timeout)
                 throw DiscoveryFeedNetworkError.timedOut
             }
             guard let first = try await group.next() else {

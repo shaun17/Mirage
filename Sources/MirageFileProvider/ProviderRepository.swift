@@ -1,15 +1,9 @@
 import MirageCore
 import FileProvider
 import Foundation
-import OSLog
 
 /// 将扩展需要的数据视图隔离在单一适配器中，并复用 Core 的共享推荐仓库。
 actor ProviderRepository: ProviderSearchResultStoring {
-    private static let logger = Logger(
-        subsystem: "com.wenren.Mirage.FileProvider",
-        category: "Repository"
-    )
-
     private let storage: AppGroupStorage?
     private let manager: NSFileProviderManager?
     private let discoveryFeed: (any DiscoveryFeedProviding)?
@@ -27,7 +21,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
             DiscoveryFeedRepository(
                 storage: $0,
                 service: ImageSearchService(openverse: openverse, diceBear: diceBear),
-                diceBear: diceBear
+                diceBear: diceBear,
+                // 一层最多补 3 个底层页；单页 1.5 秒使 Finder 枚举总等待仍控制在数秒内。
+                networkTimeout: .milliseconds(1_500)
             )
         }
     }
@@ -46,51 +42,92 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
     func invalidate() {}
 
-    /// 根目录现在投影当前 generation 已累积的全部记录，滚动补页只是把这个数组变长。
-    ///
-    /// `minimumRecords` 会在本次调用内就地补齐首屏。这是必须的：内容一旦同步进系统副本，
-    /// macOS 就不再回问扩展——`signalEnumerator` 之后也等不到新的枚举。
-    /// 只有让第一次枚举就返回足够长的列表，用户才有未缓存的条目可滚，
-    /// 后续的缩略图水位才能接管并自持地继续增长。
-    func discoveryRootFeed(minimumRecords: Int = 0) async throws -> DiscoveryRootFeed {
-        // 先确保当前 generation 存在且未过 TTL；首页提交同时负责换代时唤醒系统。
-        var feed = try await currentDiscoveryRootFeed()
-        var inlinePages = 0
-        while feed.records.count < minimumRecords,
-              let nextPage = feed.nextPage,
-              inlinePages < Self.maximumInlineFillPages {
-            try Task.checkCancellation()
-            _ = try await loadDiscoveryPage(generation: feed.generation, page: nextPage)
-            inlinePages += 1
-            feed = try await currentDiscoveryRootFeed()
-        }
-        return feed
+    /// 根目录固定公开推荐流的首个 50 张批次；底层仍按 Mirage 的 20 张共享页读取。
+    func discoveryRootBatch() async throws -> ProviderDiscoveryBatch {
+        try await resolveDiscoveryBatch(page: 1, generation: nil)
     }
 
-    /// 首屏就地补齐的页数上限。
-    ///
-    /// 这个值必须足够大：macOS 的 replicated 副本一旦建成就再也无法增长——
-    /// `signalEnumerator` 不触发重新枚举，`reimportItems` 报告完成却不回问扩展，
-    /// 实测只有重新注册域才会让副本按完整列表重建。
-    /// 所以「第一次枚举交付多少」就是用户能看到的全部，必须在这里一次给够。
-    /// 代价是首次建域时最多 10 次串行网络请求；这些页随后进快照缓存，之后的枚举只读盘。
-    private static let maximumInlineFillPages = 10
+    /// 下一批严格继承父入口发布时的代次；祖先断链或换代后不能借旧 scope 继续联网。
+    func discoveryBatch(for reference: DiscoveryPageReference) async throws -> ProviderDiscoveryBatch {
+        guard let generation = try await publishedGeneration(for: reference) else {
+            throw ProviderError.noSuchItem(reference.itemIdentifier)
+        }
+        return try await resolveDiscoveryBatch(page: reference.page, generation: generation)
+    }
 
-    /// 读取当前冻结 generation 的完整累积顺序。
-    private func currentDiscoveryRootFeed() async throws -> DiscoveryRootFeed {
-        let first = try await loadDiscoveryPage(generation: nil, page: 1)
+    /// 回查分页目录本身时只解析父批次；不会提前加载该目录中的下一批图片。
+    func parentBatch(
+        publishing reference: DiscoveryPageReference
+    ) async throws -> ProviderDiscoveryBatch? {
+        guard let generation = try await publishedGeneration(for: reference) else { return nil }
+        let parentPage = reference.page - 1
+        let parent = try await resolveDiscoveryBatch(page: parentPage, generation: generation)
+        return parent.hasMore ? parent : nil
+    }
+
+    /// generation 为空时只在根入口冻结当前代次；子目录永远沿父入口的持久化代次续读。
+    private func resolveDiscoveryBatch(
+        page: Int,
+        generation requestedGeneration: UInt64?
+    ) async throws -> ProviderDiscoveryBatch {
+        guard (1...ProviderDiscoveryTreePlanner.maximumPage).contains(page) else {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+        let bounds = try ProviderDiscoveryTreePlanner.recordBounds(for: page)
+        let first = try await loadDiscoveryPage(generation: requestedGeneration, page: 1)
         try Task.checkCancellation()
-        let storage = try requireStorage()
-        guard let snapshot = try await storage.readDiscoveryFeedSnapshot(
-            generation: first.generation
-        ), !snapshot.records.isEmpty else {
-            return DiscoveryRootFeed(
+        var snapshot = try await discoverySnapshot(
+            generation: first.generation,
+            fallback: first
+        )
+        while snapshot.records.count < bounds.upperBound,
+              let nextPage = snapshot.nextPage {
+            try Task.checkCancellation()
+            let previousRecordCount = snapshot.records.count
+            let previousNextPage = snapshot.nextPage
+            _ = try await loadDiscoveryPage(generation: first.generation, page: nextPage)
+            snapshot = try await discoverySnapshot(
                 generation: first.generation,
-                records: first.records,
-                nextPage: first.nextPage
+                fallback: first
             )
+            guard snapshot.records.count > previousRecordCount
+                    || snapshot.nextPage != previousNextPage else {
+                // 完整 generation 已被裁剪、但单页 sidecar 尚在时不能原地循环或切到当前代次。
+                throw ProviderError.expiredDiscoveryPage()
+            }
         }
         try Task.checkCancellation()
+        guard snapshot.generation == first.generation,
+              bounds.lowerBound < snapshot.records.count else {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+        let upperBound = min(bounds.upperBound, snapshot.records.count)
+        let records = Array(snapshot.records[bounds.lowerBound..<upperBound])
+        let hasMore = upperBound < snapshot.records.count || snapshot.nextPage != nil
+        return ProviderDiscoveryBatch(
+            page: page,
+            generation: snapshot.generation,
+            records: records,
+            hasMore: hasMore
+        )
+    }
+
+    /// 从完整代次快照恢复累积顺序；首页刚提交但归档尚未可见时使用该页作安全回退。
+    private func discoverySnapshot(
+        generation: UInt64,
+        fallback: DiscoveryFeedPage
+    ) async throws -> DiscoveryRootFeed {
+        let storage = try requireStorage()
+        guard let snapshot = try await storage.readDiscoveryFeedSnapshot(generation: generation) else {
+            guard fallback.generation == generation, !fallback.records.isEmpty else {
+                throw ProviderError.expiredDiscoveryPage()
+            }
+            return DiscoveryRootFeed(
+                generation: generation,
+                records: fallback.records,
+                nextPage: fallback.nextPage
+            )
+        }
         return DiscoveryRootFeed(
             generation: snapshot.generation,
             records: snapshot.records,
@@ -98,44 +135,88 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
-    /// 把下一页追加进当前 generation；返回追加后是否仍有后续内容。
-    func advanceDiscoveryFeed() async throws -> Bool {
-        let feed = try await discoveryRootFeed()
-        try Task.checkCancellation()
-        guard let nextPage = feed.nextPage else { return false }
-        let page = try await loadDiscoveryPage(generation: feed.generation, page: nextPage)
-        try Task.checkCancellation()
-        return page.nextPage != nil
-    }
-
-    /// 轻量通知系统拉取根目录差异：系统走 `enumerateChanges` 原地追加，
-    /// 不清缩略图、不闪屏，是常规补页后的唯一发布手段。
-    func signalDiscoveryFeedChanged() async {
-        guard let manager else { return }
-        try? await manager.signalEnumerator(for: .rootContainer)
-        try? await manager.signalEnumerator(for: .workingSet)
-    }
-
-    /// 要求系统整树重扫。
-    ///
-    /// 重扫会让系统为整个目录重新请求缩略图（实测冷启动时可扫到第 842 项），
-    /// 在把缩略图当滚动信号的架构里，这些请求会被误读成「用户滚到了底部」，
-    /// 形成「重扫→全量缩略图→补页→再重扫」的自激循环——Finder 表现为空白页反复闪动。
-    /// 因此它绝不能进常规发布路径，只能在增量 signal 反复无效时作为修复手段。
-    func rescanDiscoveryFeed() async {
-        guard let manager else { return }
-        do {
-            try manager.reimportItems(below: .rootContainer) { error in
-                if let error {
-                    Self.logger.error("重扫失败：\(error.localizedDescription, privacy: .public)")
-                } else {
-                    Self.logger.notice("重扫已完成")
-                }
+    /// 从目标入口逐层回溯到根；每一层都必须已提交且属于同一个冻结 generation。
+    private func publishedGeneration(
+        for reference: DiscoveryPageReference
+    ) async throws -> UInt64? {
+        let storage = try requireStorage()
+        var expectedGeneration: UInt64?
+        for page in stride(from: reference.page, through: 2, by: -1) {
+            let ancestor = try DiscoveryPageReference(validating: page)
+            guard let state = try await publishedDirectoryState(
+                ancestor,
+                storage: storage
+            ), let generation = state.discoveryGeneration else {
+                return nil
             }
-            Self.logger.notice("已请求重扫根目录")
-        } catch {
-            Self.logger.error("重扫请求被拒绝：\(error.localizedDescription, privacy: .public)")
+            if let expectedGeneration, expectedGeneration != generation {
+                return nil
+            }
+            expectedGeneration = generation
         }
+        return expectedGeneration
+    }
+
+    /// 第 2 层可能由 root 或 working set 首次发布；选择代次较新的已提交根快照。
+    private func publishedDirectoryState(
+        _ reference: DiscoveryPageReference,
+        storage: AppGroupStorage
+    ) async throws -> ProviderStoredItemState? {
+        if reference.page == 2 {
+            let root = try await storage.providerScopeSnapshot(
+                ProviderEnumerationScope.root.storageKey
+            )
+            let workingSet = try await storage.providerScopeSnapshot(
+                ProviderEnumerationScope.workingSet.storageKey
+            )
+            let candidates = [root, workingSet].compactMap { snapshot -> (
+                generation: UInt64,
+                state: ProviderStoredItemState?
+            )? in
+                guard let snapshot,
+                      let generation = snapshot.compactMap(\.discoveryGeneration).max() else {
+                    return nil
+                }
+                return (
+                    generation,
+                    snapshot.first { $0.identifier == reference.itemIdentifier.rawValue }
+                )
+            }
+            return candidates.max { $0.generation < $1.generation }?.state
+        }
+        let parent = try DiscoveryPageReference(validating: reference.page - 1)
+        let snapshot = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.discoveryPage(parent).storageKey
+        )
+        return snapshot?.first { $0.identifier == reference.itemIdentifier.rawValue }
+    }
+
+    /// 以持久化的已打开深度直接重建当前 generation；不依赖仍停留在旧代次的父 scope。
+    func rebuiltOpenedDiscoveryScopes(
+        rootGeneration: UInt64
+    ) async throws -> ProviderRecursiveWorkingSetSnapshot {
+        let storage = try requireStorage()
+        guard let maximumPage = try await storage.maximumOpenedProviderDiscoveryPage(),
+              maximumPage >= 2 else {
+            return ProviderRecursiveWorkingSetSnapshot(items: [], scopes: [])
+        }
+
+        var flattened: [ProviderItem] = []
+        var scopes: [ProviderDiscoveryScopeSnapshot] = []
+        for page in 2...min(maximumPage, ProviderDiscoveryTreePlanner.maximumPage) {
+            try Task.checkCancellation()
+            let reference = try DiscoveryPageReference(validating: page)
+            let batch = try await resolveDiscoveryBatch(
+                page: page,
+                generation: rootGeneration
+            )
+            try Task.checkCancellation()
+            let items = try ProviderDiscoveryTreePlanner.items(for: batch)
+            flattened.append(contentsOf: items)
+            scopes.append(ProviderDiscoveryScopeSnapshot(reference: reference, items: items))
+            guard batch.hasMore else { break }
+        }
+        return ProviderRecursiveWorkingSetSnapshot(items: flattened, scopes: scopes)
     }
 
     /// 按指定 generation 读取或补齐单页，并将结果落成可跨进程恢复的页快照。
@@ -176,7 +257,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
             )
             try Task.checkCancellation()
             if page == 1, result.didMutateSnapshot {
-                try await signalDiscoverySnapshotChanged(storage: storage)
+                await signalWorkingSet()
             }
             return result
         } catch is DiscoveryFeedError {
@@ -186,13 +267,10 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
     }
 
-    /// 推荐换代后唤醒根目录与工作集，稳定 ID 才能产生正确的更新与删除差异。
-    private func signalDiscoverySnapshotChanged(storage: AppGroupStorage) async throws {
+    /// Replicated File Provider 只接受 working set signal；系统再把差异投影到各已枚举目录。
+    func signalWorkingSet() async {
         guard let manager else { return }
-        try? await manager.signalEnumerator(for: .rootContainer)
-        try Task.checkCancellation()
         try? await manager.signalEnumerator(for: .workingSet)
-        try Task.checkCancellation()
     }
 
     /// 持久化搜索结果及顺序，扩展重启后隐藏 backing 和 item(for:) 都能恢复。
@@ -221,6 +299,24 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         guard let reference = ProviderIdentifiers.recordReference(from: identifier) else { return nil }
         let storage = try requireStorage()
+        if let discoveryPage = reference.discoveryPage {
+            let state = try await storage.providerScopeSnapshot(
+                ProviderEnumerationScope.discoveryPage(discoveryPage).storageKey
+            )?.first { $0.identifier == identifier.rawValue }
+            guard let generation = state?.discoveryGeneration,
+                  try await publishedGeneration(for: discoveryPage) == generation else {
+                return nil
+            }
+            let record = try await storage.readDiscoveryRecord(id: reference.recordID)
+            try Task.checkCancellation()
+            return record.map {
+                ProviderOccurrence(
+                    reference: reference,
+                    record: $0,
+                    discoveryGeneration: generation
+                )
+            }
+        }
         let occurrence: ProviderOccurrence?
         switch reference.view {
         case .discover:
@@ -284,28 +380,147 @@ actor ProviderRepository: ProviderSearchResultStoring {
     }
 
     /// 将当前 scope 的 occurrence 版本提交到持久化差异日志。
-    func commitScope(_ scopeKey: String, items: [ProviderItem], migratesLegacySearch: Bool) async throws -> UInt64 {
+    /// 子目录把 lineage 复核与写入合并在同一跨进程锁事务，拒绝联网期间发生的换代。
+    func commitScope(
+        _ scope: ProviderEnumerationScope,
+        items: [ProviderItem],
+        migratesLegacySearch: Bool
+    ) async throws -> UInt64 {
         try Task.checkCancellation()
         let storage = try requireStorage()
-        let legacyDeleted: [String]
-        if migratesLegacySearch {
-            legacyDeleted = try await storage.readRecoverableItemIDs().map {
-                ProviderIdentifiers.itemIdentifier(recordID: $0, view: .search).rawValue
-            }
-        } else {
-            legacyDeleted = []
-        }
-        try Task.checkCancellation()
-        let states = items.map {
-            ProviderStoredItemState(identifier: $0.itemIdentifier.rawValue, fingerprint: $0.changeFingerprint)
-        }
-        let anchor = try await storage.commitProviderScope(
-            scopeKey,
-            items: states,
-            initialDeletedIdentifiers: legacyDeleted
+        let legacyDeleted = try await legacyDeletedIdentifiers(
+            migratesLegacySearch: migratesLegacySearch,
+            storage: storage
         )
         try Task.checkCancellation()
-        return anchor
+        let commit = ProviderStoredScopeCommit(
+            scope: scope.storageKey,
+            items: Self.storedStates(from: items),
+            initialDeletedIdentifiers: legacyDeleted
+        )
+        do {
+            switch scope {
+            case .root:
+                let generation = try Self.singleDiscoveryGeneration(in: items)
+                return try await storage.commitProviderScopes(
+                    [commit],
+                    generationCeiling: ProviderGenerationCeiling(
+                        authorityScopes: Self.rootAuthorityScopes,
+                        maximumDiscoveryGeneration: generation
+                    )
+                )
+            case let .discoveryPage(reference):
+                let generation = try Self.singleDiscoveryGeneration(in: items)
+                return try await storage.commitProviderScopes(
+                    [commit],
+                    requiring: Self.publicationRequirements(
+                        for: reference,
+                        generation: generation
+                    ),
+                    openedDiscoveryPage: reference.page
+                )
+            case .search, .recent, .favorites, .workingSet, .single:
+                return try await storage.commitProviderScopes([commit])
+            }
+        } catch is ProviderPublicationError {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+    }
+
+    /// 当前代次的递归 scope 与 working set 必须一次提交，系统永远看不到“目录尚在但 children 被清空”的中间态。
+    func commitWorkingSet(
+        items: [ProviderItem],
+        recursiveScopes: [ProviderDiscoveryScopeSnapshot],
+        rootGeneration: UInt64,
+        migratesLegacySearch: Bool
+    ) async throws -> UInt64 {
+        try Task.checkCancellation()
+        let storage = try requireStorage()
+        let legacyDeleted = try await legacyDeletedIdentifiers(
+            migratesLegacySearch: migratesLegacySearch,
+            storage: storage
+        )
+        var commits = recursiveScopes.map {
+            ProviderStoredScopeCommit(
+                scope: ProviderEnumerationScope.discoveryPage($0.reference).storageKey,
+                items: Self.storedStates(from: $0.items)
+            )
+        }
+        commits.append(
+            ProviderStoredScopeCommit(
+                scope: ProviderEnumerationScope.workingSet.storageKey,
+                items: Self.storedStates(from: items),
+                initialDeletedIdentifiers: legacyDeleted
+            )
+        )
+        do {
+            return try await storage.commitProviderScopes(
+                commits,
+                generationCeiling: ProviderGenerationCeiling(
+                    authorityScopes: Self.rootAuthorityScopes,
+                    maximumDiscoveryGeneration: rootGeneration
+                )
+            )
+        } catch is ProviderPublicationError {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+    }
+
+    /// 首次迁移的旧搜索 occurrence 只在需要它的 scope 提交前扫描一次。
+    private func legacyDeletedIdentifiers(
+        migratesLegacySearch: Bool,
+        storage: AppGroupStorage
+    ) async throws -> [String] {
+        guard migratesLegacySearch else { return [] }
+        return try await storage.readRecoverableItemIDs().map {
+            ProviderIdentifiers.itemIdentifier(recordID: $0, view: .search).rawValue
+        }
+    }
+
+    private static let rootAuthorityScopes = [
+        ProviderEnumerationScope.root.storageKey,
+        ProviderEnumerationScope.workingSet.storageKey
+    ]
+
+    /// 同一推荐 scope 的所有图片和 continuation 必须绑定唯一 generation。
+    private static func singleDiscoveryGeneration(in items: [ProviderItem]) throws -> UInt64 {
+        let generations = Set(items.compactMap(\.discoveryGeneration))
+        guard generations.count == 1, let generation = generations.first else {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+        return generation
+    }
+
+    private static func storedStates(from items: [ProviderItem]) -> [ProviderStoredItemState] {
+        items.map {
+            ProviderStoredItemState(
+                identifier: $0.itemIdentifier.rawValue,
+                fingerprint: $0.changeFingerprint,
+                discoveryGeneration: $0.discoveryGeneration
+            )
+        }
+    }
+
+    /// 从 page 2 回溯到目标页；第一层由 root/working set 较新者授权，其余层由直接父 scope 授权。
+    private static func publicationRequirements(
+        for reference: DiscoveryPageReference,
+        generation: UInt64
+    ) -> [ProviderPublicationRequirement] {
+        (2...reference.page).map { page in
+            let current = DiscoveryPageReference(page: page)!
+            let candidateScopes: [String]
+            if page == 2 {
+                candidateScopes = rootAuthorityScopes
+            } else {
+                let parent = DiscoveryPageReference(page: page - 1)!
+                candidateScopes = [ProviderEnumerationScope.discoveryPage(parent).storageKey]
+            }
+            return ProviderPublicationRequirement(
+                candidateScopes: candidateScopes,
+                itemIdentifier: current.itemIdentifier.rawValue,
+                expectedDiscoveryGeneration: generation
+            )
+        }
     }
 
     /// 从持久化日志读取合并后的 scope 差异。
@@ -351,13 +566,32 @@ struct ProviderOccurrence: Sendable {
     let reference: RecordReference
     let record: RemoteImageRecord
     let lastUsedDate: Date?
+    let discoveryGeneration: UInt64?
 
     /// 非 recent 视图没有独立的最近使用时间。
-    init(reference: RecordReference, record: RemoteImageRecord, lastUsedDate: Date? = nil) {
+    init(
+        reference: RecordReference,
+        record: RemoteImageRecord,
+        lastUsedDate: Date? = nil,
+        discoveryGeneration: UInt64? = nil
+    ) {
         self.reference = reference
         self.record = record
         self.lastUsedDate = lastUsedDate
+        self.discoveryGeneration = discoveryGeneration
     }
+}
+
+/// working set 为某个已打开目录重建的当前代次完整快照。
+struct ProviderDiscoveryScopeSnapshot: Sendable {
+    let reference: DiscoveryPageReference
+    let items: [ProviderItem]
+}
+
+/// working set 一次枚举中要交付的递归成员及其逐目录发布边界。
+struct ProviderRecursiveWorkingSetSnapshot: Sendable {
+    let items: [ProviderItem]
+    let scopes: [ProviderDiscoveryScopeSnapshot]
 }
 
 /// 根目录当前可发布的完整推荐序列；`nextPage` 为空表示远端已无更多内容。
@@ -365,7 +599,4 @@ struct DiscoveryRootFeed: Sendable {
     let generation: UInt64
     let records: [RemoteImageRecord]
     let nextPage: Int?
-
-    /// 泵只关心还能不能继续补页，不需要理解具体页码。
-    var hasMore: Bool { nextPage != nil }
 }

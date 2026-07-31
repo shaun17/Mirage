@@ -7,13 +7,50 @@ enum ProviderIdentifiers {
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
+    static let discoveryPagePrefix = "discover-page:v3:"
+    private static let discoveryPageItemPrefix = "discover-page-item:v3:"
+
     /// 为同一远程记录在不同视图中生成互不冲突的条目标识。
     static func itemIdentifier(recordID: String, view: ProviderView) -> NSFileProviderItemIdentifier {
         NSFileProviderItemIdentifier("\(view.rawValue):\(recordID)")
     }
 
+    /// 推荐续页目录的公开 ID 只包含逻辑页码，刷新 generation 不会让 Finder 误判为新目录。
+    static func discoveryPageIdentifier(
+        _ reference: DiscoveryPageReference
+    ) -> NSFileProviderItemIdentifier {
+        NSFileProviderItemIdentifier(discoveryPagePrefix + String(reference.page))
+    }
+
+    /// 分页图片的 ID 同时编码逻辑页与完整远程 ID；远程 ID 中的冒号原样保留。
+    static func discoveryPageItemIdentifier(
+        recordID: String,
+        page reference: DiscoveryPageReference
+    ) -> NSFileProviderItemIdentifier {
+        NSFileProviderItemIdentifier(
+            discoveryPageItemPrefix + String(reference.page) + ":" + recordID
+        )
+    }
+
+    /// 只接受 canonical v3 续页目录 ID；旧版本、根页和越界页都会失效。
+    static func discoveryPageReference(
+        from identifier: NSFileProviderItemIdentifier
+    ) -> DiscoveryPageReference? {
+        guard identifier.rawValue.hasPrefix(discoveryPagePrefix) else { return nil }
+        let rawPage = String(identifier.rawValue.dropFirst(discoveryPagePrefix.count))
+        return canonicalDiscoveryPage(rawPage)
+    }
+
     /// 从视图条目标识中还原远程记录 ID。
     static func recordReference(from identifier: NSFileProviderItemIdentifier) -> RecordReference? {
+        if identifier.rawValue.hasPrefix(discoveryPageItemPrefix) {
+            let payload = identifier.rawValue.dropFirst(discoveryPageItemPrefix.count)
+            guard let separator = payload.firstIndex(of: ":") else { return nil }
+            let rawPage = String(payload[..<separator])
+            let recordID = String(payload[payload.index(after: separator)...])
+            guard !recordID.isEmpty, let page = canonicalDiscoveryPage(rawPage) else { return nil }
+            return RecordReference(recordID: recordID, discoveryPage: page)
+        }
         for view in ProviderView.allCases {
             let prefix = view.rawValue + ":"
             guard identifier.rawValue.hasPrefix(prefix) else { continue }
@@ -21,6 +58,12 @@ enum ProviderIdentifiers {
             return recordID.isEmpty ? nil : RecordReference(recordID: recordID, view: view)
         }
         return nil
+    }
+
+    /// 拒绝前导零、符号、整数溢出和超过远端推荐容量的非 canonical 页码。
+    private static func canonicalDiscoveryPage(_ rawPage: String) -> DiscoveryPageReference? {
+        guard let page = Int(rawPage), String(page) == rawPage else { return nil }
+        return DiscoveryPageReference(page: page)
     }
 }
 
@@ -32,27 +75,97 @@ enum ProviderView: String, CaseIterable, Sendable {
     case favorite
 }
 
-/// 已解析的远程图片视图引用。推荐流现在是扁平的，位置就等于视图本身。
-struct RecordReference: Hashable, Sendable {
-    let recordID: String
-    let view: ProviderView
+/// 递归推荐目录的稳定逻辑位置。根页只在规划器内部表示，不对系统公开目录 ID。
+struct DiscoveryPageReference: Hashable, Sendable {
+    /// 底层最多 10,000 页、每页 20 张；File Provider 每批 50 张，因此最多公开 4,000 批。
+    static let maximumPage =
+        (SearchPaginationCursor.maximumPage * DiscoveryRecommendation.pageSize)
+        / ProviderDiscoveryTreePlanner.batchSize
 
-    init(recordID: String, view: ProviderView) {
-        self.recordID = recordID
-        self.view = view
+    let page: Int
+
+    init?(page: Int) {
+        guard (2...Self.maximumPage).contains(page) else { return nil }
+        self.page = page
+    }
+
+    init(validating page: Int) throws {
+        guard let reference = Self(page: page) else {
+            throw ProviderDiscoveryTreeError.invalidPage(page)
+        }
+        self = reference
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
-        ProviderIdentifiers.itemIdentifier(recordID: recordID, view: view)
+        ProviderIdentifiers.discoveryPageIdentifier(self)
     }
 
-    /// 每个视图有唯一父目录；推荐图片直接挂在根目录下。
+    /// 第 2 批挂在根目录；更深的“更多图片”挂在上一批目录下。
     var parentItemIdentifier: NSFileProviderItemIdentifier {
-        switch view {
-        case .discover: return .rootContainer
-        case .search: return ProviderIdentifiers.searchBacking
-        case .recent: return ProviderIdentifiers.recent
-        case .favorite: return ProviderIdentifiers.favorites
+        guard page > 2, let parent = DiscoveryPageReference(page: page - 1) else {
+            return .rootContainer
+        }
+        return parent.itemIdentifier
+    }
+}
+
+/// 远程图片的完整公开位置；同一推荐记录可在根页或不同递归页中拥有独立 occurrence。
+struct RecordReference: Hashable, Sendable {
+    let recordID: String
+    private let location: Location
+
+    private enum Location: Hashable, Sendable {
+        case view(ProviderView)
+        case discoveryPage(DiscoveryPageReference)
+    }
+
+    init(recordID: String, view: ProviderView) {
+        self.recordID = recordID
+        location = .view(view)
+    }
+
+    init(recordID: String, discoveryPage: DiscoveryPageReference) {
+        self.recordID = recordID
+        location = .discoveryPage(discoveryPage)
+    }
+
+    /// 分页 occurrence 仍属于 discover 视图，供内容版本和仓库路由保持一致。
+    var view: ProviderView {
+        switch location {
+        case let .view(view): return view
+        case .discoveryPage: return .discover
+        }
+    }
+
+    var discoveryPage: DiscoveryPageReference? {
+        guard case let .discoveryPage(reference) = location else { return nil }
+        return reference
+    }
+
+    var itemIdentifier: NSFileProviderItemIdentifier {
+        switch location {
+        case let .view(view):
+            return ProviderIdentifiers.itemIdentifier(recordID: recordID, view: view)
+        case let .discoveryPage(reference):
+            return ProviderIdentifiers.discoveryPageItemIdentifier(
+                recordID: recordID,
+                page: reference
+            )
+        }
+    }
+
+    /// 普通推荐图片挂根目录；分页 occurrence 必须挂在对应的稳定续页目录下。
+    var parentItemIdentifier: NSFileProviderItemIdentifier {
+        switch location {
+        case let .discoveryPage(reference):
+            return reference.itemIdentifier
+        case let .view(view):
+            switch view {
+            case .discover: return .rootContainer
+            case .search: return ProviderIdentifiers.searchBacking
+            case .recent: return ProviderIdentifiers.recent
+            case .favorite: return ProviderIdentifiers.favorites
+            }
         }
     }
 }

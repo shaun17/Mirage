@@ -21,7 +21,7 @@ public enum DiscoveryRecommendation {
     /// 网络失败时只把内部稳定种子交给 DiceBear，不发送到远端搜索服务。
     public static let fallbackSeed = "mirage-recommendations-fallback-v2"
 
-    /// App 每次追加 20 张，Finder 根目录则只投影同一推荐流的首批 20 张。
+    /// App 每次追加 20 张；File Provider 在同一冻结代次上聚合为每层 50 张。
     public static let pageSize = 20
 
     /// 新的首次读取最多每小时刷新一次；App 的同一轮滚动始终冻结在原 generation。
