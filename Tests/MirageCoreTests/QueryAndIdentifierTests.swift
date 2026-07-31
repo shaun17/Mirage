@@ -31,13 +31,18 @@ final class QueryAndIdentifierTests: XCTestCase {
         )
     }
 
-    /// DiceBear 地址固定为审查过的 10.x PNG 风格，且不包含原始查询。
-    func testDiceBearUsesHashedSeedAndWhitelist() async throws {
+    /// DiceBear 地址固定为 10.x PNG，使用公共接口真实支持的256像素且不包含原始查询。
+    func testDiceBearUsesHashedSeedAndRasterLimit() async throws {
         let records = await DiceBearClient(styles: [.pixelArt]).avatars(query: "Private Name", count: 2)
         XCTAssertEqual(records.count, 2)
         XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v10:pixel-art:") })
         XCTAssertTrue(records.allSatisfy { $0.imageURL.path == "/10.x/pixel-art/png" })
         XCTAssertTrue(records.allSatisfy { !$0.imageURL.absoluteString.localizedCaseInsensitiveContains("Private") })
+        XCTAssertTrue(records.allSatisfy { $0.width == 256 && $0.height == 256 })
+        XCTAssertTrue(records.allSatisfy { record in
+            URLComponents(url: record.imageURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "size" })?.value == "256"
+        })
     }
 
     /// Mirage 命名空间必须保持稳定，避免升级后同一查询产生另一组头像。
@@ -58,5 +63,63 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertEqual(firstPage.count, 20)
         XCTAssertEqual(secondPage.count, 20)
         XCTAssertTrue(Set(firstPage.map(\.id)).isDisjoint(with: Set(secondPage.map(\.id))))
+    }
+
+    /// 本地目录必须覆盖 DiceBear 10.x 公共实例当前提供的全部37种官方风格。
+    func testDiceBearCatalogContainsEveryOfficialStyle() {
+        let expected: Set<String> = [
+            "adventurer", "adventurer-neutral", "avataaars", "avataaars-neutral",
+            "big-ears", "big-ears-neutral", "big-smile", "bottts", "bottts-neutral",
+            "croodles", "croodles-neutral", "disco", "dylan", "fun-emoji", "glass",
+            "glyphs", "icons", "identicon", "initial-face", "initials", "lorelei",
+            "lorelei-neutral", "micah", "miniavs", "notionists", "notionists-neutral",
+            "open-peeps", "personas", "pixel-art", "pixel-art-neutral", "rings",
+            "shape-grid", "shapes", "stripes", "thumbs", "toon-head", "triangles"
+        ]
+        XCTAssertEqual(Set(DiceBearStyle.allCases.map(\.rawValue)), expected)
+        XCTAssertEqual(DiceBearStyle.allCases.count, 37)
+    }
+
+    /// 默认客户端按摘要稳定随机，并应在足够大的确定性样本中覆盖全部官方风格。
+    func testDiceBearDefaultClientStablyUsesAllStyles() async {
+        let client = DiceBearClient()
+        let first = await client.avatars(query: " cat ", offset: 0, count: 20)
+        let repeated = await client.avatars(query: "CAT", offset: 0, count: 20)
+        XCTAssertEqual(first, repeated)
+
+        var observedStyles = Set<String>()
+        for offset in stride(from: 0, to: 2_000, by: 20) {
+            let records = await client.avatars(query: "cat", offset: offset, count: 20)
+            observedStyles.formUnion(records.map {
+                $0.imageURL.deletingLastPathComponent().lastPathComponent
+            })
+        }
+        XCTAssertEqual(observedStyles, Set(DiceBearStyle.allCases.map(\.rawValue)))
+    }
+
+    /// 调整候选目录顺序不能改变同一查询的稳定随机结果。
+    func testDiceBearStyleSelectionDoesNotDependOnCatalogOrder() async {
+        let styles: [DiceBearStyle] = [.adventurer, .icons, .pixelArt, .lorelei]
+        let forward = await DiceBearClient(styles: styles).avatars(query: "cat", count: 20)
+        let reversed = await DiceBearClient(styles: Array(styles.reversed())).avatars(query: "cat", count: 20)
+        XCTAssertEqual(forward, reversed)
+    }
+
+    /// 非CC0风格必须携带真实许可证与作者，不能继续被统一标记为DiceBear CC0。
+    func testDiceBearUsesStyleSpecificAttribution() async throws {
+        let ccByRecords = await DiceBearClient(styles: [.adventurer]).avatars(query: "a", count: 1)
+        let mitRecords = await DiceBearClient(styles: [.icons]).avatars(query: "a", count: 1)
+        let freeUseRecords = await DiceBearClient(styles: [.avataaars]).avatars(query: "a", count: 1)
+        let ccBy = try XCTUnwrap(ccByRecords.first)
+        let mit = try XCTUnwrap(mitRecords.first)
+        let freeUse = try XCTUnwrap(freeUseRecords.first)
+
+        XCTAssertEqual(ccBy.license.identifier, "cc-by-4.0")
+        XCTAssertEqual(ccBy.creator, "Lisa Wischofsky")
+        XCTAssertEqual(mit.license.identifier, "mit")
+        XCTAssertEqual(mit.creator, "The Bootstrap Authors")
+        XCTAssertEqual(freeUse.license.identifier, "avataaars-free-use")
+        XCTAssertEqual(freeUse.creator, "Pablo Stanley")
+        XCTAssertEqual(freeUse.license.url?.host, "www.dicebear.com")
     }
 }

@@ -26,6 +26,7 @@
 		2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */; };
 		2F7EEFF8EED40EE2DA3589D5 /* ImageDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */; };
+		3255F9CAD35B8A4106F839F2 /* DiceBearStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */; };
 		371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712852E84B8494D2634B17A9 /* ImageSearchService.swift */; };
 		3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */; };
 		4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */; };
@@ -90,6 +91,7 @@
 		F14EDABAF01604AC0C9D0CB5 /* MirageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE02568E93053F434F591C23 /* MirageApp.swift */; };
 		F15712F6A60954A508100221 /* libMirageDetailWindow.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0035164C1C62AEC278295E6C /* libMirageDetailWindow.a */; };
 		F32C1EFE00479572FBC681D7 /* BoundedDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */; };
+		FD9E9BBF0C19A37BE49C3666 /* OpenverseContentSafetyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEE2FB4C67079FDC77A4C7B2 /* OpenverseContentSafetyPolicy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -158,6 +160,7 @@
 		072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryRecommendation.swift; sourceTree = "<group>"; };
 		0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchPaginationCursor.swift; sourceTree = "<group>"; };
 		15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepository.swift; sourceTree = "<group>"; };
+		1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearStyle.swift; sourceTree = "<group>"; };
 		1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mirage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderIdentifiers.swift; sourceTree = "<group>"; };
 		220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderThumbnailBatch.swift; sourceTree = "<group>"; };
@@ -211,6 +214,7 @@
 		D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModel.swift; sourceTree = "<group>"; };
 		D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageTranscoder.swift; sourceTree = "<group>"; };
 		DBB194ABED4EB0692CAD44C3 /* SearchModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModelTests.swift; sourceTree = "<group>"; };
+		DEE2FB4C67079FDC77A4C7B2 /* OpenverseContentSafetyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseContentSafetyPolicy.swift; sourceTree = "<group>"; };
 		E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchResultStoring.swift; sourceTree = "<group>"; };
 		E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoader.swift; sourceTree = "<group>"; };
 		EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
@@ -297,6 +301,7 @@
 			children = (
 				EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */,
 				9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */,
+				1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */,
 				84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */,
 				323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */,
 				072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */,
@@ -304,6 +309,7 @@
 				D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */,
 				5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */,
 				91490DF02E6BF161DA088775 /* OpenverseClient.swift */,
+				DEE2FB4C67079FDC77A4C7B2 /* OpenverseContentSafetyPolicy.swift */,
 				D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */,
 				0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */,
 				B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */,
@@ -613,6 +619,7 @@
 			files = (
 				552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */,
 				C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */,
+				3255F9CAD35B8A4106F839F2 /* DiceBearStyle.swift in Sources */,
 				99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */,
 				545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */,
 				5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */,
@@ -620,6 +627,7 @@
 				AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */,
 				4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */,
 				1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */,
+				FD9E9BBF0C19A37BE49C3666 /* OpenverseContentSafetyPolicy.swift in Sources */,
 				A044C48E7A09C0FD50AF12B2 /* RemoteImageRecord.swift in Sources */,
 				EF9C34C91E5E4A88CA41E68E /* SearchPaginationCursor.swift in Sources */,
 				548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */,

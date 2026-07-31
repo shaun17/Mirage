@@ -8,15 +8,15 @@ public enum DiscoveryRecommendation {
     /// 当前关键词耗尽后自动切到下一个，同一条逻辑流因此接近无限。
     /// 顺序即轮换顺序，只增不改——改动会让冻结代次的游标错位，需要连带升级 catalogKey。
     public static let queries = [
-        "portrait", "face", "people", "landscape", "nature",
-        "wildlife", "architecture", "flower", "food", "vintage photo"
+        "portrait", "face", "people", "landscape", "architecture",
+        "cityscape", "interior design", "workspace", "texture", "technology"
     ]
 
     /// 单关键词场景（内容筛选与无共享存储时的网络兜底）仍使用目录首词。
     public static let query = queries[0]
 
-    /// v4 引入关键词轮换游标；旧快照的「逻辑页=远端页」语义不再适用，读取时整代作废。
-    public static let catalogKey = "mirage-recommendations-v4"
+    /// v5 收紧照片质量与内容安全并扩展头像目录；旧快照可能含不适内容，读取时整代作废。
+    public static let catalogKey = "mirage-recommendations-v5"
 
     /// 网络失败时只把内部稳定种子交给 DiceBear，不发送到远端搜索服务。
     public static let fallbackSeed = "mirage-recommendations-fallback-v2"

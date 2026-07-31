@@ -36,7 +36,7 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
         self.endpoint = endpoint
     }
 
-    /// 请求时始终声明成熟内容关闭，并把授权范围收窄为 CC0 与 PDM。
+    /// 只请求大尺寸摄影，先排除高风险生物来源，再由响应过滤器完成主题级安全检查。
     public func search(query: String, page: Int = 1, pageSize: Int = 20) async throws -> ImageSearchPage {
         try Task.checkCancellation()
         let safePage = max(page, 1)
@@ -46,6 +46,13 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "mature", value: "false"),
             URLQueryItem(name: "license", value: "cc0,pdm"),
+            URLQueryItem(name: "filter_dead", value: "true"),
+            URLQueryItem(name: "category", value: "photograph"),
+            URLQueryItem(name: "size", value: "large"),
+            URLQueryItem(
+                name: "excluded_source",
+                value: OpenverseContentSafetyPolicy.excludedAPISources.joined(separator: ",")
+            ),
             URLQueryItem(name: "page", value: String(safePage)),
             URLQueryItem(name: "page_size", value: String(safePageSize))
         ]
@@ -87,12 +94,18 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
         }
     }
 
-    /// 只接纳 UUID、非成熟、HTTPS 且授权确实为 CC0/PDM 的记录。
+    /// 只接纳 UUID、非成熟、HTTPS、公版授权且通过不适内容过滤的摄影记录。
     private static func makeRecord(_ value: SearchResult) -> RemoteImageRecord? {
         guard let uuid = UUID(uuidString: value.id), value.mature == false,
               let imageURL = secureURL(value.url), let thumbnailURL = secureURL(value.thumbnail) else { return nil }
         let licenseID = value.license.lowercased()
         guard licenseID == "cc0" || licenseID == "pdm" else { return nil }
+        guard OpenverseContentSafetyPolicy.allows(
+            title: value.title,
+            tags: value.tags?.map(\.name) ?? [],
+            source: value.source,
+            category: value.category
+        ) else { return nil }
         let license = LicenseInfo(
             identifier: licenseID,
             displayName: licenseID == "cc0" ? "CC0 1.0" : "Public Domain Mark",
@@ -159,16 +172,23 @@ private struct SearchResult: Decodable {
     let license: String
     let licenseURL: String?
     let mature: Bool?
+    let source: String?
+    let category: String?
+    let tags: [SearchTag]?
     let width: Int?
     let height: Int?
     let filetype: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, creator, url, thumbnail, license, mature, width, height, filetype
+        case id, title, creator, url, thumbnail, license, mature, source, category, tags, width, height, filetype
         case creatorURL = "creator_url"
         case foreignLandingURL = "foreign_landing_url"
         case licenseURL = "license_url"
     }
+}
+
+private struct SearchTag: Decodable {
+    let name: String
 }
 
 private extension String {

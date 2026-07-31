@@ -5,6 +5,21 @@ import XCTest
 final class DiscoveryFeedRepositoryTests: XCTestCase {
     private var temporaryURL: URL!
 
+    /// 首页推荐词不应主动放大昆虫、节肢动物或其他容易引起不适的自然主题。
+    func testRecommendationCatalogAvoidsSensitiveThemesAndInvalidatesOldSnapshots() {
+        let excludedTerms: Set<String> = [
+            "insect", "bug", "spider", "wildlife", "nature", "flower"
+        ]
+        for query in DiscoveryRecommendation.queries {
+            let terms = Set(query.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            XCTAssertTrue(
+                terms.isDisjoint(with: excludedTerms),
+                "推荐词不应包含高风险主题：\(query)"
+            )
+        }
+        XCTAssertEqual(DiscoveryRecommendation.catalogKey, "mirage-recommendations-v5")
+    }
+
     /// 每个测试使用独立共享目录，避免推荐 generation 与其他测试相互污染。
     override func setUpWithError() throws {
         temporaryURL = FileManager.default.temporaryDirectory
