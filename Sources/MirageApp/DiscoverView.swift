@@ -5,7 +5,7 @@ import SwiftUI
 struct DiscoverView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var searchModel: SearchModel
-    /// 详情交给窗口级检查器统一呈现。
+    /// 详情交给窗口级覆盖抽屉统一呈现。
     var onShowDetails: (RemoteImageRecord) -> Void = { _ in }
 
     var body: some View {
@@ -28,14 +28,20 @@ struct DiscoverView: View {
 
     /// 筛选工具条固定在结果滚动区上方，不随空态或图片数量改变纵向位置。
     private var filterBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            Text("内容类型")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
             Picker("内容类型", selection: $searchModel.filter) {
                 ForEach(SearchFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
                 }
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 280)
+            .frame(width: 220, alignment: .leading)
 
             Text("也可输入“头像:”或“图片:”前缀")
                 .font(.caption)
@@ -47,10 +53,10 @@ struct DiscoverView: View {
                     .help(message)
                     .accessibilityLabel(message)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
     }
 
     /// 每一种搜索结果都有独立视觉和辅助功能语义。

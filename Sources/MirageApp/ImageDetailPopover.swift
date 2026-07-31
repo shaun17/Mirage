@@ -5,11 +5,27 @@ import SwiftUI
 /// 展示归属、来源和许可信息，不对公版状态做超出来源声明的保证。
 struct ImageDetailPopover: View {
     let record: RemoteImageRecord
+    let onDismiss: () -> Void
 
     /// 展示图片预览及可核对的来源、作者和许可信息。
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("图片详情")
+                    .font(.headline)
+
+                Spacer()
+
+                Button(action: onDismiss) {
+                    Label("收起详情", systemImage: "chevron.right.2")
+                        .labelStyle(.iconOnly)
+                }
+                .help("收起详情")
+                .accessibilityLabel("收起详情")
+            }
+
             ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: 512)
+                .id(record.thumbnailURL)
                 .frame(width: 320, height: 220)
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

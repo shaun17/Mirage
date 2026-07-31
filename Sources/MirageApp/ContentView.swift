@@ -10,10 +10,7 @@ struct ContentView: View {
     /// 场景阶段用于在窗口重新进入前台时同步 File Provider 写入的数据。
     @Environment(\.scenePhase) private var scenePhase
 
-    /// 窗口级协调器先扩展宿主窗口，再让系统检查器占用新增空间。
-    @State private var detailWindowCoordinator = DetailWindowCoordinator()
-
-    /// 整个窗口共用一个详情检查器；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
+    /// 整个窗口共用一个覆盖式详情抽屉；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
     @State private var inspectedRecord: RemoteImageRecord?
     @State private var showsUsageHelp = false
 
@@ -25,17 +22,26 @@ struct ContentView: View {
             selectedContent
         }
         .navigationTitle("Mirage")
-        .inspector(isPresented: inspectorIsPresented) {
-            Group {
-                if let inspectedRecord {
-                    ImageDetailPopover(record: inspectedRecord)
+        .overlay(alignment: .trailing) {
+            if let inspectedRecord {
+                ImageDetailPopover(
+                    record: inspectedRecord,
+                    onDismiss: dismissInspector
+                )
+                .frame(width: DetailDrawerMetrics.width)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background {
+                    Rectangle()
+                        .fill(.regularMaterial)
                 }
+                .overlay(alignment: .leading) {
+                    Color.secondary.opacity(0.2)
+                        .frame(width: 1)
+                }
+                .contentShape(Rectangle())
+                .shadow(color: .black.opacity(0.12), radius: 10, x: -3)
+                .transition(.identity)
             }
-            .inspectorColumnWidth(DetailDrawerMetrics.width)
-        }
-        .background {
-            DetailWindowReader(coordinator: detailWindowCoordinator)
-                .frame(width: 0, height: 0)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -47,14 +53,6 @@ struct ContentView: View {
                 .help("如何在上传框中使用 Mirage")
                 .popover(isPresented: $showsUsageHelp, arrowEdge: .bottom) {
                     UsageHelpPopover()
-                }
-
-                if inspectedRecord != nil {
-                    Button(action: dismissInspector) {
-                        Label("收起详情", systemImage: "chevron.right.2")
-                    }
-                    .help("收起详情")
-                    .accessibilityLabel("收起详情")
                 }
             }
         }
@@ -136,35 +134,25 @@ struct ContentView: View {
         }
     }
 
-    /// 第一次选择先扩展外层窗口；检查器已打开时只替换详情内容。
+    /// 覆盖式抽屉不参与主内容布局；已打开时选择其他图片只替换详情内容。
     private func presentInspector(for record: RemoteImageRecord) {
-        detailWindowCoordinator.setPresented(true)
         withoutPresentationAnimation {
             inspectedRecord = record
         }
     }
 
-    /// 所有收起入口共用同一条路径，确保窗口 frame 与详情选择同步恢复。
+    /// 所有收起入口只更新一次展示状态，避免触发额外的窗口级布局。
     private func dismissInspector() {
-        detailWindowCoordinator.setPresented(false)
         withoutPresentationAnimation {
             inspectedRecord = nil
         }
     }
 
-    /// 禁用检查器自身过渡，避免窗口扩展和 adaptive grid 在中间帧不同步。
+    /// 禁用抽屉自身过渡，避免出现时产生额外的位移动画。
     private func withoutPresentationAnimation(_ updates: () -> Void) {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction, updates)
-    }
-
-    /// 选中记录即打开检查器；系统关闭操作也复用统一收起路径。
-    private var inspectorIsPresented: Binding<Bool> {
-        Binding(
-            get: { inspectedRecord != nil },
-            set: { if !$0 { dismissInspector() } }
-        )
     }
 
     /// 把可选错误消息转换成 SwiftUI Alert 所需的绑定。
