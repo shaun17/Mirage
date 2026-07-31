@@ -11,7 +11,14 @@ public enum DiceBearStyle: String, CaseIterable, Codable, Sendable {
 
 public protocol DiceBearProviding: Sendable {
     /// 生成稳定、无个人信息的头像元数据，不发起网络请求。
-    func avatars(query: String, count: Int) async -> [RemoteImageRecord]
+    func avatars(query: String, offset: Int, count: Int) async -> [RemoteImageRecord]
+}
+
+public extension DiceBearProviding {
+    /// 不需要分页的调用统一从第一个头像开始，保持发现页等旧调用语义。
+    func avatars(query: String, count: Int) async -> [RemoteImageRecord] {
+        await avatars(query: query, offset: 0, count: count)
+    }
 }
 
 /// 构造 DiceBear 10.x PNG 地址；真正的图片下载由消费方按需进行。
@@ -28,10 +35,13 @@ public struct DiceBearClient: DiceBearProviding, Sendable {
     }
 
     /// 查询文字只参与本地 SHA-256，URL、ID 与标题均不会泄露原始文字。
-    public func avatars(query: String, count: Int) async -> [RemoteImageRecord] {
+    public func avatars(query: String, offset: Int = 0, count: Int) async -> [RemoteImageRecord] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let safeOffset = max(offset, 0)
         let safeCount = min(max(count, 0), 20)
-        return (0..<safeCount).compactMap { index in
+        let end = safeOffset.addingReportingOverflow(safeCount)
+        guard !end.overflow else { return [] }
+        return (safeOffset..<end.partialValue).compactMap { index in
             let style = styles[index % styles.count]
             let material = "mirage|\(normalized)|\(index)"
             let seedHash = StableImageID.seedHash(material)

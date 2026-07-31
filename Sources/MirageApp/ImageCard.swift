@@ -1,20 +1,18 @@
 import MirageCore
 import SwiftUI
 
-/// 单个图片卡片；主按钮打开详情，收藏按钮始终有明确的辅助功能状态。
+/// 单个图片卡片；主按钮把详情请求交给上层，收藏按钮始终有明确的辅助功能状态。
 struct ImageCard: View {
     let record: RemoteImageRecord
     let isFavorite: Bool
     let allowsFavoriteChanges: Bool
     let onToggleFavorite: () -> Void
-
-    @State private var showsDetails = false
+    /// 详情由整个网格共用一个检查器呈现；每张卡片各挂一个 popover 会在长列表里堆出成百个呈现上下文。
+    let onShowDetails: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Button {
-                showsDetails = true
-            } label: {
+            Button(action: onShowDetails) {
                 preview
             }
             .buttonStyle(.plain)
@@ -47,31 +45,25 @@ struct ImageCard: View {
                 }
             }
         }
-        .popover(isPresented: $showsDetails, arrowEdge: .trailing) {
-            ImageDetailPopover(record: record)
-        }
     }
 
-    /// 使用系统异步图片加载器，并为加载和失败阶段提供稳定占位。
+    /// 走共享缓存并按卡片尺寸降采样，滚动回来不再重新下载与全尺寸解码。
+    ///
+    /// 图片必须以 overlay 呈现而不是直接参与布局：`scaledToFill` 的横图会把
+    /// 只约束了 `maxWidth` 的弹性 frame 撑到自己的填充宽度，卡片随之溢出网格
+    /// 单元格、相互覆盖。overlay 不参与布局，卡片尺寸只由占位框决定，
+    /// 超出部分被裁切在圆角内。
     @ViewBuilder
     private var preview: some View {
-        AsyncImage(url: record.thumbnailURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .failure:
-                Image(systemName: "photo.badge.exclamationmark")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            default:
-                ProgressView()
+        Color.clear
+            .frame(height: 158)
+            .frame(maxWidth: .infinity)
+            .background(.quaternary)
+            .overlay {
+                ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: 512)
             }
-        }
-        .frame(height: 158)
-        .frame(maxWidth: .infinity)
-        .background(.quaternary)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     /// 将内部来源枚举转换成用户可识别的服务名称。

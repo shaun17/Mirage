@@ -8,6 +8,18 @@ public enum DiscoveryFeedSource: String, Codable, Equatable, Sendable {
     case fallback
 }
 
+/// 推荐流下一次远端抓取的位置：目录中的关键词序号与该关键词内的远端页码。
+/// 逻辑页与远端位置由它解耦——单关键词耗尽后游标切到下一关键词，逻辑流不中断。
+public struct DiscoveryRemoteCursor: Codable, Equatable, Sendable {
+    public let queryIndex: Int
+    public let remotePage: Int
+
+    public init(queryIndex: Int, remotePage: Int) {
+        self.queryIndex = queryIndex
+        self.remotePage = remotePage
+    }
+}
+
 /// 根目录推荐头像的持久化提交单元，记录顺序本身就是 Finder 的展示顺序。
 public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     public let generation: UInt64
@@ -16,6 +28,9 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     public let source: DiscoveryFeedSource
     public let catalogKey: String
     public let queryKey: String
+    public let pageSize: Int
+    public let nextPage: Int?
+    public let remoteCursor: DiscoveryRemoteCursor?
 
     public init(
         generation: UInt64,
@@ -23,7 +38,10 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         records: [RemoteImageRecord],
         source: DiscoveryFeedSource,
         catalogKey: String,
-        queryKey: String
+        queryKey: String,
+        pageSize: Int = DiscoveryRecommendation.pageSize,
+        nextPage: Int? = nil,
+        remoteCursor: DiscoveryRemoteCursor? = nil
     ) {
         self.generation = generation
         self.refreshedAt = refreshedAt
@@ -31,6 +49,63 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         self.source = source
         self.catalogKey = catalogKey
         self.queryKey = queryKey
+        self.pageSize = pageSize
+        self.nextPage = nextPage
+        self.remoteCursor = remoteCursor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case generation, refreshedAt, records, source, catalogKey, queryKey, pageSize, nextPage
+        case remoteCursor
+    }
+
+    /// 旧版快照没有分页字段，读取时保留内容但用记录数量作为兼容页大小。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        generation = try container.decode(UInt64.self, forKey: .generation)
+        refreshedAt = try container.decode(Date.self, forKey: .refreshedAt)
+        records = try container.decode([RemoteImageRecord].self, forKey: .records)
+        source = try container.decode(DiscoveryFeedSource.self, forKey: .source)
+        catalogKey = try container.decode(String.self, forKey: .catalogKey)
+        queryKey = try container.decode(String.self, forKey: .queryKey)
+        pageSize = try container.decodeIfPresent(Int.self, forKey: .pageSize)
+            ?? max(records.count, 1)
+        nextPage = try container.decodeIfPresent(Int.self, forKey: .nextPage)
+        remoteCursor = try container.decodeIfPresent(DiscoveryRemoteCursor.self, forKey: .remoteCursor)
+    }
+
+    /// 显式编码全部分页字段，使跨进程读取始终拿到完整冻结状态。
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(generation, forKey: .generation)
+        try container.encode(refreshedAt, forKey: .refreshedAt)
+        try container.encode(records, forKey: .records)
+        try container.encode(source, forKey: .source)
+        try container.encode(catalogKey, forKey: .catalogKey)
+        try container.encode(queryKey, forKey: .queryKey)
+        try container.encode(pageSize, forKey: .pageSize)
+        try container.encodeIfPresent(nextPage, forKey: .nextPage)
+        try container.encodeIfPresent(remoteCursor, forKey: .remoteCursor)
+    }
+}
+
+/// Finder 已经观察到的单页稳定快照；即使完整 generation 被裁剪，旧目录仍可恢复和物化。
+public struct DiscoveryPageSnapshot: Codable, Equatable, Sendable {
+    public let generation: UInt64
+    public let page: Int
+    public let records: [RemoteImageRecord]
+    public let nextPage: Int?
+
+    public init(
+        generation: UInt64,
+        page: Int,
+        records: [RemoteImageRecord],
+        nextPage: Int?
+    ) {
+        self.generation = generation
+        self.page = page
+        self.records = records
+        self.nextPage = nextPage
     }
 }
 
@@ -62,6 +137,7 @@ public struct ProviderStoredChanges: Equatable, Sendable {
 public enum ProviderChangeStorageError: Error, Equatable, Sendable {
     case anchorExpired
     case invalidAnchor
+    case anchorExhausted
 }
 
 public struct RecentImageRecord: Codable, Identifiable, Equatable, Sendable {
@@ -105,6 +181,19 @@ public enum AppGroupStorageError: Error, LocalizedError, Sendable {
     }
 }
 
+/// Finder 持有的推荐 generation 已被历史窗口淘汰，需要从第一页重新枚举。
+public enum DiscoveryFeedStorageError: Error, Equatable, Sendable {
+    case snapshotExpired
+    case generationExhausted
+    case invalidGenerationState
+}
+
+/// 首页刷新使用的持久 CAS 结果；竞速输家必须采用胜者快照，不能覆盖更新的 generation。
+public enum DiscoveryFeedCommitResult: Equatable, Sendable {
+    case committed(DiscoveryFeedSnapshot)
+    case superseded(current: DiscoveryFeedSnapshot?)
+}
+
 /// App 与扩展共享的文件存储。Actor 保护实例内并发，路径锁与 fcntl 保护跨进程事务。
 public actor AppGroupStorage {
     public static let appGroupIdentifier = "N4TQ2P9B46.group.com.wenren.Mirage"
@@ -114,16 +203,23 @@ public actor AppGroupStorage {
     private let itemsURL: URL
     private let recentURL: URL
     private let searchItemsURL: URL
+    private let discoveryItemsURL: URL
+    private let discoverySnapshotsURL: URL
+    private let discoveryPagesURL: URL
     private let favoritesURL: URL
     private let discoverySnapshotURL: URL
+    private let discoveryGenerationStateURL: URL
     private let searchBackingURL: URL
     private let providerStateURL: URL
     private let lockDirectoryURL: URL
     private var snapshotRevision: UInt64 = 0
     private static let providerHistoryLimit = 64
-    private static let providerSchemaVersion = 1
+    // v2 把 Finder 推荐目录从 generation 身份迁移为稳定逻辑页，旧 scope 必须开启新锚点纪元。
+    private static let providerSchemaVersion = 2
     private static let favoritesSchemaVersion = 1
     private static let searchBackingSchemaVersion = 1
+    private static let discoveryGenerationSchemaVersion = 1
+    private static let discoverySnapshotHistoryLimit = 8
 
     /// 测试可传临时目录；生产环境留空后解析固定 App Group。
     public init(baseURL injectedURL: URL? = nil, fileManager: FileManager = .default) throws {
@@ -137,19 +233,36 @@ public actor AppGroupStorage {
         } else {
             throw AppGroupStorageError.unavailableAppGroup(Self.appGroupIdentifier)
         }
+        // 同一目录可能经由符号链接或包含“..”的别名传入；先归一化，确保进程锁键唯一。
+        let canonicalURL = resolvedURL.standardizedFileURL.resolvingSymlinksInPath()
         self.fileManager = fileManager
-        self.baseURL = resolvedURL
-        self.itemsURL = resolvedURL.appendingPathComponent("items", isDirectory: true)
-        self.recentURL = resolvedURL.appendingPathComponent("recent", isDirectory: true)
-        self.searchItemsURL = resolvedURL.appendingPathComponent("search-items", isDirectory: true)
-        self.favoritesURL = resolvedURL.appendingPathComponent("favorites.json")
-        self.discoverySnapshotURL = resolvedURL.appendingPathComponent("discovery-feed.json")
-        self.searchBackingURL = resolvedURL.appendingPathComponent("search-backing.json")
-        self.providerStateURL = resolvedURL.appendingPathComponent("provider-sync-state.json")
-        self.lockDirectoryURL = resolvedURL.appendingPathComponent("locks", isDirectory: true)
+        self.baseURL = canonicalURL
+        self.itemsURL = canonicalURL.appendingPathComponent("items", isDirectory: true)
+        self.recentURL = canonicalURL.appendingPathComponent("recent", isDirectory: true)
+        self.searchItemsURL = canonicalURL.appendingPathComponent("search-items", isDirectory: true)
+        self.discoveryItemsURL = canonicalURL.appendingPathComponent("discovery-items", isDirectory: true)
+        self.discoverySnapshotsURL = canonicalURL.appendingPathComponent(
+            "discovery-snapshots",
+            isDirectory: true
+        )
+        self.discoveryPagesURL = canonicalURL.appendingPathComponent(
+            "discovery-pages",
+            isDirectory: true
+        )
+        self.favoritesURL = canonicalURL.appendingPathComponent("favorites.json")
+        self.discoverySnapshotURL = canonicalURL.appendingPathComponent("discovery-feed.json")
+        self.discoveryGenerationStateURL = canonicalURL.appendingPathComponent(
+            "discovery-generation.json"
+        )
+        self.searchBackingURL = canonicalURL.appendingPathComponent("search-backing.json")
+        self.providerStateURL = canonicalURL.appendingPathComponent("provider-sync-state.json")
+        self.lockDirectoryURL = canonicalURL.appendingPathComponent("locks", isDirectory: true)
         try fileManager.createDirectory(at: itemsURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: recentURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: searchItemsURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: discoveryItemsURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: discoverySnapshotsURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: discoveryPagesURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: lockDirectoryURL, withIntermediateDirectories: true)
     }
 
@@ -180,7 +293,84 @@ public actor AppGroupStorage {
     /// 读取上次完整提交的发现快照；记录内容直接来自快照，不依赖全局 item 文件。
     public func readDiscoveryFeedSnapshot() throws -> DiscoveryFeedSnapshot? {
         try withExclusiveFileLock(named: "discovery-feed") {
-            try readDiscoveryFeedSnapshotUnlocked()
+            guard let snapshot = try readDiscoveryFeedSnapshotUnlocked() else { return nil }
+            let archiveURL = discoveryGenerationURL(snapshot.generation)
+            if !fileManager.fileExists(atPath: archiveURL.path) {
+                // 旧单文件快照只迁移一次，之后的普通读取保持为纯读取路径。
+                try persistDiscoverySnapshotUnlocked(snapshot, makeCurrent: true)
+            }
+            return snapshot
+        }
+    }
+
+    /// 读取指定 generation 的冻结推荐快照，供 Finder 续页避免跨刷新混读。
+    public func readDiscoveryFeedSnapshot(generation: UInt64) throws -> DiscoveryFeedSnapshot? {
+        try withExclusiveFileLock(named: "discovery-feed") {
+            if let archived = try readDiscoveryFeedSnapshotUnlocked(generation: generation) {
+                return archived
+            }
+            guard let current = try readDiscoveryFeedSnapshotUnlocked(),
+                  current.generation == generation else { return nil }
+            try persistDiscoverySnapshotUnlocked(current, makeCurrent: true)
+            return current
+        }
+    }
+
+    /// 读取已提交的单页；旧版本只有完整快照时会在锁内一次性迁移为长期页快照。
+    public func readDiscoveryPageSnapshot(
+        generation: UInt64,
+        page: Int
+    ) throws -> DiscoveryPageSnapshot? {
+        try Self.validateDiscoveryPage(generation: generation, page: page)
+        return try withExclusiveFileLock(named: "discovery-feed") {
+            if let stored = try readDiscoveryPageSnapshotUnlocked(
+                generation: generation,
+                page: page
+            ) {
+                return stored
+            }
+            guard let feed = try readDiscoveryFeedSnapshotUnlocked(generation: generation),
+                  let migrated = try discoveryPageSnapshot(from: feed, page: page) else {
+                return nil
+            }
+            try persistDiscoveryPageSnapshotUnlocked(migrated)
+            return migrated
+        }
+    }
+
+    /// 只读取已经真实落盘的页，不从完整快照迁移；用于判断父目录是否曾经发布下一层入口。
+    public func readPersistedDiscoveryPageSnapshot(
+        generation: UInt64,
+        page: Int
+    ) throws -> DiscoveryPageSnapshot? {
+        try Self.validateDiscoveryPage(generation: generation, page: page)
+        return try withExclusiveFileLock(named: "discovery-feed") {
+            try readDiscoveryPageSnapshotUnlocked(generation: generation, page: page)
+        }
+    }
+
+    /// 原子保存 Finder 已经枚举的一页及其下一目录关系，记录顺序本身就是成员边界。
+    public func commitDiscoveryPageSnapshot(
+        generation: UInt64,
+        page: Int,
+        records: [RemoteImageRecord],
+        nextPage: Int?
+    ) throws -> DiscoveryPageSnapshot {
+        try Self.validateDiscoveryPage(generation: generation, page: page)
+        try Self.validateDiscoveryContinuation(currentPage: page, nextPage: nextPage)
+        return try withExclusiveFileLock(named: "discovery-feed") {
+            var seen = Set<String>()
+            let snapshot = DiscoveryPageSnapshot(
+                generation: generation,
+                page: page,
+                records: records.prefix(DiscoveryRecommendation.pageSize).filter {
+                    seen.insert($0.id).inserted
+                },
+                nextPage: nextPage
+            )
+            try persistDiscoveryRecordsUnlocked(snapshot.records)
+            try persistDiscoveryPageSnapshotUnlocked(snapshot)
+            return snapshot
         }
     }
 
@@ -191,35 +381,140 @@ public actor AppGroupStorage {
         refreshedAt: Date,
         source: DiscoveryFeedSource,
         catalogKey: String,
-        queryKey: String
+        queryKey: String,
+        pageSize: Int = DiscoveryRecommendation.pageSize,
+        nextPage: Int? = nil,
+        remoteCursor: DiscoveryRemoteCursor? = nil
     ) throws -> DiscoveryFeedSnapshot {
         try withExclusiveFileLock(named: "discovery-feed") {
-            let nextGeneration = (try readDiscoveryFeedSnapshotUnlocked()?.generation ?? 0) &+ 1
-            let snapshot = DiscoveryFeedSnapshot(
-                generation: nextGeneration,
-                refreshedAt: refreshedAt,
+            try commitDiscoveryFeedUnlocked(
                 records: records,
+                refreshedAt: refreshedAt,
                 source: source,
                 catalogKey: catalogKey,
-                queryKey: queryKey
+                queryKey: queryKey,
+                pageSize: pageSize,
+                nextPage: nextPage,
+                remoteCursor: remoteCursor
             )
-            try encode(snapshot).write(to: discoverySnapshotURL, options: .atomic)
-            return snapshot
+        }
+    }
+
+    /// 仅当首页指针仍是网络请求开始前观察到的 generation 时刷新，避免迟到响应覆盖竞速胜者。
+    public func commitDiscoveryFeedIfCurrent(
+        expectedGeneration: UInt64?,
+        records: [RemoteImageRecord],
+        refreshedAt: Date,
+        source: DiscoveryFeedSource,
+        catalogKey: String,
+        queryKey: String,
+        pageSize: Int = DiscoveryRecommendation.pageSize,
+        nextPage: Int? = nil,
+        remoteCursor: DiscoveryRemoteCursor? = nil
+    ) throws -> DiscoveryFeedCommitResult {
+        try withExclusiveFileLock(named: "discovery-feed") {
+            let current = try readDiscoveryFeedSnapshotUnlocked()
+            guard current?.generation == expectedGeneration else {
+                return .superseded(current: current)
+            }
+            let committed = try commitDiscoveryFeedUnlocked(
+                records: records,
+                refreshedAt: refreshedAt,
+                source: source,
+                catalogKey: catalogKey,
+                queryKey: queryKey,
+                pageSize: pageSize,
+                nextPage: nextPage,
+                remoteCursor: remoteCursor
+            )
+            return .committed(committed)
+        }
+    }
+
+    /// 在同一 generation 内按页游标和记录偏移执行 CAS；竞速输家直接复用锁内最新快照。
+    @discardableResult
+    public func appendDiscoveryFeed(
+        generation: UInt64,
+        expectedNextPage requestedPage: Int,
+        expectedRecordCount: Int,
+        records: [RemoteImageRecord],
+        nextPage: Int?,
+        remoteCursor: DiscoveryRemoteCursor? = nil
+    ) throws -> DiscoveryFeedSnapshot {
+        try withExclusiveFileLock(named: "discovery-feed") {
+            let archived = try readDiscoveryFeedSnapshotUnlocked(generation: generation)
+            let current = try readDiscoveryFeedSnapshotUnlocked()
+            guard let base = archived ?? current, base.generation == generation else {
+                throw DiscoveryFeedStorageError.snapshotExpired
+            }
+            // 网络请求开始后其他进程可能已经提交同一页；只有仍匹配旧游标和旧偏移的调用方能落盘。
+            guard base.nextPage == requestedPage,
+                  base.records.count == expectedRecordCount else {
+                return base
+            }
+            var seen = Set<String>()
+            let merged = (base.records + records).filter { seen.insert($0.id).inserted }
+            let updated = DiscoveryFeedSnapshot(
+                generation: base.generation,
+                refreshedAt: base.refreshedAt,
+                records: merged,
+                source: base.source,
+                catalogKey: base.catalogKey,
+                queryKey: base.queryKey,
+                pageSize: base.pageSize,
+                nextPage: nextPage,
+                remoteCursor: remoteCursor
+            )
+            try persistDiscoverySnapshotUnlocked(
+                updated,
+                makeCurrent: current?.generation == generation
+            )
+            return updated
+        }
+    }
+
+    /// 按稳定 ID 回查任一发现 generation 的记录，确保刷新竞态中的可见旧项仍可下载。
+    public func readDiscoveryRecord(id: String) throws -> RemoteImageRecord? {
+        try withExclusiveFileLock(named: "discovery-feed") {
+            let url = discoveryItemURL(id: id)
+            if fileManager.fileExists(atPath: url.path) {
+                return try decode(RemoteImageRecord.self, from: url)
+            }
+            if let current = try readDiscoveryFeedSnapshotUnlocked(),
+               let record = current.records.first(where: { $0.id == id }) {
+                try persistDiscoveryRecordsUnlocked([record])
+                return record
+            }
+            for snapshotURL in try discoverySnapshotFilesUnlocked() {
+                let snapshot = try decode(DiscoveryFeedSnapshot.self, from: snapshotURL)
+                if let record = snapshot.records.first(where: { $0.id == id }) {
+                    try persistDiscoveryRecordsUnlocked([record])
+                    return record
+                }
+            }
+            return nil
         }
     }
 
     /// 搜索 backing 提交当前顺序，并把每条权威记录独立持久化，旧搜索 occurrence 仍可回查。
-    public func commitSearchBacking(queryKey: String, records: [RemoteImageRecord]) throws {
+    public func commitSearchBacking(
+        queryKey: String,
+        records: [RemoteImageRecord],
+        appending: Bool = false
+    ) throws {
         try Task.checkCancellation()
         try withExclusiveFileLock(named: "search-backing") {
             // 覆盖当前快照前先迁移其中记录，保证升级后的首次新查询也不会丢失旧 occurrence。
             let previous = try readSearchBackingSnapshotUnlocked()
             try persistSearchRecordsUnlocked(previous.records)
-            try persistSearchRecordsUnlocked(records)
+            var seen = Set<String>()
+            let base = appending && previous.queryKey == queryKey ? previous.records : []
+            let committedRecords = (base + records).filter { seen.insert($0.id).inserted }
+            try persistSearchRecordsUnlocked(committedRecords)
             let snapshot = SearchBackingSnapshot(
                 schemaVersion: Self.searchBackingSchemaVersion,
                 queryKey: queryKey,
-                records: records,
+                records: committedRecords,
                 committedAt: Date()
             )
             try encode(snapshot).write(to: searchBackingURL, options: .atomic)
@@ -263,52 +558,18 @@ public actor AppGroupStorage {
         items: [ProviderStoredItemState],
         initialDeletedIdentifiers: [String] = []
     ) throws -> UInt64 {
-        try withExclusiveFileLock(named: "provider-sync-state") {
-            var state = try readProviderStateUnlocked()
-            var scopeState = state.scopes[scope] ?? ProviderScopeState()
-            let oldItems = Dictionary(uniqueKeysWithValues: scopeState.items.map { ($0.identifier, $0) })
-            let newItems = Dictionary(uniqueKeysWithValues: items.map { ($0.identifier, $0) })
-            var deleted = Set(oldItems.keys).subtracting(newItems.keys)
-            if scopeState.hasCommittedSnapshot == false {
-                deleted.formUnion(initialDeletedIdentifiers.filter { newItems[$0] == nil })
-            }
-            let updated = Set(newItems.compactMap { identifier, item in
-                oldItems[identifier] == item ? nil : identifier
-            })
-            scopeState.items = items
-            scopeState.hasCommittedSnapshot = true
-            guard !deleted.isEmpty || !updated.isEmpty else {
-                state.scopes[scope] = scopeState
-                try writeProviderStateUnlocked(state)
-                return state.generation
-            }
-
-            state.generation &+= 1
-            scopeState.history.append(
-                ProviderChangeBatch(
-                    generation: state.generation,
-                    deletedIdentifiers: deleted.sorted(),
-                    updatedIdentifiers: updated.sorted()
-                )
+        try withExclusiveFileLock(named: "provider-publication") {
+            try commitProviderScopeUnlocked(
+                scope,
+                items: items,
+                initialDeletedIdentifiers: initialDeletedIdentifiers
             )
-            if scopeState.history.count > Self.providerHistoryLimit {
-                let overflow = scopeState.history.count - Self.providerHistoryLimit
-                let removed = scopeState.history.prefix(overflow)
-                scopeState.minimumValidAnchor = max(
-                    scopeState.minimumValidAnchor,
-                    removed.last?.generation ?? scopeState.minimumValidAnchor
-                )
-                scopeState.history.removeFirst(overflow)
-            }
-            state.scopes[scope] = scopeState
-            try writeProviderStateUnlocked(state)
-            return state.generation
         }
     }
 
     /// 合并 anchor 之后的批次；同一 ID 的后续操作覆盖前序操作，得到最终净差异。
     public func providerChanges(in scope: String, after anchor: UInt64) throws -> ProviderStoredChanges {
-        try withExclusiveFileLock(named: "provider-sync-state") {
+        try withExclusiveFileLock(named: "provider-publication") {
             let state = try readProviderStateUnlocked()
             guard anchor >= state.minimumValidAnchor else {
                 throw ProviderChangeStorageError.anchorExpired
@@ -340,7 +601,7 @@ public actor AppGroupStorage {
 
     /// 当前锚点保存在 App Group 中，因此扩展进程重启不会回到 1。
     public func currentProviderAnchor() throws -> UInt64 {
-        try withExclusiveFileLock(named: "provider-sync-state") {
+        try withExclusiveFileLock(named: "provider-publication") {
             try readProviderStateUnlocked().generation
         }
     }
@@ -439,6 +700,15 @@ public actor AppGroupStorage {
         }
     }
 
+    /// 在同一个跨进程事务中清空全部最近记录，不影响收藏、推荐或底层图片元数据。
+    public func clearRecent() throws {
+        try withExclusiveFileLock(named: "recent") {
+            for url in try jsonFiles(in: recentURL) {
+                try fileManager.removeItem(at: url)
+            }
+        }
+    }
+
     /// 使用 ID 摘要作为文件名，避免冒号和外部文字进入路径。
     private func itemURL(id: String) -> URL {
         itemsURL.appendingPathComponent(Self.fileKey(id) + ".json")
@@ -452,6 +722,11 @@ public actor AppGroupStorage {
     /// 搜索 occurrence 的权威记录使用独立目录，避免当前 query 快照替换后无法回查。
     private func searchItemURL(id: String) -> URL {
         searchItemsURL.appendingPathComponent(Self.fileKey(id) + ".json")
+    }
+
+    /// 发现 occurrence 使用独立记录目录，当前快照替换后仍可完成在途下载。
+    private func discoveryItemURL(id: String) -> URL {
+        discoveryItemsURL.appendingPathComponent(Self.fileKey(id) + ".json")
     }
 
     /// 调用方持有 recent 锁时读取、排序并截取最近记录。
@@ -500,6 +775,219 @@ public actor AppGroupStorage {
     private func readDiscoveryFeedSnapshotUnlocked() throws -> DiscoveryFeedSnapshot? {
         guard fileManager.fileExists(atPath: discoverySnapshotURL.path) else { return nil }
         return try decode(DiscoveryFeedSnapshot.self, from: discoverySnapshotURL)
+    }
+
+    /// 调用方持有 discovery-feed 锁时按代次读取冻结快照。
+    private func readDiscoveryFeedSnapshotUnlocked(
+        generation: UInt64
+    ) throws -> DiscoveryFeedSnapshot? {
+        let url = discoveryGenerationURL(generation)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        return try decode(DiscoveryFeedSnapshot.self, from: url)
+    }
+
+    /// 调用方持有 discovery-feed 锁时分配唯一 generation，并提交首页及当前指针。
+    private func commitDiscoveryFeedUnlocked(
+        records: [RemoteImageRecord],
+        refreshedAt: Date,
+        source: DiscoveryFeedSource,
+        catalogKey: String,
+        queryKey: String,
+        pageSize: Int,
+        nextPage: Int?,
+        remoteCursor: DiscoveryRemoteCursor? = nil
+    ) throws -> DiscoveryFeedSnapshot {
+        let nextGeneration = try allocateDiscoveryGenerationUnlocked()
+        var seen = Set<String>()
+        let snapshot = DiscoveryFeedSnapshot(
+            generation: nextGeneration,
+            refreshedAt: refreshedAt,
+            records: records.filter { seen.insert($0.id).inserted },
+            source: source,
+            catalogKey: catalogKey,
+            queryKey: queryKey,
+            pageSize: pageSize,
+            nextPage: nextPage,
+            remoteCursor: remoteCursor
+        )
+        try persistDiscoverySnapshotUnlocked(snapshot, makeCurrent: true)
+        try pruneDiscoverySnapshotsUnlocked()
+        return snapshot
+    }
+
+    /// 先持久化 generation 高水位再写内容；即使随后写盘失败，也只会跳号而绝不会复用旧代次。
+    private func allocateDiscoveryGenerationUnlocked() throws -> UInt64 {
+        let highWatermark = try discoveryGenerationHighWatermarkUnlocked()
+        guard highWatermark < UInt64.max else {
+            throw DiscoveryFeedStorageError.generationExhausted
+        }
+        let nextGeneration = highWatermark + 1
+        let state = DiscoveryGenerationState(
+            schemaVersion: Self.discoveryGenerationSchemaVersion,
+            highWatermark: nextGeneration
+        )
+        try encode(state).write(to: discoveryGenerationStateURL, options: .atomic)
+        return nextGeneration
+    }
+
+    /// 汇总 sidecar、当前指针及历史文件的最大代次，兼容从没有高水位文件的旧版本升级。
+    private func discoveryGenerationHighWatermarkUnlocked() throws -> UInt64 {
+        var highWatermark: UInt64 = 0
+        if fileManager.fileExists(atPath: discoveryGenerationStateURL.path) {
+            let state: DiscoveryGenerationState
+            do {
+                state = try decode(DiscoveryGenerationState.self, from: discoveryGenerationStateURL)
+            } catch {
+                throw DiscoveryFeedStorageError.invalidGenerationState
+            }
+            guard state.schemaVersion == Self.discoveryGenerationSchemaVersion else {
+                throw DiscoveryFeedStorageError.invalidGenerationState
+            }
+            highWatermark = state.highWatermark
+        }
+        if let current = try readDiscoveryFeedSnapshotUnlocked() {
+            highWatermark = max(highWatermark, current.generation)
+        }
+        for url in try discoverySnapshotFilesUnlocked() {
+            guard let generation = UInt64(url.deletingPathExtension().lastPathComponent) else {
+                continue
+            }
+            highWatermark = max(highWatermark, generation)
+        }
+        for url in try jsonFiles(in: discoveryPagesURL) {
+            let stem = url.deletingPathExtension().lastPathComponent
+            guard let separator = stem.firstIndex(of: "-"),
+                  let generation = UInt64(stem[..<separator]) else {
+                continue
+            }
+            highWatermark = max(highWatermark, generation)
+        }
+        return highWatermark
+    }
+
+    /// 调用方持有 discovery-feed 锁时读取长期页快照，并校验文件内容没有串页。
+    private func readDiscoveryPageSnapshotUnlocked(
+        generation: UInt64,
+        page: Int
+    ) throws -> DiscoveryPageSnapshot? {
+        let url = discoveryPageSnapshotURL(generation: generation, page: page)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        let snapshot = try decode(DiscoveryPageSnapshot.self, from: url)
+        guard snapshot.generation == generation,
+              snapshot.page == page,
+              snapshot.records.count <= DiscoveryRecommendation.pageSize,
+              Set(snapshot.records.map(\.id)).count == snapshot.records.count else {
+            throw DiscoveryFeedStorageError.snapshotExpired
+        }
+        try Self.validateDiscoveryContinuation(
+            currentPage: snapshot.page,
+            nextPage: snapshot.nextPage
+        )
+        return snapshot
+    }
+
+    /// 从旧完整 generation 中切出一页，升级后第一次读取即可建立长期成员清单。
+    private func discoveryPageSnapshot(
+        from feed: DiscoveryFeedSnapshot,
+        page: Int
+    ) throws -> DiscoveryPageSnapshot? {
+        guard feed.pageSize == DiscoveryRecommendation.pageSize else {
+            throw DiscoveryFeedStorageError.snapshotExpired
+        }
+        let multiplication = (page - 1).multipliedReportingOverflow(by: feed.pageSize)
+        guard !multiplication.overflow else { throw DiscoveryFeedStorageError.snapshotExpired }
+        let lowerBound = multiplication.partialValue
+        guard lowerBound < feed.records.count else { return nil }
+        let addition = lowerBound.addingReportingOverflow(feed.pageSize)
+        guard !addition.overflow else { throw DiscoveryFeedStorageError.snapshotExpired }
+        let upperBound = min(addition.partialValue, feed.records.count)
+        let hasMore = upperBound < feed.records.count || feed.nextPage != nil
+        let nextPage = hasMore && page < SearchPaginationCursor.maximumPage ? page + 1 : nil
+        return DiscoveryPageSnapshot(
+            generation: feed.generation,
+            page: page,
+            records: Array(feed.records[lowerBound..<upperBound]),
+            nextPage: nextPage
+        )
+    }
+
+    /// 调用方持有 discovery-feed 锁时原子保存单页，后续完整 generation 裁剪不会删除它。
+    private func persistDiscoveryPageSnapshotUnlocked(
+        _ snapshot: DiscoveryPageSnapshot
+    ) throws {
+        try encode(snapshot).write(
+            to: discoveryPageSnapshotURL(
+                generation: snapshot.generation,
+                page: snapshot.page
+            ),
+            options: .atomic
+        )
+    }
+
+    /// 同时落盘逐条记录、代次快照及可选当前指针，保证跨进程观察到一致提交。
+    private func persistDiscoverySnapshotUnlocked(
+        _ snapshot: DiscoveryFeedSnapshot,
+        makeCurrent: Bool
+    ) throws {
+        try persistDiscoveryRecordsUnlocked(snapshot.records)
+        let data = try encode(snapshot)
+        try data.write(to: discoveryGenerationURL(snapshot.generation), options: .atomic)
+        if makeCurrent {
+            try data.write(to: discoverySnapshotURL, options: .atomic)
+        }
+    }
+
+    /// 原子写入发现专属逐条记录；调用方必须持有 discovery-feed 锁。
+    private func persistDiscoveryRecordsUnlocked(_ records: [RemoteImageRecord]) throws {
+        for record in records {
+            try encode(record).write(to: discoveryItemURL(id: record.id), options: .atomic)
+        }
+    }
+
+    /// 代次文件名只包含受控无符号整数，不接受任何外部路径文字。
+    private func discoveryGenerationURL(_ generation: UInt64) -> URL {
+        discoverySnapshotsURL.appendingPathComponent("\(generation).json")
+    }
+
+    /// 页文件名只由已校验整数组成，不把任何远端文字带入本地路径。
+    private func discoveryPageSnapshotURL(generation: UInt64, page: Int) -> URL {
+        discoveryPagesURL.appendingPathComponent("\(generation)-\(page).json")
+    }
+
+    /// 返回全部有效代次文件，供历史回查和上限裁剪使用。
+    private func discoverySnapshotFilesUnlocked() throws -> [URL] {
+        try jsonFiles(in: discoverySnapshotsURL)
+    }
+
+    /// 保留覆盖六小时 token 有效期的八个代次；逐条记录继续保留供旧 occurrence 物化。
+    private func pruneDiscoverySnapshotsUnlocked() throws {
+        let snapshots = try discoverySnapshotFilesUnlocked().compactMap { url -> (URL, UInt64)? in
+            guard let generation = UInt64(url.deletingPathExtension().lastPathComponent) else { return nil }
+            return (url, generation)
+        }
+        for (url, _) in snapshots.sorted(by: { $0.1 > $1.1 })
+            .dropFirst(Self.discoverySnapshotHistoryLimit) {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
+    /// 单页快照允许首页到服务安全上限，generation 必须来自已提交的正整数代次。
+    private static func validateDiscoveryPage(generation: UInt64, page: Int) throws {
+        guard generation > 0, (1...SearchPaginationCursor.maximumPage).contains(page) else {
+            throw DiscoveryFeedStorageError.snapshotExpired
+        }
+    }
+
+    /// 下一页只能为空或严格连续，保证虚拟目录父链不会断裂。
+    private static func validateDiscoveryContinuation(
+        currentPage: Int,
+        nextPage: Int?
+    ) throws {
+        guard let nextPage else { return }
+        let expected = currentPage.addingReportingOverflow(1)
+        guard !expected.overflow, nextPage == expected.partialValue else {
+            throw DiscoveryFeedStorageError.snapshotExpired
+        }
     }
 
     /// 读取搜索记录快照，并把旧 recordIDs 索引一次性升级为内嵌记录。
@@ -624,6 +1112,56 @@ public actor AppGroupStorage {
     /// 从已有 Data 解码，供格式迁移和损坏恢复复用同一套 JSON 规则。
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         try JSONDecoder().decode(type, from: data)
+    }
+
+    /// 调用方持有 provider-publication 锁时提交一个 scope，并维护全局锚点与有限差异历史。
+    private func commitProviderScopeUnlocked(
+        _ scope: String,
+        items: [ProviderStoredItemState],
+        initialDeletedIdentifiers: [String]
+    ) throws -> UInt64 {
+        var state = try readProviderStateUnlocked()
+        var scopeState = state.scopes[scope] ?? ProviderScopeState()
+        let oldItems = Dictionary(uniqueKeysWithValues: scopeState.items.map { ($0.identifier, $0) })
+        let newItems = Dictionary(uniqueKeysWithValues: items.map { ($0.identifier, $0) })
+        var deleted = Set(oldItems.keys).subtracting(newItems.keys)
+        if scopeState.hasCommittedSnapshot == false {
+            deleted.formUnion(initialDeletedIdentifiers.filter { newItems[$0] == nil })
+        }
+        let updated = Set(newItems.compactMap { identifier, item in
+            oldItems[identifier] == item ? nil : identifier
+        })
+        scopeState.items = items
+        scopeState.hasCommittedSnapshot = true
+        guard !deleted.isEmpty || !updated.isEmpty else {
+            state.scopes[scope] = scopeState
+            try writeProviderStateUnlocked(state)
+            return state.generation
+        }
+
+        guard state.generation < UInt64.max else {
+            throw ProviderChangeStorageError.anchorExhausted
+        }
+        state.generation += 1
+        scopeState.history.append(
+            ProviderChangeBatch(
+                generation: state.generation,
+                deletedIdentifiers: deleted.sorted(),
+                updatedIdentifiers: updated.sorted()
+            )
+        )
+        if scopeState.history.count > Self.providerHistoryLimit {
+            let overflow = scopeState.history.count - Self.providerHistoryLimit
+            let removed = scopeState.history.prefix(overflow)
+            scopeState.minimumValidAnchor = max(
+                scopeState.minimumValidAnchor,
+                removed.last?.generation ?? scopeState.minimumValidAnchor
+            )
+            scopeState.history.removeFirst(overflow)
+        }
+        state.scopes[scope] = scopeState
+        try writeProviderStateUnlocked(state)
+        return state.generation
     }
 
     /// provider 状态首次创建时从 1 开始；损坏或旧 schema 会归档并重建锚点纪元。
@@ -788,11 +1326,15 @@ private final class ProcessFileLockRegistry: @unchecked Sendable {
 
     /// 返回并长期保留指定路径的唯一锁对象，确保所有 actor 实例竞争同一把锁。
     func lock(for path: String) -> NSLock {
+        let canonicalPath = URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
         registryLock.lock()
         defer { registryLock.unlock() }
-        if let existing = locks[path] { return existing }
+        if let existing = locks[canonicalPath] { return existing }
         let created = NSLock()
-        locks[path] = created
+        locks[canonicalPath] = created
         return created
     }
 }
@@ -817,6 +1359,12 @@ private struct LegacySearchBackingSnapshot: Codable {
     let queryKey: String
     let recordIDs: [String]
     let committedAt: Date
+}
+
+/// 推荐 generation 的持久高水位独立于当前指针与裁剪窗口，避免文件丢失后复用旧代次。
+private struct DiscoveryGenerationState: Codable {
+    let schemaVersion: Int
+    let highWatermark: UInt64
 }
 
 /// 所有 scope 共享一个单调 generation，每个 scope 独立保留差异历史。

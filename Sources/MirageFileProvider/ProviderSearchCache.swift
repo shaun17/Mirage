@@ -4,7 +4,7 @@ import Foundation
 /// 在扩展进程内缓存近期查询，降低系统逐字搜索对匿名接口额度的消耗。
 actor ProviderSearchCache {
     private struct Entry: Sendable {
-        let records: [RemoteImageRecord]
+        let page: ImageSearchPage
         let expiresAt: Date
     }
 
@@ -14,20 +14,20 @@ actor ProviderSearchCache {
     private let maximumEntries = 80
 
     /// 返回未过期的查询结果；过期数据会在读取时立即清理。
-    func records(for query: String, now: Date = Date()) -> [RemoteImageRecord]? {
-        let key = Self.key(query)
+    func page(for query: String, page: Int, pageSize: Int, now: Date = Date()) -> ImageSearchPage? {
+        let key = Self.key(query, page: page, pageSize: pageSize)
         guard let entry = entries[key] else { return nil }
         guard entry.expiresAt > now else {
             entries[key] = nil
             return nil
         }
-        return entry.records
+        return entry.page
     }
 
-    /// 写入查询结果并限制总条目数，防止长时间运行的扩展无限增长。
-    func store(_ records: [RemoteImageRecord], for query: String, now: Date = Date()) {
-        entries[Self.key(query)] = Entry(
-            records: records,
+    /// 按查询、页码与页大小缓存，防止后续枚举错误复用第一页。
+    func store(_ result: ImageSearchPage, for query: String, page: Int, pageSize: Int, now: Date = Date()) {
+        entries[Self.key(query, page: page, pageSize: pageSize)] = Entry(
+            page: result,
             expiresAt: now.addingTimeInterval(timeToLive)
         )
         guard entries.count > maximumEntries else { return }
@@ -55,7 +55,8 @@ actor ProviderSearchCache {
     }
 
     /// 查询键忽略大小写及首尾空白，但保留中文与内容前缀语义。
-    private static func key(_ query: String) -> String {
-        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private static func key(_ query: String, page: Int, pageSize: Int) -> String {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "\(normalized)|page:\(page)|size:\(pageSize)"
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 
 public protocol OpenverseSearching: Sendable {
     /// 搜索符合安全与授权要求的 Openverse 图片。
-    func search(query: String, pageSize: Int) async throws -> [RemoteImageRecord]
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage
 }
 
 public enum OpenverseError: Error, Equatable, Sendable {
@@ -37,14 +37,17 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
     }
 
     /// 请求时始终声明成熟内容关闭，并把授权范围收窄为 CC0 与 PDM。
-    public func search(query: String, pageSize: Int = 20) async throws -> [RemoteImageRecord] {
+    public func search(query: String, page: Int = 1, pageSize: Int = 20) async throws -> ImageSearchPage {
         try Task.checkCancellation()
+        let safePage = max(page, 1)
+        let safePageSize = min(max(pageSize, 1), 50)
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "mature", value: "false"),
             URLQueryItem(name: "license", value: "cc0,pdm"),
-            URLQueryItem(name: "page_size", value: String(min(max(pageSize, 1), 50)))
+            URLQueryItem(name: "page", value: String(safePage)),
+            URLQueryItem(name: "page_size", value: String(safePageSize))
         ]
         guard let url = components?.url else { throw OpenverseError.network("无法构造请求地址") }
 
@@ -62,7 +65,12 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
             }
             do {
                 let payload = try JSONDecoder().decode(SearchResponse.self, from: data)
-                return payload.results.compactMap(Self.makeRecord)
+                let currentPage = max(payload.page ?? safePage, 1)
+                let pageCount = max(payload.pageCount ?? currentPage, currentPage)
+                return ImageSearchPage(
+                    records: payload.results.compactMap(Self.makeRecord),
+                    nextPage: currentPage < pageCount ? currentPage + 1 : nil
+                )
             } catch let error as DecodingError {
                 throw OpenverseError.decoding(String(describing: error))
             }
@@ -130,7 +138,14 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
 }
 
 private struct SearchResponse: Decodable {
+    let page: Int?
+    let pageCount: Int?
     let results: [SearchResult]
+
+    enum CodingKeys: String, CodingKey {
+        case page, results
+        case pageCount = "page_count"
+    }
 }
 
 private struct SearchResult: Decodable {

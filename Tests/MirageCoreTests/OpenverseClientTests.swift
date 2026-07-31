@@ -16,15 +16,17 @@ final class OpenverseClientTests: XCTestCase {
             let items = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
             XCTAssertEqual(items["mature"], "false")
             XCTAssertEqual(items["license"], "cc0,pdm")
+            XCTAssertEqual(items["page"], "2")
             XCTAssertEqual(items["page_size"], "7")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, Self.fixture)
         }
-        let records = try await makeClient().search(query: "cat", pageSize: 7)
-        XCTAssertEqual(records.map(\.id), ["ov:a0b1c2d3-e4f5-4678-9012-3456789abcde"])
-        XCTAssertEqual(records.first?.license.identifier, "cc0")
-        XCTAssertEqual(records.first?.mimeType, "image/png")
-        XCTAssertEqual(records.first?.sourcePageURL?.absoluteString, "https://openverse.example/a")
+        let page = try await makeClient().search(query: "cat", page: 2, pageSize: 7)
+        XCTAssertEqual(page.records.map(\.id), ["ov:a0b1c2d3-e4f5-4678-9012-3456789abcde"])
+        XCTAssertEqual(page.records.first?.license.identifier, "cc0")
+        XCTAssertEqual(page.records.first?.mimeType, "image/png")
+        XCTAssertEqual(page.records.first?.sourcePageURL?.absoluteString, "https://openverse.example/a")
+        XCTAssertEqual(page.nextPage, 3)
     }
 
     /// 429 必须作为限流错误暴露，并保留服务端给出的重试秒数。
@@ -36,7 +38,7 @@ final class OpenverseClientTests: XCTestCase {
             return (response, Data())
         }
         do {
-            _ = try await makeClient().search(query: "cat", pageSize: 1)
+            _ = try await makeClient().search(query: "cat", page: 1, pageSize: 1)
             XCTFail("应抛出限流错误")
         } catch {
             XCTAssertEqual(error as? OpenverseError, .rateLimited(retryAfter: 9))
@@ -50,11 +52,22 @@ final class OpenverseClientTests: XCTestCase {
             return (response, Data("not-json".utf8))
         }
         do {
-            _ = try await makeClient().search(query: "cat", pageSize: 1)
+            _ = try await makeClient().search(query: "cat", page: 1, pageSize: 1)
             XCTFail("应抛出解析错误")
         } catch {
             guard case .decoding = error as? OpenverseError else { return XCTFail("错误类型不正确：\(error)") }
         }
+    }
+
+    /// 服务端当前页等于总页数时必须停止，避免请求越过 Openverse 的页深限制。
+    func testLastPageHasNoContinuation() async throws {
+        TestURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"page":4,"page_count":4,"page_size":20,"result_count":80,"results":[]}"#.utf8))
+        }
+        let page = try await makeClient().search(query: "cat", page: 4, pageSize: 20)
+        XCTAssertEqual(page.records, [])
+        XCTAssertNil(page.nextPage)
     }
 
     /// 创建仅使用 URLProtocol 的隔离会话，测试绝不访问真实网络。
@@ -65,7 +78,7 @@ final class OpenverseClientTests: XCTestCase {
     }
 
     private static let fixture = Data(#"""
-    {"results":[
+    {"page":2,"page_count":4,"page_size":7,"result_count":25,"results":[
       {"id":"A0B1C2D3-E4F5-4678-9012-3456789ABCDE","title":"Valid","creator":"A","creator_url":"https://example.com/a","foreign_landing_url":"https://openverse.example/a","url":"https://images.example.com/a.png","thumbnail":"https://images.example.com/t.png","license":"cc0","license_url":"https://creativecommons.org/publicdomain/zero/1.0/","mature":false,"width":640,"height":480,"filetype":"png"},
       {"id":"B0B1C2D3-E4F5-4678-9012-3456789ABCDE","url":"https://images.example.com/b.png","thumbnail":"https://images.example.com/bt.png","license":"pdm","mature":true},
       {"id":"C0B1C2D3-E4F5-4678-9012-3456789ABCDE","url":"http://images.example.com/c.png","thumbnail":"https://images.example.com/ct.png","license":"pdm","mature":false},

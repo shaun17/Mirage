@@ -49,4 +49,14 @@ final class QueryAndIdentifierTests: XCTestCase {
             "db:v10:pixel-art:f9219cd959300e7a13b7702df1bb1e1b31a38720c8e4ef52d304d5542b5d38aa"
         )
     }
+
+    /// 头像分页必须使用绝对偏移，保证前后两页不会生成相同记录。
+    func testDiceBearPaginationUsesDistinctOffsets() async {
+        let client = DiceBearClient(styles: [.pixelArt])
+        let firstPage = await client.avatars(query: "cat", offset: 0, count: 20)
+        let secondPage = await client.avatars(query: "cat", offset: 20, count: 20)
+        XCTAssertEqual(firstPage.count, 20)
+        XCTAssertEqual(secondPage.count, 20)
+        XCTAssertTrue(Set(firstPage.map(\.id)).isDisjoint(with: Set(secondPage.map(\.id))))
+    }
 }

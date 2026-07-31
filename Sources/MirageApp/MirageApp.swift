@@ -1,3 +1,4 @@
+import MirageDetailWindow
 import SwiftUI
 
 /// Mirage 的应用入口；应用只维护一个主窗口和一份共享状态。
@@ -10,7 +11,7 @@ struct MirageApp: App {
     var body: some Scene {
         Window("Mirage", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 920, minHeight: 620)
+                .frame(minWidth: DetailDrawerMetrics.minimumClosedWindowWidth, minHeight: 620)
                 .task {
                     // 模型内部合并重复启动请求，避免窗口重新出现时重复注册域或初始化资料库。
                     await model.start()

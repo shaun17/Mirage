@@ -34,7 +34,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         directory identifier: NSFileProviderItemIdentifier,
         parent: NSFileProviderItemIdentifier,
         name: String,
-        hidden: Bool = false
+        hidden: Bool = false,
+        metadataVersionToken: String? = nil
     ) {
         itemIdentifier = identifier
         parentItemIdentifier = parent
@@ -47,19 +48,42 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         documentSize = nil
         childItemCount = nil
         lastUsedDate = nil
-        itemVersion = Self.version(content: identifier.rawValue, metadata: name)
+        itemVersion = Self.version(
+            content: identifier.rawValue,
+            metadata: [
+                name,
+                parent.rawValue,
+                hidden ? "hidden" : "visible",
+                metadataVersionToken ?? ""
+            ].joined(separator: "|")
+        )
         super.init()
     }
 
-    /// 构造远程图片条目，并把原始格式统一呈现为 PNG。
-    init(
+    /// 构造普通视图中的远程图片；具体 ID 与父级仍统一交给完整位置引用计算。
+    convenience init(
         record: RemoteImageRecord,
         view: ProviderView,
         lastUsedDate: Date? = nil,
         documentSize: NSNumber? = nil
     ) {
-        itemIdentifier = ProviderIdentifiers.itemIdentifier(recordID: record.id, view: view)
-        parentItemIdentifier = Self.parent(for: view)
+        self.init(
+            record: record,
+            reference: RecordReference(recordID: record.id, view: view),
+            lastUsedDate: lastUsedDate,
+            documentSize: documentSize
+        )
+    }
+
+    /// 构造远程图片条目，并把 occurrence 的 ID、父级与元数据版本绑定到同一位置。
+    init(
+        record: RemoteImageRecord,
+        reference: RecordReference,
+        lastUsedDate: Date? = nil,
+        documentSize: NSNumber? = nil
+    ) {
+        itemIdentifier = reference.itemIdentifier
+        parentItemIdentifier = reference.parentItemIdentifier
         filename = Self.filename(for: record)
         contentType = .png
         capabilities = [.allowsReading]
@@ -81,8 +105,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
             ].joined(separator: "|"),
             metadata: [
                 Self.filename(for: record),
-                Self.parent(for: view).rawValue,
-                view.rawValue,
+                reference.parentItemIdentifier.rawValue,
+                reference.view.rawValue,
                 lastUsedDate.map { String($0.timeIntervalSince1970) } ?? "",
                 Self.capabilitySchemaVersion
             ].joined(separator: "|")
@@ -97,16 +121,6 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
             parent: .rootContainer,
             name: "Mirage"
         )
-    }
-
-    /// 每个视图的真实父目录必须与枚举树完全一致。
-    private static func parent(for view: ProviderView) -> NSFileProviderItemIdentifier {
-        switch view {
-        case .discover: return .rootContainer
-        case .search: return ProviderIdentifiers.searchBacking
-        case .recent: return ProviderIdentifiers.recent
-        case .favorite: return ProviderIdentifiers.favorites
-        }
     }
 
     /// 清理路径分隔符并附加短摘要，避免同名搜索结果发生文件名碰撞。

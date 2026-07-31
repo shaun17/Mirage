@@ -1,28 +1,18 @@
 import MirageCore
 import FileProvider
 import Foundation
+import OSLog
 
-/// 将扩展需要的数据视图隔离在单一适配器中，并持有根 feed 的单飞刷新状态。
-actor ProviderRepository {
-    private static let discoveryCatalogKey = "finder-root-discovery-v1"
-    private static let fallbackQueryKey = "mirage-discovery-fallback-v1"
-    private static let discoveryTTL: TimeInterval = 60 * 60
-    private static let networkTimeout: Duration = .seconds(6)
-    private static let discoveryCount = 12
-    private static let photoCount = 8
-    private static let safeQueries = [
-        "portrait person",
-        "animal portrait",
-        "vintage portrait",
-        "botanical portrait"
-    ]
+/// 将扩展需要的数据视图隔离在单一适配器中，并复用 Core 的共享推荐仓库。
+actor ProviderRepository: ProviderSearchResultStoring {
+    private static let logger = Logger(
+        subsystem: "com.wenren.Mirage.FileProvider",
+        category: "Repository"
+    )
 
     private let storage: AppGroupStorage?
     private let manager: NSFileProviderManager?
-    private let openverse: any OpenverseSearching
-    private let diceBear: any DiceBearProviding
-    private var discoveryRefreshTask: Task<Void, Never>?
-    private var discoveryRefreshID: UUID?
+    private let discoveryFeed: (any DiscoveryFeedProviding)?
 
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
@@ -30,51 +20,194 @@ actor ProviderRepository {
         openverse: any OpenverseSearching = OpenverseClient(),
         diceBear: any DiceBearProviding = DiceBearClient()
     ) {
-        storage = try? AppGroupStorage()
+        let storage = try? AppGroupStorage()
+        self.storage = storage
         self.manager = manager
-        self.openverse = openverse
-        self.diceBear = diceBear
+        self.discoveryFeed = storage.map {
+            DiscoveryFeedRepository(
+                storage: $0,
+                service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+                diceBear: diceBear
+            )
+        }
     }
 
-    /// 扩展失效时立即取消单飞网络任务，避免旧实例在后台提交迟到快照或发送 signal。
-    func invalidate() {
-        discoveryRefreshTask?.cancel()
-        discoveryRefreshTask = nil
-        discoveryRefreshID = nil
+    /// 测试注入共享存储与推荐仓库，验证 File Provider 位置语义而不访问真实 App Group。
+    init(
+        manager: NSFileProviderManager?,
+        storage: AppGroupStorage,
+        discoveryFeed: any DiscoveryFeedProviding
+    ) {
+        self.storage = storage
+        self.manager = manager
+        self.discoveryFeed = discoveryFeed
     }
 
-    /// 新鲜快照直接返回；旧快照立即返回并在后台单飞刷新；冷启动先提交稳定兜底。
-    func discoveryItems(now: Date = Date()) async throws -> [ProviderItem] {
+    /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
+    func invalidate() {}
+
+    /// 根目录现在投影当前 generation 已累积的全部记录，滚动补页只是把这个数组变长。
+    ///
+    /// `minimumRecords` 会在本次调用内就地补齐首屏。这是必须的：内容一旦同步进系统副本，
+    /// macOS 就不再回问扩展——`signalEnumerator` 之后也等不到新的枚举。
+    /// 只有让第一次枚举就返回足够长的列表，用户才有未缓存的条目可滚，
+    /// 后续的缩略图水位才能接管并自持地继续增长。
+    func discoveryRootFeed(minimumRecords: Int = 0) async throws -> DiscoveryRootFeed {
+        // 先确保当前 generation 存在且未过 TTL；首页提交同时负责换代时唤醒系统。
+        var feed = try await currentDiscoveryRootFeed()
+        var inlinePages = 0
+        while feed.records.count < minimumRecords,
+              let nextPage = feed.nextPage,
+              inlinePages < Self.maximumInlineFillPages {
+            try Task.checkCancellation()
+            _ = try await loadDiscoveryPage(generation: feed.generation, page: nextPage)
+            inlinePages += 1
+            feed = try await currentDiscoveryRootFeed()
+        }
+        return feed
+    }
+
+    /// 首屏就地补齐的页数上限。
+    ///
+    /// 这个值必须足够大：macOS 的 replicated 副本一旦建成就再也无法增长——
+    /// `signalEnumerator` 不触发重新枚举，`reimportItems` 报告完成却不回问扩展，
+    /// 实测只有重新注册域才会让副本按完整列表重建。
+    /// 所以「第一次枚举交付多少」就是用户能看到的全部，必须在这里一次给够。
+    /// 代价是首次建域时最多 10 次串行网络请求；这些页随后进快照缓存，之后的枚举只读盘。
+    private static let maximumInlineFillPages = 10
+
+    /// 读取当前冻结 generation 的完整累积顺序。
+    private func currentDiscoveryRootFeed() async throws -> DiscoveryRootFeed {
+        let first = try await loadDiscoveryPage(generation: nil, page: 1)
         try Task.checkCancellation()
         let storage = try requireStorage()
-        if let snapshot = try await storage.readDiscoveryFeedSnapshot() {
-            try Task.checkCancellation()
-            if now.timeIntervalSince(snapshot.refreshedAt) >= Self.discoveryTTL {
-                startDiscoveryRefresh(previous: snapshot)
-            }
-            return snapshot.records.map { ProviderItem(record: $0, view: .discover) }
+        guard let snapshot = try await storage.readDiscoveryFeedSnapshot(
+            generation: first.generation
+        ), !snapshot.records.isEmpty else {
+            return DiscoveryRootFeed(
+                generation: first.generation,
+                records: first.records,
+                nextPage: first.nextPage
+            )
         }
-
-        let records = await Self.fallbackRecords(using: diceBear)
         try Task.checkCancellation()
-        let snapshot = try await storage.commitDiscoveryFeed(
-            records: records,
-            refreshedAt: now,
-            source: .fallback,
-            catalogKey: Self.discoveryCatalogKey,
-            queryKey: Self.fallbackQueryKey
+        return DiscoveryRootFeed(
+            generation: snapshot.generation,
+            records: snapshot.records,
+            nextPage: snapshot.nextPage
         )
+    }
+
+    /// 把下一页追加进当前 generation；返回追加后是否仍有后续内容。
+    func advanceDiscoveryFeed() async throws -> Bool {
+        let feed = try await discoveryRootFeed()
         try Task.checkCancellation()
-        // 冷启动不等待网络，Finder 可立即得到固定数量头像；后台请求仍受六秒硬超时约束。
-        startDiscoveryRefresh(previous: snapshot)
-        return records.map { ProviderItem(record: $0, view: .discover) }
+        guard let nextPage = feed.nextPage else { return false }
+        let page = try await loadDiscoveryPage(generation: feed.generation, page: nextPage)
+        try Task.checkCancellation()
+        return page.nextPage != nil
+    }
+
+    /// 轻量通知系统拉取根目录差异：系统走 `enumerateChanges` 原地追加，
+    /// 不清缩略图、不闪屏，是常规补页后的唯一发布手段。
+    func signalDiscoveryFeedChanged() async {
+        guard let manager else { return }
+        try? await manager.signalEnumerator(for: .rootContainer)
+        try? await manager.signalEnumerator(for: .workingSet)
+    }
+
+    /// 要求系统整树重扫。
+    ///
+    /// 重扫会让系统为整个目录重新请求缩略图（实测冷启动时可扫到第 842 项），
+    /// 在把缩略图当滚动信号的架构里，这些请求会被误读成「用户滚到了底部」，
+    /// 形成「重扫→全量缩略图→补页→再重扫」的自激循环——Finder 表现为空白页反复闪动。
+    /// 因此它绝不能进常规发布路径，只能在增量 signal 反复无效时作为修复手段。
+    func rescanDiscoveryFeed() async {
+        guard let manager else { return }
+        do {
+            try manager.reimportItems(below: .rootContainer) { error in
+                if let error {
+                    Self.logger.error("重扫失败：\(error.localizedDescription, privacy: .public)")
+                } else {
+                    Self.logger.notice("重扫已完成")
+                }
+            }
+            Self.logger.notice("已请求重扫根目录")
+        } catch {
+            Self.logger.error("重扫请求被拒绝：\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// 按指定 generation 读取或补齐单页，并将结果落成可跨进程恢复的页快照。
+    private func loadDiscoveryPage(
+        generation: UInt64?,
+        page: Int
+    ) async throws -> DiscoveryFeedPage {
+        try Task.checkCancellation()
+        let storage = try requireStorage()
+        do {
+            // 历史空页或残页不能直接呈现；忽略后交给完整 generation 重新补齐为 20 张。
+            if let generation,
+               let cached = try await storage.readDiscoveryPageSnapshot(
+                   generation: generation,
+                   page: page
+               ),
+               cached.records.count == DiscoveryRecommendation.pageSize {
+                try Task.checkCancellation()
+                return DiscoveryFeedPage(
+                    generation: cached.generation,
+                    records: cached.records,
+                    nextPage: cached.nextPage,
+                    didMutateSnapshot: false
+                )
+            }
+            let feed = try requireDiscoveryFeed()
+            let result = try await feed.page(
+                generation: generation,
+                page: page,
+                pageSize: DiscoveryRecommendation.pageSize
+            )
+            try Task.checkCancellation()
+            _ = try await storage.commitDiscoveryPageSnapshot(
+                generation: result.generation,
+                page: page,
+                records: result.records,
+                nextPage: result.nextPage
+            )
+            try Task.checkCancellation()
+            if page == 1, result.didMutateSnapshot {
+                try await signalDiscoverySnapshotChanged(storage: storage)
+            }
+            return result
+        } catch is DiscoveryFeedError {
+            throw ProviderError.expiredDiscoveryPage()
+        } catch is DiscoveryFeedStorageError {
+            throw ProviderError.expiredDiscoveryPage()
+        }
+    }
+
+    /// 推荐换代后唤醒根目录与工作集，稳定 ID 才能产生正确的更新与删除差异。
+    private func signalDiscoverySnapshotChanged(storage: AppGroupStorage) async throws {
+        guard let manager else { return }
+        try? await manager.signalEnumerator(for: .rootContainer)
+        try Task.checkCancellation()
+        try? await manager.signalEnumerator(for: .workingSet)
+        try Task.checkCancellation()
     }
 
     /// 持久化搜索结果及顺序，扩展重启后隐藏 backing 和 item(for:) 都能恢复。
-    func storeSearchResults(_ records: [RemoteImageRecord], queryKey: String) async throws {
+    func storeSearchResults(
+        _ records: [RemoteImageRecord],
+        queryKey: String,
+        appending: Bool = false
+    ) async throws {
         try Task.checkCancellation()
         let storage = try requireStorage()
-        try await storage.commitSearchBacking(queryKey: Self.normalizedQuery(queryKey), records: records)
+        try await storage.commitSearchBacking(
+            queryKey: Self.normalizedQuery(queryKey),
+            records: records,
+            appending: appending
+        )
         try Task.checkCancellation()
     }
 
@@ -91,8 +224,7 @@ actor ProviderRepository {
         let occurrence: ProviderOccurrence?
         switch reference.view {
         case .discover:
-            let records = try await storage.readDiscoveryFeedSnapshot()?.records ?? []
-            occurrence = records.first { $0.id == reference.recordID }.map {
+            occurrence = try await storage.readDiscoveryRecord(id: reference.recordID).map {
                 ProviderOccurrence(reference: reference, record: $0)
             }
         case .search:
@@ -102,7 +234,11 @@ actor ProviderRepository {
         case .recent:
             let recent = try await storage.readRecent().first { $0.id == reference.recordID }
             occurrence = recent.map {
-                ProviderOccurrence(reference: reference, record: $0.image, lastUsedDate: $0.accessedAt)
+                ProviderOccurrence(
+                    reference: reference,
+                    record: $0.image,
+                    lastUsedDate: $0.accessedAt
+                )
             }
         case .favorite:
             let records = try await storage.readFavoriteRecords()
@@ -188,112 +324,6 @@ actor ProviderRepository {
         return anchor
     }
 
-    /// 同一时刻只允许一个根 feed 网络刷新；signal 触发的后续枚举会命中新 TTL。
-    private func startDiscoveryRefresh(previous: DiscoveryFeedSnapshot) {
-        guard discoveryRefreshTask == nil else { return }
-        let refreshID = UUID()
-        discoveryRefreshID = refreshID
-        discoveryRefreshTask = Task { [self] in
-            await performDiscoveryRefresh(previous: previous, refreshID: refreshID)
-        }
-    }
-
-    /// 在 actor 隔离域内完成刷新与 signal，避免非 Sendable 的系统 manager 跨任务捕获。
-    private func performDiscoveryRefresh(previous: DiscoveryFeedSnapshot, refreshID: UUID) async {
-        defer {
-            if discoveryRefreshID == refreshID {
-                discoveryRefreshTask = nil
-                discoveryRefreshID = nil
-            }
-        }
-        guard let storage else { return }
-        let query = Self.query(after: previous)
-        do {
-            try Task.checkCancellation()
-            let photos = try await Self.searchWithTimeout(
-                openverse: openverse,
-                query: query,
-                count: Self.photoCount
-            )
-            let accents = await Self.fallbackRecords(using: diceBear)
-            try Task.checkCancellation()
-            let records = Self.unique(Array(photos.prefix(Self.photoCount)) + accents)
-            guard !records.isEmpty else { throw DiscoveryRefreshError.emptyResponse }
-            try Task.checkCancellation()
-            _ = try await storage.commitDiscoveryFeed(
-                records: Array(records.prefix(Self.discoveryCount)),
-                refreshedAt: Date(),
-                source: .network,
-                catalogKey: Self.discoveryCatalogKey,
-                queryKey: query
-            )
-            try Task.checkCancellation()
-            try await signalRootAndWorkingSet()
-        } catch is CancellationError {
-            return
-        } catch {
-            // 过期网络快照失败时切到固定 fallback；冷启动已是新鲜 fallback，不重复提交或 signal。
-            guard !Task.isCancelled else { return }
-            guard previous.source != .fallback
-                || Date().timeIntervalSince(previous.refreshedAt) >= Self.discoveryTTL else { return }
-            let fallback = await Self.fallbackRecords(using: diceBear)
-            guard !Task.isCancelled else { return }
-            guard (try? await storage.commitDiscoveryFeed(
-                records: fallback,
-                refreshedAt: Date(),
-                source: .fallback,
-                catalogKey: Self.discoveryCatalogKey,
-                queryKey: Self.fallbackQueryKey
-            )) != nil else { return }
-            guard !Task.isCancelled else { return }
-            try? await signalRootAndWorkingSet()
-        }
-    }
-
-    /// 用固定 key 生成跨启动完全相同的 fallback occurrence。
-    private static func fallbackRecords(using diceBear: any DiceBearProviding) async -> [RemoteImageRecord] {
-        await diceBear.avatars(query: fallbackQueryKey, count: discoveryCount)
-    }
-
-    /// 每个过期周期只选择一个安全词，因此一次刷新最多一个 Openverse 请求。
-    private static func query(after snapshot: DiscoveryFeedSnapshot) -> String {
-        safeQueries[Int(snapshot.generation % UInt64(safeQueries.count))]
-    }
-
-    /// 竞速网络请求与硬超时，结束后取消另一分支。
-    private static func searchWithTimeout(
-        openverse: any OpenverseSearching,
-        query: String,
-        count: Int
-    ) async throws -> [RemoteImageRecord] {
-        try await withThrowingTaskGroup(of: [RemoteImageRecord].self) { group in
-            group.addTask { try await openverse.search(query: query, pageSize: count) }
-            group.addTask {
-                try await Task.sleep(for: networkTimeout)
-                throw DiscoveryRefreshError.timedOut
-            }
-            guard let first = try await group.next() else { throw DiscoveryRefreshError.emptyResponse }
-            group.cancelAll()
-            return first
-        }
-    }
-
-    /// 去重时保留首次出现顺序，避免同一底层记录在一个视图中出现两次。
-    private static func unique(_ records: [RemoteImageRecord]) -> [RemoteImageRecord] {
-        var seen = Set<String>()
-        return records.filter { seen.insert($0.id).inserted }
-    }
-
-    /// 根 feed 提交完成后同时唤醒根目录与 working set。
-    private func signalRootAndWorkingSet() async throws {
-        try Task.checkCancellation()
-        guard let manager else { return }
-        try? await manager.signalEnumerator(for: .rootContainer)
-        try Task.checkCancellation()
-        try? await manager.signalEnumerator(for: .workingSet)
-        try Task.checkCancellation()
-    }
-
     /// 查询 key 只用于恢复顺序，不保留无意义的空白与大小写差异。
     private static func normalizedQuery(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -306,12 +336,14 @@ actor ProviderRepository {
         }
         return storage
     }
-}
 
-/// 根 feed 刷新的内部终止原因，外部统一回退到稳定 DiceBear 数据。
-private enum DiscoveryRefreshError: Error {
-    case timedOut
-    case emptyResponse
+    /// 把共享推荐仓库初始化失败转换为 File Provider 可退避的服务错误。
+    private func requireDiscoveryFeed() throws -> any DiscoveryFeedProviding {
+        guard let discoveryFeed else {
+            throw ProviderError.serverUnreachable("无法访问 Mirage 推荐存储。")
+        }
+        return discoveryFeed
+    }
 }
 
 /// occurrence 的内容与视图元数据来自同一次权威快照读取。
@@ -326,4 +358,14 @@ struct ProviderOccurrence: Sendable {
         self.record = record
         self.lastUsedDate = lastUsedDate
     }
+}
+
+/// 根目录当前可发布的完整推荐序列；`nextPage` 为空表示远端已无更多内容。
+struct DiscoveryRootFeed: Sendable {
+    let generation: UInt64
+    let records: [RemoteImageRecord]
+    let nextPage: Int?
+
+    /// 泵只关心还能不能继续补页，不需要理解具体页码。
+    var hasMore: Bool { nextPage != nil }
 }

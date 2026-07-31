@@ -1,28 +1,20 @@
 import MirageCore
 import Foundation
 
-/// 主窗口的唯一状态源，负责搜索、共享资料库和 File Provider 生命周期。
+/// 主窗口的资料库状态源；搜索由独立 SearchModel 管理，本类型负责收藏、最近使用和扩展生命周期。
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var query = "" {
-        didSet { scheduleSearch() }
-    }
-    @Published var searchFilter: SearchFilter = .all {
-        didSet { scheduleSearch() }
-    }
     @Published var selection: AppSection = .discover
-    @Published private(set) var searchState: SearchState = .idle
-    @Published private(set) var results: [RemoteImageRecord] = []
     @Published private(set) var favorites: [RemoteImageRecord] = []
     @Published private(set) var recent: [RecentImageRecord] = []
     @Published private(set) var favoriteIDs: Set<String> = []
+    @Published private(set) var libraryAvailability: LibraryAvailability = .preparing
     @Published private(set) var providerState: ProviderState = .checking
     @Published var libraryNotice: String?
 
+    let searchModel = SearchModel(waitsForRecommendationFeed: true)
     private let domainManager = MirageDomainManager()
-    private let searchService = ImageSearchService()
     private var storage: AppGroupStorage?
-    private var searchTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
     private var providerCheckTask: Task<Void, Never>?
     private var latestLibraryRevision: UInt64 = 0
@@ -66,7 +58,12 @@ final class AppModel: ObservableObject {
     /// 收藏写入共享存储后刷新收藏目录与工作集，使打开的文件面板及时更新。
     func toggleFavorite(_ record: RemoteImageRecord) async {
         guard let storage else {
-            libraryNotice = "共享资料库尚未准备好。"
+            switch libraryAvailability {
+            case .preparing, .ready:
+                libraryNotice = "共享资料库仍在准备，请稍后再试。"
+            case let .failed(message):
+                libraryNotice = "收藏不可用：\(message)"
+            }
             return
         }
         do {
@@ -91,18 +88,25 @@ final class AppModel: ObservableObject {
         recent = snapshot.recent
     }
 
-    /// 网络恢复或限流结束后，由用户立即重试当前条件。
-    func retrySearch() {
-        scheduleSearch()
-    }
-
     /// 初始化共享 App Group 存储，并加载已有收藏和最近使用。
     private func prepareLibrary() async {
+        if storage != nil {
+            await refreshLibrary()
+            return
+        }
         do {
-            storage = try AppGroupStorage()
+            let sharedStorage = try AppGroupStorage()
+            storage = sharedStorage
+            libraryAvailability = .ready
+            searchModel.configureRecommendationFeed(
+                DiscoveryFeedRepository(storage: sharedStorage)
+            )
             await refreshLibrary()
         } catch {
-            libraryNotice = "无法打开共享资料库：\(error.localizedDescription)"
+            let message = error.localizedDescription
+            libraryAvailability = .failed(message)
+            libraryNotice = "无法打开共享资料库：\(message)"
+            searchModel.useRecommendationFallback()
         }
     }
 
@@ -135,36 +139,4 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 每次条件变化立即取消旧任务，并在 400 毫秒静默期后执行新搜索。
-    private func scheduleSearch() {
-        searchTask?.cancel()
-        let request = searchFilter.serviceQuery(for: query)
-        let parsed = SearchQueryParser.parse(request)
-        guard parsed.text.count >= 2 else {
-            results = []
-            searchState = .idle
-            return
-        }
-        searchState = .searching
-        searchTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(400))
-                guard let self else { return }
-                let found = try await searchService.search(request)
-                try Task.checkCancellation()
-                results = found
-                searchState = found.isEmpty ? .empty : .results
-            } catch is CancellationError {
-                return
-            } catch let error as OpenverseError {
-                guard !Task.isCancelled else { return }
-                self?.results = []
-                self?.searchState = SearchState(openverseError: error)
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.results = []
-                self?.searchState = .failed(error.localizedDescription)
-            }
-        }
-    }
 }

@@ -39,7 +39,7 @@ extension FileProviderExtension {
                 let record = occurrence.record
                 let item = ProviderItem(
                     record: record,
-                    view: reference.view,
+                    reference: reference,
                     lastUsedDate: occurrence.lastUsedDate
                 )
                 if let requested,
@@ -66,7 +66,7 @@ extension FileProviderExtension {
                     }
                     let materializedItem = ProviderItem(
                         record: record,
-                        view: reference.view,
+                        reference: reference,
                         lastUsedDate: item.lastUsedDate,
                         documentSize: NSNumber(value: byteCount)
                     )
@@ -109,7 +109,7 @@ extension FileProviderExtension {
         return progress
     }
 
-    /// 为每个标识单独下载并验证 ImageIO 可识别的缩略图数据。
+    /// 为每个标识下载并验证 ImageIO 可识别的缩略图数据；批内有界并发，完成即逐张交付。
     func fetchThumbnails(
         for itemIdentifiers: [NSFileProviderItemIdentifier],
         requestedSize size: CGSize,
@@ -117,24 +117,22 @@ extension FileProviderExtension {
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: Int64(max(itemIdentifiers.count, 1)))
+        // 系统只为视口内条目请求缩略图，这是 File Provider 里唯一跟随滚动位置的回调；
+        // 交给泵判断用户是否已接近列表尾部，从而决定要不要向同一目录追加下一页。
+        Task { [feedPump] in await feedPump.noteVisible(itemIdentifiers) }
         let perItem = ProviderCallbackBox(perThumbnailCompletionHandler)
         let completed = ProviderCallbackBox(completionHandler)
+        // 系统的 per-item 回调没有声明并发安全，交付统一串行化；下载仍是并行的。
+        let deliveryLock = NSLock()
         let relay = ProviderTaskRelay()
         let operationID = UUID()
         tasks.insert(relay, id: operationID)
         let task = Task { [repository, tasks, relay] in
             defer { tasks.remove(id: operationID) }
-            for (index, identifier) in itemIdentifiers.enumerated() {
-                if Task.isCancelled {
-                    itemIdentifiers[index...].forEach { perItem.value($0, nil, ProviderError.cancelled()) }
-                    relay.finish({
-                        completed.value(ProviderError.cancelled())
-                    }, ifCancelled: {
-                        completed.value(ProviderError.cancelled())
-                    })
-                    return
-                }
-                do {
+            let finished = await ProviderThumbnailBatch.run(
+                identifiers: itemIdentifiers,
+                maximumConcurrency: 4,
+                fetch: { identifier in
                     guard let record = try await repository.record(for: identifier) else {
                         throw ProviderError.noSuchItem(identifier)
                     }
@@ -144,52 +142,32 @@ extension FileProviderExtension {
                         maximumBytes: 5 * 1024 * 1024
                     ).download()
                     try Task.checkCancellation()
-                    let prepared = try Self.thumbnailData(from: data, requestedSize: size)
-                    try Task.checkCancellation()
-                    perItem.value(identifier, prepared, nil)
-                } catch is CancellationError {
-                    itemIdentifiers[index...].forEach { perItem.value($0, nil, ProviderError.cancelled()) }
-                    relay.finish({
-                        completed.value(ProviderError.cancelled())
-                    }, ifCancelled: {
-                        completed.value(ProviderError.cancelled())
-                    })
-                    return
-                } catch {
-                    if Task.isCancelled {
-                        itemIdentifiers[index...].forEach { perItem.value($0, nil, ProviderError.cancelled()) }
-                        relay.finish({
-                            completed.value(ProviderError.cancelled())
-                        }, ifCancelled: {
-                            completed.value(ProviderError.cancelled())
-                        })
-                        return
+                    return try Self.thumbnailData(from: data, requestedSize: size)
+                },
+                deliver: { identifier, result in
+                    deliveryLock.withLock {
+                        switch result {
+                        case let .success(data):
+                            perItem.value(identifier, data, nil)
+                        case let .failure(error):
+                            perItem.value(identifier, nil, Self.contentError(error))
+                        }
+                        progress.completedUnitCount += 1
                     }
-                    perItem.value(identifier, nil, Self.contentError(error))
                 }
-                progress.completedUnitCount = Int64(index + 1)
-            }
-            do {
-                try Task.checkCancellation()
-                relay.finish({
-                    completed.value(nil)
-                }, ifCancelled: {
-                    completed.value(ProviderError.cancelled())
-                })
-            } catch {
-                relay.finish({
-                    completed.value(ProviderError.cancelled())
-                }, ifCancelled: {
-                    completed.value(ProviderError.cancelled())
-                })
-            }
+            )
+            relay.finish({
+                completed.value(finished ? nil : ProviderError.cancelled())
+            }, ifCancelled: {
+                completed.value(ProviderError.cancelled())
+            })
         }
         progress.cancellationHandler = { relay.cancel() }
         relay.install(task)
         return progress
     }
 
-    /// 根和三个虚拟目录都不能通过 fetchContents 下载。
+    /// 根目录与资料库目录都不能通过 fetchContents 下载。
     private static func isDirectory(_ identifier: NSFileProviderItemIdentifier) -> Bool {
         identifier == .rootContainer || identifier == ProviderIdentifiers.recent
             || identifier == ProviderIdentifiers.favorites || identifier == ProviderIdentifiers.searchBacking

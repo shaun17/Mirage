@@ -1,3 +1,4 @@
+import MirageCore
 import FileProvider
 import Foundation
 
@@ -6,7 +7,6 @@ enum ProviderIdentifiers {
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
-
     /// 为同一远程记录在不同视图中生成互不冲突的条目标识。
     static func itemIdentifier(recordID: String, view: ProviderView) -> NSFileProviderItemIdentifier {
         NSFileProviderItemIdentifier("\(view.rawValue):\(recordID)")
@@ -32,10 +32,29 @@ enum ProviderView: String, CaseIterable, Sendable {
     case favorite
 }
 
-/// 已解析的远程图片视图引用。
-struct RecordReference: Sendable {
+/// 已解析的远程图片视图引用。推荐流现在是扁平的，位置就等于视图本身。
+struct RecordReference: Hashable, Sendable {
     let recordID: String
     let view: ProviderView
+
+    init(recordID: String, view: ProviderView) {
+        self.recordID = recordID
+        self.view = view
+    }
+
+    var itemIdentifier: NSFileProviderItemIdentifier {
+        ProviderIdentifiers.itemIdentifier(recordID: recordID, view: view)
+    }
+
+    /// 每个视图有唯一父目录；推荐图片直接挂在根目录下。
+    var parentItemIdentifier: NSFileProviderItemIdentifier {
+        switch view {
+        case .discover: return .rootContainer
+        case .search: return ProviderIdentifiers.searchBacking
+        case .recent: return ProviderIdentifiers.recent
+        case .favorite: return ProviderIdentifiers.favorites
+        }
+    }
 }
 
 /// 将内部错误收敛到 File Provider 接受的错误域。
@@ -46,10 +65,14 @@ enum ProviderError {
     }
 
     /// 只读数据源拒绝所有来自本地文件系统的写操作。
+    ///
+    /// 必须返回 `cannotSynchronize` 这个**终态**错误：早先返回 Cocoa 的
+    /// `NSFileWriteNoPermissionError`，系统把它当成可重试失败，于是对同一批条目
+    /// 每秒数次地反复调用 `createItem`，把缩略图请求彻底饿死——表现为目录里图片全黑。
     static func readOnly(_ operation: String) -> Error {
         NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteNoPermissionError,
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.Code.cannotSynchronize.rawValue,
             userInfo: [NSLocalizedDescriptionKey: "Mirage 为只读数据源，不能\(operation)。"]
         )
     }
@@ -92,6 +115,33 @@ enum ProviderError {
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.syncAnchorExpired.rawValue,
             userInfo: [NSLocalizedDescriptionKey: "同步锚点已过期，需要重新枚举。"]
+        )
+    }
+
+    /// 无法恢复分页令牌时要求系统从第一页重新开始搜索。
+    static func invalidSearchPage() -> Error {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.Code.pageExpired.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "搜索分页位置已失效，请重新搜索。"]
+        )
+    }
+
+    /// 根目录推荐 token 无法恢复时要求系统重新执行首次枚举。
+    static func invalidEnumerationPage() -> Error {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.Code.pageExpired.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "推荐分页位置已失效，请重新打开 Mirage。"]
+        )
+    }
+
+    /// 推荐快照已换代或被历史窗口淘汰时，要求系统重新枚举根目录。
+    static func expiredDiscoveryPage() -> Error {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.Code.pageExpired.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "推荐内容已刷新，请重新打开 Mirage 目录。"]
         )
     }
 }

@@ -65,6 +65,24 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(recent.map(\.id), (30..<40).reversed().map { Self.record($0).id })
     }
 
+    /// 批量清空 recent 只删除访问历史，不应删除底层图片元数据。
+    func testClearRecentPreservesItems() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = Self.record(1)
+        let second = Self.record(2)
+        try await storage.writeRecent(first)
+        try await storage.writeRecent(second)
+
+        try await storage.clearRecent()
+
+        let recent = try await storage.readRecent()
+        let restoredFirst = try await storage.readItem(id: first.id)
+        let restoredSecond = try await storage.readItem(id: second.id)
+        XCTAssertTrue(recent.isEmpty)
+        XCTAssertEqual(restoredFirst, first)
+        XCTAssertEqual(restoredSecond, second)
+    }
+
     /// 收藏去重应保留首次出现的顺序，且条目元数据独立可读。
     func testItemsAndFavoritesRoundTrip() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
@@ -176,6 +194,111 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(restored?.generation, UInt64(commitCount))
     }
 
+    /// 当前指针丢失后仍须从持久高水位继续递增，不能复用已经发布过的 generation。
+    func testDiscoveryGenerationHighWatermarkSurvivesCurrentPointerLoss() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = try await firstStorage.commitDiscoveryFeed(
+            records: [Self.record(1)],
+            refreshedAt: Date(timeIntervalSince1970: 1_000),
+            source: .network,
+            catalogKey: DiscoveryRecommendation.catalogKey,
+            queryKey: DiscoveryRecommendation.query
+        )
+        try FileManager.default.removeItem(
+            at: temporaryURL.appendingPathComponent("discovery-feed.json")
+        )
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let second = try await restartedStorage.commitDiscoveryFeed(
+            records: [Self.record(2)],
+            refreshedAt: Date(timeIntervalSince1970: 2_000),
+            source: .network,
+            catalogKey: DiscoveryRecommendation.catalogKey,
+            queryKey: DiscoveryRecommendation.query
+        )
+        let restored = try await restartedStorage.readDiscoveryFeedSnapshot()
+
+        XCTAssertEqual(second.generation, first.generation + 1)
+        XCTAssertEqual(restored?.generation, second.generation)
+    }
+
+    /// generation 达到 UInt64 上限后必须显式失败，不能使用回绕值覆盖旧快照。
+    func testDiscoveryGenerationExhaustionDoesNotWrap() async throws {
+        let stateURL = temporaryURL.appendingPathComponent("discovery-generation.json")
+        let stateData = Data(
+            "{\"highWatermark\":18446744073709551615,\"schemaVersion\":1}".utf8
+        )
+        try stateData.write(to: stateURL, options: .atomic)
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+
+        do {
+            _ = try await storage.commitDiscoveryFeed(
+                records: [Self.record(1)],
+                refreshedAt: Date(),
+                source: .network,
+                catalogKey: DiscoveryRecommendation.catalogKey,
+                queryKey: DiscoveryRecommendation.query
+            )
+            XCTFail("generation 耗尽后不得继续提交")
+        } catch let error as DiscoveryFeedStorageError {
+            XCTAssertEqual(error, .generationExhausted)
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: temporaryURL.appendingPathComponent("discovery-feed.json").path
+            )
+        )
+    }
+
+    /// 两个实例竞争同一发现页时只能提交一份记录，输家必须返回赢家已经落盘的快照和游标。
+    func testConcurrentDiscoveryAppendsUsePageAndOffsetCASAcrossStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let pageSize = DiscoveryRecommendation.pageSize
+        let firstPage = (0..<pageSize).map { Self.record($0) }
+        let committed = try await firstStorage.commitDiscoveryFeed(
+            records: firstPage,
+            refreshedAt: Date(timeIntervalSince1970: 1_000),
+            source: .network,
+            catalogKey: DiscoveryRecommendation.catalogKey,
+            queryKey: DiscoveryRecommendation.query,
+            pageSize: pageSize,
+            nextPage: 2
+        )
+        let firstCandidate = (pageSize..<(pageSize * 2)).map { Self.record($0) }
+        let secondCandidate = ((pageSize * 2)..<(pageSize * 3)).map { Self.record($0) }
+
+        async let firstResult = firstStorage.appendDiscoveryFeed(
+            generation: committed.generation,
+            expectedNextPage: 2,
+            expectedRecordCount: pageSize,
+            records: firstCandidate,
+            nextPage: 3
+        )
+        async let secondResult = secondStorage.appendDiscoveryFeed(
+            generation: committed.generation,
+            expectedNextPage: 2,
+            expectedRecordCount: pageSize,
+            records: secondCandidate,
+            nextPage: 7
+        )
+        let results = try await [firstResult, secondResult]
+        let restored = try await firstStorage.readDiscoveryFeedSnapshot(
+            generation: committed.generation
+        )
+        let winner = try XCTUnwrap(restored)
+        let appendedIDs = Array(winner.records.dropFirst(pageSize).map(\.id))
+
+        XCTAssertEqual(results, [winner, winner])
+        XCTAssertEqual(winner.records.count, pageSize * 2)
+        if winner.nextPage == 3 {
+            XCTAssertEqual(appendedIDs, firstCandidate.map(\.id))
+        } else {
+            XCTAssertEqual(winner.nextPage, 7)
+            XCTAssertEqual(appendedIDs, secondCandidate.map(\.id))
+        }
+    }
+
     /// 搜索索引与单条元数据一起持久化，扩展重启后仍按原顺序恢复 backing。
     func testSearchBackingPersistsAcrossStorageRestart() async throws {
         let records = [Self.record(3), Self.record(1), Self.record(2)]
@@ -185,6 +308,23 @@ final class AppGroupStorageTests: XCTestCase {
         let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
         let restored = try await restartedStorage.readSearchBackingRecords()
         XCTAssertEqual(restored.map(\.id), records.map(\.id))
+    }
+
+    /// 同一查询的后续页应累计去重，新查询仍然替换当前搜索 backing。
+    func testSearchBackingAppendsPagesForSameQuery() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let first = [Self.record(1), Self.record(2)]
+        let second = [Self.record(2), Self.record(3)]
+        try await storage.commitSearchBacking(queryKey: "cat", records: first)
+        try await storage.commitSearchBacking(queryKey: "cat", records: second, appending: true)
+        let appended = try await storage.readSearchBackingRecords()
+        XCTAssertEqual(appended.map(\.id), [
+            Self.record(1).id, Self.record(2).id, Self.record(3).id
+        ])
+
+        try await storage.commitSearchBacking(queryKey: "dog", records: [Self.record(4)], appending: true)
+        let replaced = try await storage.readSearchBackingRecords()
+        XCTAssertEqual(replaced, [Self.record(4)])
     }
 
     /// 新查询替换当前 backing 后，旧搜索 occurrence 仍须通过独立权威记录回查。
@@ -325,6 +465,46 @@ final class AppGroupStorageTests: XCTestCase {
                 after: initialAnchor
             )
             XCTAssertEqual(changes.updatedIdentifiers, ["item-\(index)"])
+        }
+    }
+
+    /// 符号链接别名必须映射到同一进程锁，否则多个 storage actor 会在同一文件上丢提交。
+    func testSymlinkedBaseURLsShareSameProcessTransactionLock() async throws {
+        let realURL = temporaryURL.appendingPathComponent("real-group", isDirectory: true)
+        let aliasURL = temporaryURL.appendingPathComponent("alias-group", isDirectory: true)
+        try FileManager.default.createDirectory(at: realURL, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: realURL)
+        let realStorage = try AppGroupStorage(baseURL: realURL)
+        let aliasStorage = try AppGroupStorage(baseURL: aliasURL)
+        let initialAnchor = try await realStorage.currentProviderAnchor()
+        let commitCount = 80
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<commitCount {
+                group.addTask {
+                    let storage = index.isMultiple(of: 2) ? realStorage : aliasStorage
+                    _ = try await storage.commitProviderScope(
+                        "alias-scope-\(index)",
+                        items: [
+                            ProviderStoredItemState(
+                                identifier: "alias-item-\(index)",
+                                fingerprint: "v1"
+                            )
+                        ]
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+        let finalAnchor = try await aliasStorage.currentProviderAnchor()
+
+        XCTAssertEqual(finalAnchor, initialAnchor + UInt64(commitCount))
+        for index in 0..<commitCount {
+            let changes = try await realStorage.providerChanges(
+                in: "alias-scope-\(index)",
+                after: initialAnchor
+            )
+            XCTAssertEqual(changes.updatedIdentifiers, ["alias-item-\(index)"])
         }
     }
 
