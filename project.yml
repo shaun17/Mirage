@@ -45,8 +45,8 @@ targets:
       path: Config/MirageFileProvider-Info.plist
       properties:
         CFBundleDisplayName: Mirage
-        CFBundleShortVersionString: "0.2.9"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "14"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
@@ -78,8 +78,8 @@ targets:
       properties:
         CFBundleDisplayName: Mirage
         CFBundleName: Mirage
-        CFBundleShortVersionString: "0.2.9"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "14"
         LSApplicationCategoryType: public.app-category.productivity
         NSFileProviderDomainUsageDescription: Mirage 需要在系统文件选择器中提供可浏览和选择的头像与图片。
         NSPrincipalClass: NSApplication
@@ -114,7 +114,7 @@ targets:
       - path: Sources/MirageFileProvider/ProviderAsyncSupport.swift
       - path: Sources/MirageFileProvider/ProviderCatalog.swift
       - path: Sources/MirageFileProvider/ProviderIdentifiers.swift
-      - path: Sources/MirageFileProvider/ProviderFeedPump.swift
+      - path: Sources/MirageFileProvider/ProviderDiscoveryTreePlanner.swift
       - path: Sources/MirageFileProvider/ProviderItem.swift
       - path: Sources/MirageFileProvider/ProviderPagePlanner.swift
       - path: Sources/MirageFileProvider/ProviderRepository.swift

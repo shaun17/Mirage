@@ -433,6 +433,158 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(changes.updatedIdentifiers, ["discover:b", "discover:c"])
     }
 
+    /// scope 成员查询只能命中已提交快照中的稳定 ID。
+    func testProviderScopeContainsOnlyCommittedMembers() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        _ = try await storage.commitProviderScope(
+            "discovery:v3:1",
+            items: [
+                ProviderStoredItemState(identifier: "discover:a", fingerprint: "v1"),
+                ProviderStoredItemState(
+                    identifier: "discover-page:v3:2",
+                    fingerprint: "generation:41",
+                    discoveryGeneration: 41
+                )
+            ]
+        )
+
+        let containsPublishedDirectory = try await storage.providerScope(
+            "discovery:v3:1",
+            contains: "discover-page:v3:2"
+        )
+        let containsUnpublishedDirectory = try await storage.providerScope(
+            "discovery:v3:1",
+            contains: "discover-page:v3:3"
+        )
+        let missingScopeContainsDirectory = try await storage.providerScope(
+            "discovery:v3:2",
+            contains: "discover-page:v3:3"
+        )
+        XCTAssertTrue(containsPublishedDirectory)
+        XCTAssertFalse(containsUnpublishedDirectory)
+        XCTAssertFalse(missingScopeContainsDirectory)
+        let committedSnapshot = try await storage.providerScopeSnapshot("discovery:v3:1")
+        let committed = try XCTUnwrap(committedSnapshot)
+        XCTAssertEqual(committed.count, 2)
+        XCTAssertNil(committed[0].discoveryGeneration)
+        XCTAssertEqual(committed[1].discoveryGeneration, 41)
+        let missingSnapshot = try await storage.providerScopeSnapshot("discovery:v3:2")
+        XCTAssertNil(missingSnapshot)
+    }
+
+    /// 条件提交必须在跨进程锁内观察最新权威代次；失败时既不能写子 scope，也不能推进已打开深度。
+    func testConditionalProviderCommitRejectsLateGenerationAcrossStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let page2 = "discover-page:v3:2"
+        _ = try await firstStorage.commitProviderScope(
+            "root",
+            items: [
+                ProviderStoredItemState(
+                    identifier: page2,
+                    fingerprint: "generation:41",
+                    discoveryGeneration: 41
+                )
+            ]
+        )
+        _ = try await secondStorage.commitProviderScope(
+            "working-set",
+            items: [
+                ProviderStoredItemState(
+                    identifier: page2,
+                    fingerprint: "generation:42",
+                    discoveryGeneration: 42
+                )
+            ]
+        )
+        let staleCommit = ProviderStoredScopeCommit(
+            scope: "discovery:v3:2",
+            items: [
+                ProviderStoredItemState(
+                    identifier: "discover-page-item:v3:2:old",
+                    fingerprint: "old",
+                    discoveryGeneration: 41
+                )
+            ]
+        )
+
+        do {
+            _ = try await firstStorage.commitProviderScopes(
+                [staleCommit],
+                requiring: [
+                    ProviderPublicationRequirement(
+                        candidateScopes: ["root", "working-set"],
+                        itemIdentifier: page2,
+                        expectedDiscoveryGeneration: 41
+                    )
+                ],
+                openedDiscoveryPage: 2
+            )
+            XCTFail("迟到旧代次不应覆盖当前权威 scope")
+        } catch let error as ProviderPublicationError {
+            XCTAssertEqual(error, .staleLineage)
+        }
+        let rejectedScope = try await firstStorage.providerScopeSnapshot("discovery:v3:2")
+        let rejectedOpenedPage = try await firstStorage.maximumOpenedProviderDiscoveryPage()
+        XCTAssertNil(rejectedScope)
+        XCTAssertNil(rejectedOpenedPage)
+
+        let currentCommit = ProviderStoredScopeCommit(
+            scope: "discovery:v3:2",
+            items: [
+                ProviderStoredItemState(
+                    identifier: "discover-page-item:v3:2:new",
+                    fingerprint: "new",
+                    discoveryGeneration: 42
+                )
+            ]
+        )
+        _ = try await firstStorage.commitProviderScopes(
+            [currentCommit],
+            requiring: [
+                ProviderPublicationRequirement(
+                    candidateScopes: ["root", "working-set"],
+                    itemIdentifier: page2,
+                    expectedDiscoveryGeneration: 42
+                )
+            ],
+            openedDiscoveryPage: 2
+        )
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let restoredOpenedPage = try await restartedStorage.maximumOpenedProviderDiscoveryPage()
+        XCTAssertEqual(restoredOpenedPage, 2)
+    }
+
+    /// 全局前缀查询必须跨 scope 去重，并且不受 scope 提交顺序影响。
+    func testProviderItemIdentifiersMatchingPrefixAreUniqueAndSorted() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        _ = try await storage.commitProviderScope(
+            "discovery:v3:2",
+            items: [
+                ProviderStoredItemState(identifier: "discover-page:v3:4", fingerprint: "v1"),
+                ProviderStoredItemState(identifier: "search:other", fingerprint: "v1"),
+                ProviderStoredItemState(identifier: "discover-page:v3:3", fingerprint: "v1")
+            ]
+        )
+        _ = try await storage.commitProviderScope(
+            "root",
+            items: [
+                ProviderStoredItemState(identifier: "discover-page:v3:2", fingerprint: "v1"),
+                ProviderStoredItemState(identifier: "discover-page:v3:3", fingerprint: "v2")
+            ]
+        )
+
+        let identifiers = try await storage.providerItemIdentifiers(
+            matchingPrefix: "discover-page:v3:"
+        )
+        XCTAssertEqual(
+            identifiers,
+            ["discover-page:v3:2", "discover-page:v3:3", "discover-page:v3:4"]
+        )
+        let missingIdentifiers = try await storage.providerItemIdentifiers(matchingPrefix: "missing:")
+        XCTAssertTrue(missingIdentifiers.isEmpty)
+    }
+
     /// 两个 storage 实例并发提交不同 scope 时，全局 generation 与每个 scope 都不能丢失。
     func testConcurrentProviderCommitsAcrossStorageInstances() async throws {
         let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
@@ -568,6 +720,57 @@ final class AppGroupStorageTests: XCTestCase {
         )
         let changes = try await storage.providerChanges(in: "root", after: recoveryAnchor)
         XCTAssertEqual(changes.updatedIdentifiers, ["restored"])
+    }
+
+    /// schema v2 发布树不能泄漏到 v3：旧锚点过期，旧 scope 与成员索引同时清空。
+    func testProviderSchema2ExpiresOldAnchorAndClearsPublishedScopes() async throws {
+        let oldAnchor: UInt64 = 77
+        let schema2Data = Data(
+            """
+            {"schemaVersion":2,"generation":77,"minimumValidAnchor":0,"scopes":{"root":{"items":[{"identifier":"discover-page:v2:2","fingerprint":"generation:9"}],"history":[],"minimumValidAnchor":0,"hasCommittedSnapshot":true}}}
+            """.utf8
+        )
+        let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        try schema2Data.write(to: stateURL, options: .atomic)
+
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let recoveryAnchor = try await storage.currentProviderAnchor()
+        XCTAssertGreaterThan(recoveryAnchor, oldAnchor)
+        let recoveredObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))
+                as? [String: Any]
+        )
+        XCTAssertEqual(recoveredObject["schemaVersion"] as? Int, 3)
+        let containsLegacyDirectory = try await storage.providerScope(
+            "root",
+            contains: "discover-page:v2:2"
+        )
+        let legacyIdentifiers = try await storage.providerItemIdentifiers(
+            matchingPrefix: "discover-page:v2:"
+        )
+        XCTAssertFalse(containsLegacyDirectory)
+        XCTAssertTrue(legacyIdentifiers.isEmpty)
+        do {
+            _ = try await storage.providerChanges(in: "root", after: oldAnchor)
+            XCTFail("schema v2 的 provider anchor 必须明确过期")
+        } catch let error as ProviderChangeStorageError {
+            XCTAssertEqual(error, .anchorExpired)
+        }
+    }
+
+    /// 已写出的 schema v3 文件可能尚无 opened-depth 字段；新增可选状态必须原位兼容而非误判损坏。
+    func testProviderSchema3WithoutOpenedDepthRemainsReadable() async throws {
+        let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        let schema3Data = Data(
+            "{\"schemaVersion\":3,\"generation\":77,\"minimumValidAnchor\":0,\"scopes\":{}}".utf8
+        )
+        try schema3Data.write(to: stateURL, options: .atomic)
+
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let anchor = try await storage.currentProviderAnchor()
+        let openedPage = try await storage.maximumOpenedProviderDiscoveryPage()
+        XCTAssertEqual(anchor, 77)
+        XCTAssertNil(openedPage)
     }
 
     /// 重复提交完全相同的 scope 不得制造虚假 generation 或刷新循环。

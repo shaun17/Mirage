@@ -20,7 +20,7 @@ public struct DiscoveryRemoteCursor: Codable, Equatable, Sendable {
     }
 }
 
-/// 根目录推荐头像的持久化提交单元，记录顺序本身就是 Finder 的展示顺序。
+/// 推荐头像的持久化提交单元；顺序属于 Mirage 推荐流，Finder 的最终排序由系统决定。
 public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     public let generation: UInt64
     public let refreshedAt: Date
@@ -89,7 +89,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// Finder 已经观察到的单页稳定快照；即使完整 generation 被裁剪，旧目录仍可恢复和物化。
+/// 共享推荐流的 20 张底层页快照；File Provider 会在同代次上聚合成固定 50 张目录。
 public struct DiscoveryPageSnapshot: Codable, Equatable, Sendable {
     public let generation: UInt64
     public let page: Int
@@ -113,11 +113,69 @@ public struct DiscoveryPageSnapshot: Codable, Equatable, Sendable {
 public struct ProviderStoredItemState: Codable, Equatable, Sendable {
     public let identifier: String
     public let fingerprint: String
+    /// 递归推荐 occurrence 所属的冻结代次；普通资料库条目保持为空。
+    public let discoveryGeneration: UInt64?
 
-    public init(identifier: String, fingerprint: String) {
+    public init(
+        identifier: String,
+        fingerprint: String,
+        discoveryGeneration: UInt64? = nil
+    ) {
         self.identifier = identifier
         self.fingerprint = fingerprint
+        self.discoveryGeneration = discoveryGeneration
     }
+}
+
+/// 同一 provider-publication 事务内要提交的单个 scope 快照。
+public struct ProviderStoredScopeCommit: Equatable, Sendable {
+    public let scope: String
+    public let items: [ProviderStoredItemState]
+    public let initialDeletedIdentifiers: [String]
+
+    public init(
+        scope: String,
+        items: [ProviderStoredItemState],
+        initialDeletedIdentifiers: [String] = []
+    ) {
+        self.scope = scope
+        self.items = items
+        self.initialDeletedIdentifiers = initialDeletedIdentifiers
+    }
+}
+
+/// 子目录提交前必须仍由这些候选父 scope 中最新的快照以同一代次发布。
+public struct ProviderPublicationRequirement: Equatable, Sendable {
+    public let candidateScopes: [String]
+    public let itemIdentifier: String
+    public let expectedDiscoveryGeneration: UInt64
+
+    public init(
+        candidateScopes: [String],
+        itemIdentifier: String,
+        expectedDiscoveryGeneration: UInt64
+    ) {
+        self.candidateScopes = candidateScopes
+        self.itemIdentifier = itemIdentifier
+        self.expectedDiscoveryGeneration = expectedDiscoveryGeneration
+    }
+}
+
+/// 批量重建 working set 时，拒绝覆盖已经发布到更高推荐代次的权威 scope。
+public struct ProviderGenerationCeiling: Equatable, Sendable {
+    public let authorityScopes: [String]
+    public let maximumDiscoveryGeneration: UInt64
+
+    public init(authorityScopes: [String], maximumDiscoveryGeneration: UInt64) {
+        self.authorityScopes = authorityScopes
+        self.maximumDiscoveryGeneration = maximumDiscoveryGeneration
+    }
+}
+
+/// 发布快照在联网或跨 actor 等待期间已经失去祖先授权。
+public enum ProviderPublicationError: Error, Equatable, Sendable {
+    case staleLineage
+    case invalidOpenedDiscoveryPage
 }
 
 /// 从一个持久化锚点到当前锚点合并后的净变化。
@@ -214,8 +272,8 @@ public actor AppGroupStorage {
     private let lockDirectoryURL: URL
     private var snapshotRevision: UInt64 = 0
     private static let providerHistoryLimit = 64
-    // v2 把 Finder 推荐目录从 generation 身份迁移为稳定逻辑页，旧 scope 必须开启新锚点纪元。
-    private static let providerSchemaVersion = 2
+    // v3 将 Finder 推荐发布迁移为递归逻辑页，旧 scope 必须开启新锚点纪元。
+    private static let providerSchemaVersion = 3
     private static let favoritesSchemaVersion = 1
     private static let searchBackingSchemaVersion = 1
     private static let discoveryGenerationSchemaVersion = 1
@@ -558,12 +616,52 @@ public actor AppGroupStorage {
         items: [ProviderStoredItemState],
         initialDeletedIdentifiers: [String] = []
     ) throws -> UInt64 {
+        try commitProviderScopes(
+            [
+                ProviderStoredScopeCommit(
+                    scope: scope,
+                    items: items,
+                    initialDeletedIdentifiers: initialDeletedIdentifiers
+                )
+            ]
+        )
+    }
+
+    /// 在同一跨进程事务中验证 lineage、更新已打开深度并提交一个或多个 scope。
+    ///
+    /// 联网发生在事务外；只有这里重新确认父入口仍属于预期 generation 后，结果才可发布。
+    @discardableResult
+    public func commitProviderScopes(
+        _ commits: [ProviderStoredScopeCommit],
+        requiring requirements: [ProviderPublicationRequirement] = [],
+        generationCeiling: ProviderGenerationCeiling? = nil,
+        openedDiscoveryPage: Int? = nil
+    ) throws -> UInt64 {
         try withExclusiveFileLock(named: "provider-publication") {
-            try commitProviderScopeUnlocked(
-                scope,
-                items: items,
-                initialDeletedIdentifiers: initialDeletedIdentifiers
-            )
+            var state = try readProviderStateUnlocked()
+            try validateProviderPublicationRequirements(requirements, in: state)
+            try validateProviderGenerationCeiling(generationCeiling, in: state)
+            if let openedDiscoveryPage {
+                guard (2...SearchPaginationCursor.maximumPage).contains(openedDiscoveryPage) else {
+                    throw ProviderPublicationError.invalidOpenedDiscoveryPage
+                }
+                state.maximumOpenedDiscoveryPage = max(
+                    state.maximumOpenedDiscoveryPage ?? openedDiscoveryPage,
+                    openedDiscoveryPage
+                )
+            }
+            for commit in commits {
+                try applyProviderScopeCommitUnlocked(commit, to: &state)
+            }
+            try writeProviderStateUnlocked(state)
+            return state.generation
+        }
+    }
+
+    /// 已打开深度独立于推荐 generation；换代后 working set 据此重建相同访问前缀。
+    public func maximumOpenedProviderDiscoveryPage() throws -> Int? {
+        try withExclusiveFileLock(named: "provider-publication") {
+            try readProviderStateUnlocked().maximumOpenedDiscoveryPage
         }
     }
 
@@ -603,6 +701,42 @@ public actor AppGroupStorage {
     public func currentProviderAnchor() throws -> UInt64 {
         try withExclusiveFileLock(named: "provider-publication") {
             try readProviderStateUnlocked().generation
+        }
+    }
+
+    /// 只有已完整提交的 scope 才能授权后续目录或 occurrence 被解析。
+    public func providerScope(_ scope: String, contains identifier: String) throws -> Bool {
+        try withExclusiveFileLock(named: "provider-publication") {
+            let state = try readProviderStateUnlocked()
+            guard let scopeState = state.scopes[scope], scopeState.hasCommittedSnapshot else {
+                return false
+            }
+            return scopeState.items.contains { $0.identifier == identifier }
+        }
+    }
+
+    /// 返回已完整提交 scope 的当前成员；nil 明确区分“从未发布”和“已发布为空”。
+    public func providerScopeSnapshot(_ scope: String) throws -> [ProviderStoredItemState]? {
+        try withExclusiveFileLock(named: "provider-publication") {
+            let state = try readProviderStateUnlocked()
+            guard let scopeState = state.scopes[scope], scopeState.hasCommittedSnapshot else {
+                return nil
+            }
+            return scopeState.items
+        }
+    }
+
+    /// 扫描所有已提交 scope 的发布成员，跨 scope 去重后按稳定 ID 排序。
+    public func providerItemIdentifiers(matchingPrefix prefix: String) throws -> [String] {
+        try withExclusiveFileLock(named: "provider-publication") {
+            let state = try readProviderStateUnlocked()
+            return Set(
+                state.scopes.values
+                    .filter(\.hasCommittedSnapshot)
+                    .flatMap(\.items)
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(prefix) }
+            ).sorted()
         }
     }
 
@@ -1114,29 +1248,26 @@ public actor AppGroupStorage {
         try JSONDecoder().decode(type, from: data)
     }
 
-    /// 调用方持有 provider-publication 锁时提交一个 scope，并维护全局锚点与有限差异历史。
-    private func commitProviderScopeUnlocked(
-        _ scope: String,
-        items: [ProviderStoredItemState],
-        initialDeletedIdentifiers: [String]
-    ) throws -> UInt64 {
-        var state = try readProviderStateUnlocked()
-        var scopeState = state.scopes[scope] ?? ProviderScopeState()
+    /// 调用方持有 provider-publication 锁时，把一个 scope 的净差异应用到同一内存事务。
+    private func applyProviderScopeCommitUnlocked(
+        _ commit: ProviderStoredScopeCommit,
+        to state: inout ProviderPersistentState
+    ) throws {
+        var scopeState = state.scopes[commit.scope] ?? ProviderScopeState()
         let oldItems = Dictionary(uniqueKeysWithValues: scopeState.items.map { ($0.identifier, $0) })
-        let newItems = Dictionary(uniqueKeysWithValues: items.map { ($0.identifier, $0) })
+        let newItems = Dictionary(uniqueKeysWithValues: commit.items.map { ($0.identifier, $0) })
         var deleted = Set(oldItems.keys).subtracting(newItems.keys)
         if scopeState.hasCommittedSnapshot == false {
-            deleted.formUnion(initialDeletedIdentifiers.filter { newItems[$0] == nil })
+            deleted.formUnion(commit.initialDeletedIdentifiers.filter { newItems[$0] == nil })
         }
         let updated = Set(newItems.compactMap { identifier, item in
             oldItems[identifier] == item ? nil : identifier
         })
-        scopeState.items = items
+        scopeState.items = commit.items
         scopeState.hasCommittedSnapshot = true
         guard !deleted.isEmpty || !updated.isEmpty else {
-            state.scopes[scope] = scopeState
-            try writeProviderStateUnlocked(state)
-            return state.generation
+            state.scopes[commit.scope] = scopeState
+            return
         }
 
         guard state.generation < UInt64.max else {
@@ -1159,9 +1290,68 @@ public actor AppGroupStorage {
             )
             scopeState.history.removeFirst(overflow)
         }
-        state.scopes[scope] = scopeState
-        try writeProviderStateUnlocked(state)
-        return state.generation
+        state.scopes[commit.scope] = scopeState
+    }
+
+    /// 每个祖先条件都以候选 scope 中 discovery generation 最大的已提交快照为权威。
+    private func validateProviderPublicationRequirements(
+        _ requirements: [ProviderPublicationRequirement],
+        in state: ProviderPersistentState
+    ) throws {
+        for requirement in requirements {
+            let candidates = providerAuthorityCandidates(
+                scopes: requirement.candidateScopes,
+                itemIdentifier: requirement.itemIdentifier,
+                in: state
+            )
+            guard let newestGeneration = candidates.map(\.generation).max(),
+                  newestGeneration == requirement.expectedDiscoveryGeneration else {
+                throw ProviderPublicationError.staleLineage
+            }
+            let newest = candidates.filter { $0.generation == newestGeneration }
+            guard !newest.isEmpty,
+                  newest.allSatisfy({
+                      $0.item?.discoveryGeneration == requirement.expectedDiscoveryGeneration
+                  }) else {
+                throw ProviderPublicationError.staleLineage
+            }
+        }
+    }
+
+    /// working-set 重建允许覆盖同代或更旧状态，但不能让迟到批次倒退已发布 generation。
+    private func validateProviderGenerationCeiling(
+        _ ceiling: ProviderGenerationCeiling?,
+        in state: ProviderPersistentState
+    ) throws {
+        guard let ceiling else { return }
+        let newestGeneration = ceiling.authorityScopes.compactMap { scope -> UInt64? in
+            guard let snapshot = state.scopes[scope], snapshot.hasCommittedSnapshot else {
+                return nil
+            }
+            return snapshot.items.compactMap(\.discoveryGeneration).max()
+        }.max()
+        if let newestGeneration,
+           newestGeneration > ceiling.maximumDiscoveryGeneration {
+            throw ProviderPublicationError.staleLineage
+        }
+    }
+
+    /// 返回候选 scope 的发布代次及目标成员；目标缺失也必须保留，才能表达权威删除。
+    private func providerAuthorityCandidates(
+        scopes: [String],
+        itemIdentifier: String,
+        in state: ProviderPersistentState
+    ) -> [(generation: UInt64, item: ProviderStoredItemState?)] {
+        scopes.compactMap { scope in
+            guard let snapshot = state.scopes[scope], snapshot.hasCommittedSnapshot,
+                  let generation = snapshot.items.compactMap(\.discoveryGeneration).max() else {
+                return nil
+            }
+            return (
+                generation,
+                snapshot.items.first { $0.identifier == itemIdentifier }
+            )
+        }
     }
 
     /// provider 状态首次创建时从 1 开始；损坏或旧 schema 会归档并重建锚点纪元。
@@ -1171,6 +1361,7 @@ public actor AppGroupStorage {
                 schemaVersion: Self.providerSchemaVersion,
                 generation: 1,
                 minimumValidAnchor: 0,
+                maximumOpenedDiscoveryPage: nil,
                 scopes: [:]
             )
         }
@@ -1195,6 +1386,10 @@ public actor AppGroupStorage {
             throw StorageSnapshotValidationError.unsupportedSchema
         }
         guard state.minimumValidAnchor <= state.generation else {
+            throw StorageSnapshotValidationError.invalidProviderState
+        }
+        if let maximumOpenedDiscoveryPage = state.maximumOpenedDiscoveryPage,
+           !(2...SearchPaginationCursor.maximumPage).contains(maximumOpenedDiscoveryPage) {
             throw StorageSnapshotValidationError.invalidProviderState
         }
         for scope in state.scopes.values {
@@ -1222,6 +1417,7 @@ public actor AppGroupStorage {
             schemaVersion: Self.providerSchemaVersion,
             generation: recoveredAnchor,
             minimumValidAnchor: recoveredAnchor,
+            maximumOpenedDiscoveryPage: nil,
             scopes: [:]
         )
         archiveInvalidProviderState(data, decodingError: decodingError)
@@ -1372,6 +1568,8 @@ private struct ProviderPersistentState: Codable {
     var schemaVersion: Int
     var generation: UInt64
     var minimumValidAnchor: UInt64
+    /// 历史上完成首次枚举的最深递归页；换代时仍需重建这些系统已知目录。
+    var maximumOpenedDiscoveryPage: Int?
     var scopes: [String: ProviderScopeState]
 }
 

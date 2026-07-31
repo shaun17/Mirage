@@ -28,11 +28,11 @@
 		2F7EEFF8EED40EE2DA3589D5 /* ImageDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */; };
 		371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712852E84B8494D2634B17A9 /* ImageSearchService.swift */; };
 		3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */; };
-		4533A7AC585D4AD20BA1C67E /* ProviderFeedPump.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A7098FE4F56160CA2268A8 /* ProviderFeedPump.swift */; };
 		4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */; };
 		4AB55F4BCEF3FEF8EA8034E1 /* DetailWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */; };
 		4DC1042CB44FE1C0264AB243 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86D01A404320AA471FC8774F /* Assets.xcassets */; };
 		51A2048ADB2D4629967639E8 /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
+		545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */; };
 		548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */; };
 		552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */; };
 		55FA24C51C2F45CDB36B0F41 /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
@@ -47,10 +47,8 @@
 		75E5035BFD3E79A99588FE57 /* ProviderThumbnailBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */; };
 		77560B755F59DC94AE0E17BC /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
 		79F0BD0C9F2EAC0B4D8D24FD /* FileProviderExtension+Content.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */; };
-		7A76FAD1828F2ADA344E58C7 /* ProviderFeedPumpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 238FF99B5F6C69FEFA4366AE /* ProviderFeedPumpTests.swift */; };
 		7AE4CFAC516648C8B220D8EE /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
 		856A620D824204103E9B84E4 /* ProviderRepositoryPageSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */; };
-		8BE4A66F57D3793735490C7F /* ProviderFeedPump.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A7098FE4F56160CA2268A8 /* ProviderFeedPump.swift */; };
 		8EDC0FC34725E5A6AB8F1824 /* ProviderPagePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03C6DBE24D83ADC6059FF9E6 /* ProviderPagePlannerTests.swift */; };
 		95C654E1F2BC055482310595 /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA52EF87F1F723064DA348D /* LibraryGridView.swift */; };
 		96EE0D4B2968CB78CC0F7EE2 /* SearchPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */; };
@@ -70,9 +68,12 @@
 		B0CFF1592C3D28FE35C328BC /* MirageDomainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE78B29069C55E789E46142 /* MirageDomainManager.swift */; };
 		B3CD7B74F9AACA7C1CFBFEF6 /* ProviderPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */; };
 		B54584C3FB00F9050E0AE790 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
+		B6803EFB4F44CA2D681E473F /* ProviderDiscoveryTreePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */; };
 		B6ED0822DF7334DBE5E61653 /* ProviderThumbnailBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */; };
 		C00B6AAD171DB181BBBC8360 /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
+		C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */; };
 		C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */; };
+		C4E64B0F4968CAAA1551C856 /* ProviderDiscoveryTreePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98561077AE0D1A0D4B1C484 /* ProviderDiscoveryTreePlannerTests.swift */; };
 		C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
 		CCBBA0227B1E053F67CC5821 /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		CF56E5284DA114983E00D94E /* SearchEnumeratorPaginationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7DF5AD60A0A51B3A50FE58 /* SearchEnumeratorPaginationTests.swift */; };
@@ -81,6 +82,7 @@
 		D938999B023BCCA9B6039ACD /* ProviderSearchResultStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */; };
 		D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2514621218B785F24793DCD /* OpenverseClientTests.swift */; };
 		E6DD43D57B5965751A166648 /* SearchModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB194ABED4EB0692CAD44C3 /* SearchModelTests.swift */; };
+		E7541DB1400BD83BF1F7206A /* ProviderDiscoveryTreePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */; };
 		EDB3BA583A5A44126DA4A601 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
 		EE3A13990CD6E446839381D6 /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239F4289745FA622404CE85B /* ImageTranscoderTests.swift */; };
@@ -159,10 +161,10 @@
 		1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mirage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderIdentifiers.swift; sourceTree = "<group>"; };
 		220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderThumbnailBatch.swift; sourceTree = "<group>"; };
-		238FF99B5F6C69FEFA4366AE /* ProviderFeedPumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderFeedPumpTests.swift; sourceTree = "<group>"; };
 		239F4289745FA622404CE85B /* ImageTranscoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageTranscoderTests.swift; sourceTree = "<group>"; };
 		28FBD235ACD44F4965213D6E /* libMirageCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libMirageCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchServiceTests.swift; sourceTree = "<group>"; };
+		323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryFeedSnapshotMutationNotifier.swift; sourceTree = "<group>"; };
 		3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchCache.swift; sourceTree = "<group>"; };
 		4136DEAEF791EE9942C29E33 /* DetailDrawerMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailDrawerMetrics.swift; sourceTree = "<group>"; };
 		4317C2B9AEBF745304572E2B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -174,6 +176,7 @@
 		530F268BF1CEC1F159A04831 /* ThumbnailLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoaderTests.swift; sourceTree = "<group>"; };
 		5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderEnumerator.swift; sourceTree = "<group>"; };
 		5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirageSystemIntegration.swift; sourceTree = "<group>"; };
+		6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryFeedSnapshotMutationNotifierTests.swift; sourceTree = "<group>"; };
 		63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDownloader.swift; sourceTree = "<group>"; };
 		68433E1057AAED506C0900F3 /* DetailWindowLayoutState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailWindowLayoutState.swift; sourceTree = "<group>"; };
 		68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorageTests.swift; sourceTree = "<group>"; };
@@ -187,6 +190,7 @@
 		8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MirageFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		91490DF02E6BF161DA088775 /* OpenverseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseClient.swift; sourceTree = "<group>"; };
+		9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderDiscoveryTreePlanner.swift; sourceTree = "<group>"; };
 		92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepositoryPageSnapshotTests.swift; sourceTree = "<group>"; };
 		948E8761E82C9C91131B7E14 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearClient.swift; sourceTree = "<group>"; };
@@ -200,7 +204,7 @@
 		B2514621218B785F24793DCD /* OpenverseClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseClientTests.swift; sourceTree = "<group>"; };
 		B53EB5D0B8258A96BABF1468 /* ProviderThumbnailBatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderThumbnailBatchTests.swift; sourceTree = "<group>"; };
 		B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchQueryParser.swift; sourceTree = "<group>"; };
-		C7A7098FE4F56160CA2268A8 /* ProviderFeedPump.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderFeedPump.swift; sourceTree = "<group>"; };
+		B98561077AE0D1A0D4B1C484 /* ProviderDiscoveryTreePlannerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderDiscoveryTreePlannerTests.swift; sourceTree = "<group>"; };
 		CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
 		D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteImageRecord.swift; sourceTree = "<group>"; };
@@ -252,10 +256,11 @@
 				68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */,
 				979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */,
 				735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */,
+				6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */,
 				32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */,
 				239F4289745FA622404CE85B /* ImageTranscoderTests.swift */,
 				B2514621218B785F24793DCD /* OpenverseClientTests.swift */,
-				238FF99B5F6C69FEFA4366AE /* ProviderFeedPumpTests.swift */,
+				B98561077AE0D1A0D4B1C484 /* ProviderDiscoveryTreePlannerTests.swift */,
 				03C6DBE24D83ADC6059FF9E6 /* ProviderPagePlannerTests.swift */,
 				92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */,
 				B53EB5D0B8258A96BABF1468 /* ProviderThumbnailBatchTests.swift */,
@@ -293,6 +298,7 @@
 				EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */,
 				9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */,
 				84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */,
+				323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */,
 				072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */,
 				712852E84B8494D2634B17A9 /* ImageSearchService.swift */,
 				D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */,
@@ -325,8 +331,8 @@
 				EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */,
 				6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */,
 				01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */,
+				9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */,
 				5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */,
-				C7A7098FE4F56160CA2268A8 /* ProviderFeedPump.swift */,
 				203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */,
 				A5032B6A2667C9906D3A2948 /* ProviderItem.swift */,
 				52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */,
@@ -608,6 +614,7 @@
 				552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */,
 				C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */,
 				99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */,
+				545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */,
 				5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */,
 				371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */,
 				AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */,
@@ -638,13 +645,14 @@
 				77560B755F59DC94AE0E17BC /* AppViewState.swift in Sources */,
 				2B126922A34AF6562188BDDD /* DetailWindowLayoutStateTests.swift in Sources */,
 				1A08F66A8FDFA65017F213E5 /* DiscoveryFeedRepositoryTests.swift in Sources */,
+				C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */,
 				3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */,
 				EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */,
 				D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */,
 				7AE4CFAC516648C8B220D8EE /* ProviderAsyncSupport.swift in Sources */,
 				B54584C3FB00F9050E0AE790 /* ProviderCatalog.swift in Sources */,
-				4533A7AC585D4AD20BA1C67E /* ProviderFeedPump.swift in Sources */,
-				7A76FAD1828F2ADA344E58C7 /* ProviderFeedPumpTests.swift in Sources */,
+				E7541DB1400BD83BF1F7206A /* ProviderDiscoveryTreePlanner.swift in Sources */,
+				C4E64B0F4968CAAA1551C856 /* ProviderDiscoveryTreePlannerTests.swift in Sources */,
 				5AF8BBA00F619CABF2B099B9 /* ProviderIdentifiers.swift in Sources */,
 				51A2048ADB2D4629967639E8 /* ProviderItem.swift in Sources */,
 				B3CD7B74F9AACA7C1CFBFEF6 /* ProviderPagePlanner.swift in Sources */,
@@ -676,8 +684,8 @@
 				C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */,
 				61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */,
 				619EB03775C37070DAD75119 /* ProviderCatalog.swift in Sources */,
+				B6803EFB4F44CA2D681E473F /* ProviderDiscoveryTreePlanner.swift in Sources */,
 				7077B5D834EE7563D1E76A84 /* ProviderEnumerator.swift in Sources */,
-				8BE4A66F57D3793735490C7F /* ProviderFeedPump.swift in Sources */,
 				23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */,
 				55FA24C51C2F45CDB36B0F41 /* ProviderItem.swift in Sources */,
 				299DDFD6FF86E362EEE8C76C /* ProviderPagePlanner.swift in Sources */,

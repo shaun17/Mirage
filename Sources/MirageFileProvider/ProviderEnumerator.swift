@@ -8,34 +8,17 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
     private static let logger = Logger(subsystem: "com.wenren.Mirage", category: "Enumeration")
     private let scope: ProviderEnumerationScope
     private let catalog: ProviderCatalog
-    /// 只有根目录枚举器持有泵：它的生命周期等于用户打开 Mirage 目录的时长。
-    private let pump: ProviderFeedPump?
-    /// 武装是异步的，但必须先于本枚举器的任何一次发布完成，
-    /// 否则 `notePublished` 会在「尚未武装」状态下跳过首屏保底检查。
-    private let armTask: Task<Void, Never>?
     private let tasks = ProviderTaskBag()
 
-    init(
-        scope: ProviderEnumerationScope,
-        catalog: ProviderCatalog,
-        pump: ProviderFeedPump? = nil
-    ) {
+    init(scope: ProviderEnumerationScope, catalog: ProviderCatalog) {
         self.scope = scope
         self.catalog = catalog
-        self.pump = pump
-        armTask = pump.map { pump in Task { await pump.arm() } }
         super.init()
     }
 
-    /// 系统不再需要枚举结果时取消尚未完成的磁盘读取，并停止滚动补页。
+    /// 系统不再需要枚举结果时取消尚未完成的磁盘读取。
     func invalidate() {
         tasks.cancelAll()
-        if let pump, let armTask {
-            Task {
-                await armTask.value
-                await pump.disarm()
-            }
-        }
     }
 
     /// Finder 会主动耗尽系统续页，因此目录枚举只返回当前有限快照并立即结束。
@@ -46,10 +29,9 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
         let relay = ProviderTaskRelay()
         let operationID = UUID()
         tasks.insert(relay, id: operationID)
-        let task = Task { [catalog, scope, tasks, relay, armTask] in
+        let task = Task { [catalog, scope, tasks, relay] in
             defer { tasks.remove(id: operationID) }
             do {
-                await armTask?.value
                 try Task.checkCancellation()
                 try ProviderPagePlanner.validateInitialPage(page)
                 let items: [ProviderItem]
@@ -101,10 +83,9 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
         let relay = ProviderTaskRelay()
         let operationID = UUID()
         tasks.insert(relay, id: operationID)
-        let task = Task { [catalog, scope, tasks, relay, armTask] in
+        let task = Task { [catalog, scope, tasks, relay] in
             defer { tasks.remove(id: operationID) }
             do {
-                await armTask?.value
                 try Task.checkCancellation()
                 let anchor = try Self.decode(syncAnchor)
                 let changes = try await catalog.changes(for: scope, after: anchor)
@@ -172,15 +153,15 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
         relay.install(task)
     }
 
-    /// v10 前缀使嵌套分页目录时代的旧锚点全部过期，系统会按扁平根目录重新枚举。
+    /// v12 前缀使扁平动态目录时代的旧锚点全部过期，系统会按递归分页目录重新枚举。
     private static func encode(_ value: UInt64) -> NSFileProviderSyncAnchor {
-        NSFileProviderSyncAnchor(rawValue: Data("v11:\(value)".utf8))
+        NSFileProviderSyncAnchor(rawValue: Data("v12:\(value)".utf8))
     }
 
     /// 严格拒绝损坏锚点，避免错误地把未知状态当成首次同步。
     private static func decode(_ anchor: NSFileProviderSyncAnchor) throws -> UInt64 {
         guard let text = String(data: anchor.rawValue, encoding: .utf8),
-              text.hasPrefix("v11:"),
+              text.hasPrefix("v12:"),
               let value = UInt64(text.dropFirst(4)) else {
             throw ProviderChangeStorageError.invalidAnchor
         }

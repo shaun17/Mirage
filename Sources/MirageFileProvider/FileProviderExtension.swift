@@ -16,7 +16,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     let manager: NSFileProviderManager?
     let repository: ProviderRepository
     let catalog: ProviderCatalog
-    let feedPump: ProviderFeedPump
     let tasks = ProviderTaskBag()
     let searchService = ImageSearchService()
     let searchCache = ProviderSearchCache()
@@ -28,22 +27,14 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         self.manager = manager
         let repository = ProviderRepository(manager: manager)
         self.repository = repository
-        let pump = ProviderFeedPump(
-            advancer: ProviderSystemFeedAdvancer(repository: repository)
-        )
-        feedPump = pump
-        catalog = ProviderCatalog(repository: repository, pump: pump)
+        catalog = ProviderCatalog(repository: repository)
         super.init()
     }
 
     /// 扩展实例被系统释放前取消所有仍在执行的操作。
-    /// 泵走 `shutdown` 而不是 `disarm`：系统未必逐个失效枚举器，这里必须无条件停。
     func invalidate() {
         tasks.cancelAll()
-        Task { [repository, feedPump] in
-            await feedPump.shutdown()
-            await repository.invalidate()
-        }
+        Task { [repository] in await repository.invalidate() }
     }
 
     /// 为目录、工作集及单条文件订阅创建统一枚举器。
@@ -59,17 +50,18 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         case ProviderIdentifiers.favorites: scope = .favorites
         case .workingSet: scope = .workingSet
         default:
-            guard ProviderIdentifiers.recordReference(from: containerItemIdentifier) != nil else {
-                throw ProviderError.noSuchItem(containerItemIdentifier)
+            if let reference = ProviderIdentifiers.discoveryPageReference(
+                from: containerItemIdentifier
+            ) {
+                scope = .discoveryPage(reference)
+            } else {
+                guard ProviderIdentifiers.recordReference(from: containerItemIdentifier) != nil else {
+                    throw ProviderError.noSuchItem(containerItemIdentifier)
+                }
+                scope = .single(containerItemIdentifier)
             }
-            scope = .single(containerItemIdentifier)
         }
-        // 根目录枚举器的存活期就是「有人正在浏览 Mirage」；只有此时才允许滚动补页联网。
-        return ProviderEnumerator(
-            scope: scope,
-            catalog: catalog,
-            pump: { if case .root = scope { return feedPump } else { return nil } }()
-        )
+        return ProviderEnumerator(scope: scope, catalog: catalog)
     }
 
     /// 查询完整元数据；搜索 ID 会在这里补上隐藏 backing 父目录。

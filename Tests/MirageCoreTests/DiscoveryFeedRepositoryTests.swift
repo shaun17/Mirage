@@ -407,6 +407,102 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
         ], "兜底页之后必须原地重试同一远端页，不能跳过其内容")
     }
 
+    /// File Provider 可注入更短单页预算；超时后必须迅速交付同页本地兜底而不是挂住枚举。
+    func testInjectedNetworkTimeoutReturnsFallbackWithinBudget() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let repository = DiscoveryFeedRepository(
+            storage: storage,
+            service: ImageSearchService(
+                openverse: SlowDiscoveryOpenverse(),
+                diceBear: diceBear
+            ),
+            diceBear: diceBear,
+            networkTimeout: .milliseconds(30)
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        let page = try await repository.page(
+            generation: nil,
+            page: 1,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertEqual(page.records.count, DiscoveryRecommendation.pageSize)
+        XCTAssertTrue(page.records.allSatisfy { $0.source == .diceBear })
+        XCTAssertLessThan(elapsed, .milliseconds(500))
+    }
+
+    /// 持久化由独立 single-flight 完成后，即使 UI caller 已取消，也必须继续交付刷新通知。
+    func testCommittedMutationSignalsAfterCallerCancellation() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let openverse = SingleFlightDiscoveryOpenverse()
+        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let signal = DiscoverySnapshotSignalProbe()
+        let repository = DiscoveryFeedRepository(
+            storage: storage,
+            service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+            diceBear: diceBear,
+            snapshotDidChange: { try await signal.send() },
+            snapshotNotificationRetryDelay: .milliseconds(10)
+        )
+
+        let request = Task {
+            try await repository.page(
+                generation: nil,
+                page: 1,
+                pageSize: DiscoveryRecommendation.pageSize
+            )
+        }
+        let requestStarted = await openverse.waitForRequestedPages(1)
+        XCTAssertTrue(requestStarted)
+        request.cancel()
+
+        do {
+            _ = try await request.value
+            XCTFail("已取消 caller 不应收到成功页面")
+        } catch is CancellationError {
+            // 预期：caller 取消只影响页面交付，不撤销已经开始的持久化与通知。
+        }
+
+        let didSignal = await signal.waitForAttempts(1)
+        XCTAssertTrue(didSignal)
+        let snapshot = try await storage.readDiscoveryFeedSnapshot()
+        XCTAssertEqual(snapshot?.records.count, DiscoveryRecommendation.pageSize)
+        let successes = await signal.successCount()
+        XCTAssertEqual(successes, 1)
+    }
+
+    /// working set signal 的瞬时失败必须保留 dirty 状态并自动重试，而不是永久吞掉。
+    func testSnapshotSignalRetriesAfterInitialFailure() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let openverse = DiscoveryPagedOpenverse()
+        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let signal = DiscoverySnapshotSignalProbe(failuresBeforeSuccess: 1)
+        let repository = DiscoveryFeedRepository(
+            storage: storage,
+            service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+            diceBear: diceBear,
+            snapshotDidChange: { try await signal.send() },
+            snapshotNotificationRetryDelay: .milliseconds(10)
+        )
+
+        _ = try await repository.page(
+            generation: nil,
+            page: 1,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+
+        let retried = await signal.waitForAttempts(2)
+        XCTAssertTrue(retried)
+        let attempts = await signal.attemptCount()
+        let successes = await signal.successCount()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(successes, 1)
+    }
+
     /// 构造与 Openverse 测试记录相同约束的安全 HTTPS 元数据。
     fileprivate static func records(prefix: String, count: Int) -> [RemoteImageRecord] {
         (0..<count).map { index in
@@ -554,4 +650,58 @@ private actor SingleFlightDiscoveryOpenverse: OpenverseSearching {
     func requestedPages() -> [Int] {
         pages
     }
+
+    /// 等到请求真正进入远端替身后再取消 caller，稳定覆盖提交前取消的竞争窗口。
+    func waitForRequestedPages(_ expected: Int) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while clock.now < deadline {
+            if pages.count >= expected { return true }
+            await Task.yield()
+        }
+        return pages.count >= expected
+    }
+}
+
+private actor SlowDiscoveryOpenverse: OpenverseSearching {
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        try await Task.sleep(for: .seconds(2))
+        return ImageSearchPage(
+            records: DiscoveryFeedRepositoryTests.records(prefix: "slow", count: pageSize),
+            nextPage: page + 1
+        )
+    }
+}
+
+/// 记录通知尝试，并可让前几次稳定失败以验证 repository 的退避重试。
+private actor DiscoverySnapshotSignalProbe {
+    private let failuresBeforeSuccess: Int
+    private var attempts = 0
+    private var successes = 0
+
+    init(failuresBeforeSuccess: Int = 0) {
+        self.failuresBeforeSuccess = failuresBeforeSuccess
+    }
+
+    func send() throws {
+        attempts += 1
+        if attempts <= failuresBeforeSuccess {
+            throw URLError(.cannotConnectToHost)
+        }
+        successes += 1
+    }
+
+    func waitForAttempts(_ expected: Int) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while clock.now < deadline {
+            if attempts >= expected { return true }
+            await Task.yield()
+        }
+        return attempts >= expected
+    }
+
+    func attemptCount() -> Int { attempts }
+
+    func successCount() -> Int { successes }
 }

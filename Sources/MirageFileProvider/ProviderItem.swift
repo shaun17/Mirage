@@ -22,6 +22,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     let childItemCount: NSNumber?
     let lastUsedDate: Date?
     let itemVersion: NSFileProviderItemVersion
+    /// 仅供 Provider 发布日志冻结递归推荐 lineage，不属于 NSFileProviderItem 协议字段。
+    let discoveryGeneration: UInt64?
 
     /// 变更日志同时观察内容与元数据版本，避免只改父级或最近时间时漏报更新。
     var changeFingerprint: String {
@@ -35,7 +37,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         parent: NSFileProviderItemIdentifier,
         name: String,
         hidden: Bool = false,
-        metadataVersionToken: String? = nil
+        metadataVersionToken: String? = nil,
+        discoveryGeneration: UInt64? = nil
     ) {
         itemIdentifier = identifier
         parentItemIdentifier = parent
@@ -48,6 +51,7 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         documentSize = nil
         childItemCount = nil
         lastUsedDate = nil
+        self.discoveryGeneration = discoveryGeneration
         itemVersion = Self.version(
             content: identifier.rawValue,
             metadata: [
@@ -65,13 +69,15 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         record: RemoteImageRecord,
         view: ProviderView,
         lastUsedDate: Date? = nil,
-        documentSize: NSNumber? = nil
+        documentSize: NSNumber? = nil,
+        discoveryGeneration: UInt64? = nil
     ) {
         self.init(
             record: record,
             reference: RecordReference(recordID: record.id, view: view),
             lastUsedDate: lastUsedDate,
-            documentSize: documentSize
+            documentSize: documentSize,
+            discoveryGeneration: discoveryGeneration
         )
     }
 
@@ -80,7 +86,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         record: RemoteImageRecord,
         reference: RecordReference,
         lastUsedDate: Date? = nil,
-        documentSize: NSNumber? = nil
+        documentSize: NSNumber? = nil,
+        discoveryGeneration: UInt64? = nil
     ) {
         itemIdentifier = reference.itemIdentifier
         parentItemIdentifier = reference.parentItemIdentifier
@@ -94,6 +101,7 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         self.documentSize = documentSize ?? NSNumber(value: ImageTranscoder.outputFileSize)
         childItemCount = nil
         self.lastUsedDate = lastUsedDate
+        self.discoveryGeneration = discoveryGeneration
         itemVersion = Self.version(
             content: [
                 record.imageURL.absoluteString,

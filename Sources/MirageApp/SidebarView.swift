@@ -144,7 +144,7 @@ struct UsageHelpPopover: View {
 
             step(1, "打开目标 App 的上传框或文件面板")
             step(2, "在左侧“位置”中选择 Mirage")
-            step(3, "向下滚动浏览，更多图片会自动加载")
+            step(3, "每层显示 50 张；打开“更多图片”继续浏览")
 
             Divider()
             Text("收藏和最近使用会同步到文件面板中的同名目录。")

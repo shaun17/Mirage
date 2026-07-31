@@ -99,7 +99,12 @@ final class AppModel: ObservableObject {
             storage = sharedStorage
             libraryAvailability = .ready
             searchModel.configureRecommendationFeed(
-                DiscoveryFeedRepository(storage: sharedStorage)
+                DiscoveryFeedRepository(
+                    storage: sharedStorage,
+                    snapshotDidChange: { [domainManager] in
+                        try await domainManager.signalDiscoveryChanged()
+                    }
+                )
             )
             await refreshLibrary()
         } catch {
