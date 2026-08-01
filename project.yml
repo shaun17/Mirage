@@ -14,6 +14,8 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     CLANG_ENABLE_MODULES: YES
+    CURRENT_PROJECT_VERSION: "16"
+    MARKETING_VERSION: "0.3.0"
 
 targets:
   MirageCore:
@@ -45,8 +47,8 @@ targets:
       path: Config/MirageFileProvider-Info.plist
       properties:
         CFBundleDisplayName: Mirage
-        CFBundleShortVersionString: "0.3.0"
-        CFBundleVersion: "14"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
@@ -78,8 +80,8 @@ targets:
       properties:
         CFBundleDisplayName: Mirage
         CFBundleName: Mirage
-        CFBundleShortVersionString: "0.3.0"
-        CFBundleVersion: "14"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
         NSFileProviderDomainUsageDescription: Mirage 需要在系统文件选择器中提供可浏览和选择的头像与图片。
         NSPrincipalClass: NSApplication

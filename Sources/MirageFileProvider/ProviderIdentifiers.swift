@@ -4,6 +4,7 @@ import Foundation
 
 /// File Provider 公开树中的稳定目录标识。
 enum ProviderIdentifiers {
+    static let avatars = NSFileProviderItemIdentifier("avatars")
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
@@ -70,6 +71,7 @@ enum ProviderIdentifiers {
 /// 远程图片在文件树中的呈现视图。
 enum ProviderView: String, CaseIterable, Sendable {
     case discover
+    case avatar
     case search
     case recent
     case favorite
@@ -162,6 +164,7 @@ struct RecordReference: Hashable, Sendable {
         case let .view(view):
             switch view {
             case .discover: return .rootContainer
+            case .avatar: return ProviderIdentifiers.avatars
             case .search: return ProviderIdentifiers.searchBacking
             case .recent: return ProviderIdentifiers.recent
             case .favorite: return ProviderIdentifiers.favorites

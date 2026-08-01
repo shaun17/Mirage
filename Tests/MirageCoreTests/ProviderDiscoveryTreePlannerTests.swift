@@ -32,6 +32,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
     func testOrdinaryViewReferencesKeepExistingIdentityAndParents() {
         let expectations: [(ProviderView, NSFileProviderItemIdentifier)] = [
             (.discover, .rootContainer),
+            (.avatar, ProviderIdentifiers.avatars),
             (.search, ProviderIdentifiers.searchBacking),
             (.recent, ProviderIdentifiers.recent),
             (.favorite, ProviderIdentifiers.favorites)

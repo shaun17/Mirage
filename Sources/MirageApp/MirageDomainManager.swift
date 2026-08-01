@@ -13,27 +13,7 @@ struct MirageDomainManager: Sendable {
         case repaired
     }
 
-    static let domainIdentifier = NSFileProviderDomainIdentifier(
-        MirageSystemIntegration.fileProviderDomainIdentifier
-    )
-    private static let legacyDomainIdentifiers = [
-        NSFileProviderDomainIdentifier("mirage-default"),
-        NSFileProviderDomainIdentifier("mirage-default-v2"),
-        NSFileProviderDomainIdentifier("mirage-default-v3"),
-        // v4 使用嵌套分页目录与 discover-page 条目 ID；扁平推荐流无法沿用旧系统副本。
-        NSFileProviderDomainIdentifier("mirage-default-v4"),
-        NSFileProviderDomainIdentifier("mirage-default-v5"),
-        NSFileProviderDomainIdentifier("mirage-default-v6"),
-        NSFileProviderDomainIdentifier("mirage-default-v7"),
-        NSFileProviderDomainIdentifier("mirage-default-v8"),
-        NSFileProviderDomainIdentifier("mirage-default-v9"),
-        // v10 副本沿用了串行缩略图与无节流重扫时代的目录状态，且实机已出现
-        // 「最近使用 2」这类重名残渣；迁移到 v11 由 removeAll 连副本一起清掉。
-        NSFileProviderDomainIdentifier("mirage-default-v10"),
-        // v11 在同一目录动态追加推荐图片，Finder 按名称重排时会造成可见内容跳动；
-        // 迁移到 v12 清除旧副本，改为每层固定 50 张的递归分页目录。
-        NSFileProviderDomainIdentifier("mirage-default-v11")
-    ]
+    private static let maximumRegistrationAttempts = 5
     static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
 
     /// 只把用户明确关闭扩展归为待启用，其余异常保留为可诊断错误。
@@ -42,40 +22,105 @@ struct MirageDomainManager: Sendable {
         case needsActivation
     }
 
-    /// 已存在同标识域时不重复添加；首次运行才提交完整能力配置。
+    /// 域标识跟随 App 构建号；每次升级或回退都先移除其他 Mirage 域及其 Finder 副本。
     func registerIfNeeded() async throws -> RegistrationResult {
-        let domains = try await installedDomains()
-        if let existing = domains.first(where: { $0.identifier == Self.domainIdentifier }) {
-            try await removeLegacyDomainIfNeeded(from: domains)
-            if #available(macOS 26.0, *) {
+        // 必须在任何 remove/add 前验证宿主与内嵌扩展来自同一构建，防止混合产物误删有效域。
+        let domainIdentifier = try synchronizedDomainIdentifier()
+        var repaired = false
+
+        for attempt in 1...Self.maximumRegistrationAttempts {
+            do {
+                let domains = try await installedDomains()
+                repaired = try await removeOutdatedDomains(
+                    from: domains,
+                    desiredIdentifier: domainIdentifier
+                ) || repaired
+
+                if let existing = domains.first(where: { $0.identifier == domainIdentifier }) {
+                    logCapabilities(of: existing)
+                    guard !hasRequiredCapabilities(existing) else {
+                        return repaired ? .repaired : .alreadyInstalled
+                    }
+                    try await remove(existing)
+                    repaired = true
+                }
+
                 Self.logger.notice(
-                    "读取现有域，字符串搜索：\(existing.supportsStringSearchRequest, privacy: .public)"
+                    "安装 Mirage 文件域：\(domainIdentifier.rawValue, privacy: .public)"
                 )
-            } else {
-                Self.logger.notice("读取现有域；当前系统使用本地索引搜索")
+                try await add(configuredDomain(identifier: domainIdentifier))
+                return repaired ? .repaired : .installed
+            } catch {
+                guard attempt < Self.maximumRegistrationAttempts,
+                      isRecoverableRegistrationRace(error) else {
+                    throw error
+                }
+                // 另一个 App 实例可能刚完成注册，或 removeAll 的挂载点仍在异步收尾。
+                // 用递增退避重新读取完整系统状态，也覆盖重复 remove 时的 noSuchItem 竞态。
+                let retryDelayMilliseconds = 250 << (attempt - 1)
+                Self.logger.notice(
+                    "Finder 域状态发生竞态，等待 \(retryDelayMilliseconds, privacy: .public)ms 后重新同步"
+                )
+                try await Task.sleep(for: .milliseconds(retryDelayMilliseconds))
             }
-            guard !hasRequiredCapabilities(existing) else { return .alreadyInstalled }
-            try await remove(existing)
-            try await add(configuredDomain())
-            return .repaired
         }
-        let migratesLegacyDomain = domains.contains {
-            Self.legacyDomainIdentifiers.contains($0.identifier)
-        }
-        try await removeLegacyDomainIfNeeded(from: domains)
-        Self.logger.notice("安装 Mirage 文件域")
-        try await add(configuredDomain())
-        return migratesLegacyDomain ? .repaired : .installed
+
+        throw CocoaError(.fileWriteFileExists)
     }
 
-    /// 旧域已经缓存了过时目录结构；迁移只删除系统占位符，App Group 资料库保持不变。
-    private func removeLegacyDomainIfNeeded(
-        from domains: [NSFileProviderDomain]
-    ) async throws {
-        for domain in domains where Self.legacyDomainIdentifiers.contains(domain.identifier) {
-            Self.logger.notice("迁移旧 Mirage 文件域")
+    /// 旧域已经缓存了过时目录结构；只删除系统占位符，App Group 资料库保持不变。
+    private func removeOutdatedDomains(
+        from domains: [NSFileProviderDomain],
+        desiredIdentifier: NSFileProviderDomainIdentifier
+    ) async throws -> Bool {
+        var removedDomain = false
+        for domain in domains where domain.identifier != desiredIdentifier
+            && MirageSystemIntegration.isManagedFileProviderDomainIdentifier(
+                domain.identifier.rawValue
+            ) {
+            Self.logger.notice(
+                "迁移不匹配的 Mirage 文件域：\(domain.identifier.rawValue, privacy: .public)"
+            )
             try await remove(domain)
+            removedDomain = true
         }
+        return removedDomain
+    }
+
+    private func logCapabilities(of domain: NSFileProviderDomain) {
+        if #available(macOS 26.0, *) {
+            Self.logger.notice(
+                "读取现有域，字符串搜索：\(domain.supportsStringSearchRequest, privacy: .public)"
+            )
+        } else {
+            Self.logger.notice("读取现有域；当前系统使用本地索引搜索")
+        }
+    }
+
+    /// add/remove 的系统回调可能多层包装 Cocoa 516 或并发清理产生的 noSuchItem。
+    private func isRecoverableRegistrationRace(_ error: Error) -> Bool {
+        errorChainContains(error) { candidate in
+            if candidate.domain == NSCocoaErrorDomain {
+                return candidate.code == CocoaError.fileWriteFileExists.rawValue
+                    || candidate.code == CocoaError.fileNoSuchFile.rawValue
+            }
+            return candidate.domain == NSFileProviderErrorDomain
+                && candidate.code == NSFileProviderError.Code.noSuchItem.rawValue
+        }
+    }
+
+    /// 限制最多检查八层 underlying error，既覆盖系统包装也避免异常错误链循环。
+    private func errorChainContains(
+        _ error: Error,
+        matching predicate: (NSError) -> Bool
+    ) -> Bool {
+        var candidate: NSError? = error as NSError
+        for _ in 0..<8 {
+            guard let currentError = candidate else { return false }
+            if predicate(currentError) { return true }
+            candidate = currentError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     /// Replicated File Provider 只接受 working set signal，系统会把收藏差异投影到目录。
@@ -90,8 +135,9 @@ struct MirageDomainManager: Sendable {
 
     /// 所有 App 侧变更共用系统唯一支持的 Replicated File Provider 刷新入口。
     private func signalWorkingSet() async throws {
+        let domainIdentifier = try synchronizedDomainIdentifier()
         guard let domain = try await installedDomains().first(where: {
-            $0.identifier == Self.domainIdentifier
+            $0.identifier == domainIdentifier
         }), let manager = NSFileProviderManager(for: domain) else {
             throw CocoaError(.fileNoSuchFile)
         }
@@ -100,8 +146,9 @@ struct MirageDomainManager: Sendable {
 
     /// 先读取系统公开的启用/断开状态，再以 URL 与 signal 验证完整运行链路。
     func refreshDiscoveryAndCheckAvailability() async throws -> Availability {
+        let domainIdentifier = try synchronizedDomainIdentifier()
         guard let domain = try await installedDomains().first(where: {
-            $0.identifier == Self.domainIdentifier
+            $0.identifier == domainIdentifier
         }) else {
             throw ProviderAvailabilityError.missingDomain
         }
@@ -118,9 +165,11 @@ struct MirageDomainManager: Sendable {
     }
 
     /// 域只声明字符串搜索，不同步系统废纸篓。
-    private func configuredDomain() -> NSFileProviderDomain {
+    private func configuredDomain(
+        identifier: NSFileProviderDomainIdentifier
+    ) -> NSFileProviderDomain {
         let domain = NSFileProviderDomain(
-            identifier: Self.domainIdentifier,
+            identifier: identifier,
             displayName: Self.displayName
         )
         if #available(macOS 26.0, *) {
@@ -138,6 +187,48 @@ struct MirageDomainManager: Sendable {
             return domain.supportsStringSearchRequest
         }
         return true
+    }
+
+    /// App 与 appex 的 CFBundleVersion 必须相同，且必须先于任何系统域变更完成验证。
+    private func synchronizedDomainIdentifier() throws -> NSFileProviderDomainIdentifier {
+        let appBuildVersion = try buildVersion(
+            in: Bundle.main,
+            missingError: .invalidAppBuildVersion
+        )
+        guard let plugInsURL = Bundle.main.builtInPlugInsURL,
+              let extensionBundle = Bundle(
+                  url: plugInsURL.appendingPathComponent(
+                      MirageSystemIntegration.fileProviderExtensionBundleName,
+                      isDirectory: true
+                  )
+              ) else {
+            throw DomainVersionError.missingEmbeddedExtension
+        }
+        let extensionBuildVersion = try buildVersion(
+            in: extensionBundle,
+            missingError: .invalidExtensionBuildVersion
+        )
+        guard let rawIdentifier = MirageSystemIntegration.synchronizedFileProviderDomainIdentifier(
+            appBuildVersion: appBuildVersion,
+            fileProviderBuildVersion: extensionBuildVersion
+        ) else {
+            throw DomainVersionError.buildVersionMismatch(
+                app: appBuildVersion,
+                fileProvider: extensionBuildVersion
+            )
+        }
+        return NSFileProviderDomainIdentifier(rawIdentifier)
+    }
+
+    private func buildVersion(
+        in bundle: Bundle,
+        missingError: DomainVersionError
+    ) throws -> String {
+        let rawVersion = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let normalized = MirageSystemIntegration.normalizedBuildVersion(rawVersion) else {
+            throw missingError
+        }
+        return normalized
     }
 
     /// 使用系统原生异步接口查询所有已注册域。
@@ -160,6 +251,27 @@ struct MirageDomainManager: Sendable {
         try await NSFileProviderManager.remove(domain, mode: .removeAll)
     }
 
+}
+
+/// 阻止 App 与内嵌扩展版本漂移时继续修改 Finder 域，并向界面给出明确诊断。
+private enum DomainVersionError: LocalizedError {
+    case invalidAppBuildVersion
+    case missingEmbeddedExtension
+    case invalidExtensionBuildVersion
+    case buildVersionMismatch(app: String, fileProvider: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAppBuildVersion:
+            return "Mirage App 缺少有效构建号，未修改 Finder 文件域。"
+        case .missingEmbeddedExtension:
+            return "Mirage 未包含 File Provider 扩展，未修改 Finder 文件域。"
+        case .invalidExtensionBuildVersion:
+            return "Mirage File Provider 缺少有效构建号，未修改 Finder 文件域。"
+        case let .buildVersionMismatch(app, fileProvider):
+            return "Mirage App（\(app)）与 File Provider（\(fileProvider)）构建号不一致，未修改 Finder 文件域。"
+        }
+    }
 }
 
 /// File Provider 已启用但运行状态异常时给出区别于“待启用”的明确错误。

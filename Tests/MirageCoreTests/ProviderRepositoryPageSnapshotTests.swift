@@ -33,6 +33,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(continuations[0].filename, "更多图片")
         XCTAssertEqual(continuations[0].itemIdentifier.rawValue, "discover-page:v3:2")
         XCTAssertEqual(root.last?.itemIdentifier, continuations[0].itemIdentifier)
+        let avatarDirectory = try XCTUnwrap(
+            root.first { $0.itemIdentifier == ProviderIdentifiers.avatars }
+        )
+        XCTAssertEqual(avatarDirectory.filename, "头像")
+        XCTAssertEqual(avatarDirectory.parentItemIdentifier, .rootContainer)
+        XCTAssertFalse(root.contains { $0.itemIdentifier.rawValue.hasPrefix("avatar:") })
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, [1, 2, 3])
     }
@@ -48,6 +54,83 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(Self.images(in: second).count, 50)
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, [1, 2, 3])
+    }
+
+    /// “头像”目录按需生成 50 个稳定 DiceBear occurrence，完全不读取 Openverse 推荐流。
+    func testAvatarFolderLoadsFiftyStableDiceBearItemsWithoutOpenverse() async throws {
+        let context = try makeContext()
+
+        let first = try await context.catalog.preparedItems(for: .avatars)
+        let images = Self.images(in: first)
+        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(Set(images.map(\.itemIdentifier)).count, 50)
+        XCTAssertTrue(images.allSatisfy {
+            $0.parentItemIdentifier == ProviderIdentifiers.avatars
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v10:")
+        })
+        let initialOpenverseRequests = await context.openverse.requestedPages()
+        XCTAssertEqual(initialOpenverseRequests, [])
+        let diceBearRequests = await context.diceBear.requests()
+        XCTAssertEqual(
+            diceBearRequests,
+            [
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 0, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 20, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 40, count: 10)
+            ]
+        )
+
+        for item in images {
+            let occurrence = try await context.repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(occurrence?.record.source, .diceBear)
+        }
+
+        let second = try await context.catalog.preparedItems(for: .avatars)
+        XCTAssertEqual(first.map(\.itemIdentifier), second.map(\.itemIdentifier))
+        let repeatedOpenverseRequests = await context.openverse.requestedPages()
+        XCTAssertEqual(repeatedOpenverseRequests, [])
+        let repeatedDiceBearRequests = await context.diceBear.requests()
+        XCTAssertEqual(repeatedDiceBearRequests, diceBearRequests)
+
+        let restoredRepository = ProviderRepository(
+            manager: nil,
+            storage: context.storage,
+            discoveryFeed: context.discoveryFeed,
+            diceBear: context.diceBear
+        )
+        let firstIdentifier = try XCTUnwrap(images.first?.itemIdentifier)
+        let restored = try await restoredRepository.occurrence(for: firstIdentifier)
+        XCTAssertEqual(restored?.record.source, .diceBear)
+
+        let forgedIdentifier = ProviderIdentifiers.itemIdentifier(
+            recordID: "db:v10:forged",
+            view: .avatar
+        )
+        let forged = try await restoredRepository.occurrence(for: forgedIdentifier)
+        XCTAssertNil(forged)
+    }
+
+    /// 单条头像 JSON 损坏时缓存应失效并被确定性结果覆盖，不能让目录持续枚举失败。
+    func testAvatarFolderRegeneratesCorruptCachedRecord() async throws {
+        let context = try makeContext()
+        let first = try await context.catalog.preparedItems(for: .avatars)
+        let itemDirectory = temporaryURL.appendingPathComponent("items", isDirectory: true)
+        let cachedFiles = try FileManager.default.contentsOfDirectory(
+            at: itemDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "json" }
+        let corruptFile = try XCTUnwrap(cachedFiles.first)
+        try Data("not-json".utf8).write(to: corruptFile, options: .atomic)
+
+        let regenerated = try await context.catalog.preparedItems(for: .avatars)
+        XCTAssertEqual(first.map(\.itemIdentifier), regenerated.map(\.itemIdentifier))
+        let regeneratedRequests = await context.diceBear.requests()
+        XCTAssertEqual(regeneratedRequests.count, 6)
+
+        let cachedAgain = try await context.catalog.preparedItems(for: .avatars)
+        XCTAssertEqual(regenerated.map(\.itemIdentifier), cachedAgain.map(\.itemIdentifier))
+        let cachedRequests = await context.diceBear.requests()
+        XCTAssertEqual(cachedRequests.count, 6)
     }
 
     /// 系统可能先枚举 working set；其中已经发布的根入口也必须能被回查和打开。
@@ -137,6 +220,77 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:4")
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, Array(1...8))
+    }
+
+    /// 第 4 批之后仍须发布并打开第 5 批，避免 Finder 在 4×50 张处形成伪上限。
+    func testOpeningFourthPagePublishesAndOpensFifthPage() async throws {
+        let context = try makeContext()
+        _ = try await context.catalog.preparedItems(for: .root)
+        for page in 2...3 {
+            let reference = try XCTUnwrap(DiscoveryPageReference(page: page))
+            _ = try await context.catalog.preparedItems(for: .discoveryPage(reference))
+        }
+
+        let fourth = try XCTUnwrap(DiscoveryPageReference(page: 4))
+        let fourthItems = try await context.catalog.preparedItems(for: .discoveryPage(fourth))
+        let fifth = try XCTUnwrap(DiscoveryPageReference(page: 5))
+        let fifthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fourthItems).only)
+        XCTAssertEqual(fifthContinuation.itemIdentifier, fifth.itemIdentifier)
+        XCTAssertEqual(fifthContinuation.parentItemIdentifier, fourth.itemIdentifier)
+
+        let resolvedFifth = try await context.catalog.item(for: fifth.itemIdentifier)
+        XCTAssertEqual(resolvedFifth?.itemIdentifier, fifth.itemIdentifier)
+        XCTAssertEqual(resolvedFifth?.discoveryGeneration, fifthContinuation.discoveryGeneration)
+
+        let fifthItems = try await context.catalog.preparedItems(for: .discoveryPage(fifth))
+        let fifthImages = Self.images(in: fifthItems)
+        let sixth = try XCTUnwrap(DiscoveryPageReference(page: 6))
+        let sixthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fifthItems).only)
+        XCTAssertEqual(fifthImages.count, 50)
+        XCTAssertEqual(
+            fifthImages.first?.itemIdentifier.rawValue,
+            "discover-page-item:v3:5:provider:11:0"
+        )
+        XCTAssertEqual(
+            fifthImages.last?.itemIdentifier.rawValue,
+            "discover-page-item:v3:5:provider:13:9"
+        )
+        XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
+        XCTAssertEqual(sixthContinuation.parentItemIdentifier, fifth.itemIdentifier)
+        let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
+        let requestedPages = await context.openverse.requestedPages()
+        XCTAssertEqual(maximumOpenedPage, 5)
+        XCTAssertEqual(requestedPages, Array(1...13))
+    }
+
+    /// 残缺旧状态恢复后必须能从当前根重新建立 lineage，并继续打开第 5 批。
+    func testIncompleteProviderStateRecoversBeforeOpeningFifthPage() async throws {
+        let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        let incompleteData = Data(
+            """
+            {"schemaVersion":3,"generation":77,"minimumValidAnchor":0,"maximumOpenedDiscoveryPage":2,"scopes":{"discovery:v3:2":{"items":[{"identifier":"discover-page-item:v3:2:legacy","fingerprint":"v1"}],"history":[],"minimumValidAnchor":0,"hasCommittedSnapshot":true}}}
+            """.utf8
+        )
+        try incompleteData.write(to: stateURL, options: .atomic)
+
+        let context = try makeContext()
+        _ = try await context.catalog.preparedItems(for: .root)
+        for page in 2...4 {
+            let reference = try XCTUnwrap(DiscoveryPageReference(page: page))
+            _ = try await context.catalog.preparedItems(for: .discoveryPage(reference))
+        }
+
+        let fifth = try XCTUnwrap(DiscoveryPageReference(page: 5))
+        let fifthDirectory = try await context.catalog.item(for: fifth.itemIdentifier)
+        let fifthItems = try await context.catalog.preparedItems(for: .discoveryPage(fifth))
+        let sixth = try XCTUnwrap(DiscoveryPageReference(page: 6))
+        let sixthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fifthItems).only)
+        let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
+
+        XCTAssertEqual(fifthDirectory?.itemIdentifier, fifth.itemIdentifier)
+        XCTAssertEqual(Self.images(in: fifthItems).count, 50)
+        XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
+        XCTAssertEqual(maximumOpenedPage, 5)
     }
 
     /// 父入口发布后即使共享推荐已换代，子目录也必须沿父代次续读，不能切到新首页偏移。
@@ -555,7 +709,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             storage = try AppGroupStorage(baseURL: temporaryURL)
         }
         let openverse = ProviderPagedOpenverse()
-        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let diceBear = ProviderRecordingDiceBear()
         let feed = DiscoveryFeedRepository(
             storage: storage,
             service: ImageSearchService(openverse: openverse, diceBear: diceBear),
@@ -564,10 +718,13 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let repository = ProviderRepository(
             manager: nil,
             storage: storage,
-            discoveryFeed: feed
+            discoveryFeed: feed,
+            diceBear: diceBear
         )
         return ProviderTestContext(
             openverse: openverse,
+            diceBear: diceBear,
+            discoveryFeed: feed,
             storage: storage,
             repository: repository,
             catalog: ProviderCatalog(repository: repository)
@@ -580,6 +737,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
 
     private static func discoveryDirectories(in items: [ProviderItem]) -> [ProviderItem] {
         let fixed: Set<NSFileProviderItemIdentifier> = [
+            ProviderIdentifiers.avatars,
             ProviderIdentifiers.recent,
             ProviderIdentifiers.favorites,
             ProviderIdentifiers.searchBacking
@@ -621,9 +779,31 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
 
 private struct ProviderTestContext {
     let openverse: ProviderPagedOpenverse
+    let diceBear: ProviderRecordingDiceBear
+    let discoveryFeed: DiscoveryFeedRepository
     let storage: AppGroupStorage
     let repository: ProviderRepository
     let catalog: ProviderCatalog
+}
+
+private struct ProviderDiceBearRequest: Equatable, Sendable {
+    let query: String
+    let offset: Int
+    let count: Int
+}
+
+private actor ProviderRecordingDiceBear: DiceBearProviding {
+    private let client = DiceBearClient(styles: [.pixelArt])
+    private var recordedRequests: [ProviderDiceBearRequest] = []
+
+    func avatars(query: String, offset: Int, count: Int) async -> [RemoteImageRecord] {
+        recordedRequests.append(
+            ProviderDiceBearRequest(query: query, offset: offset, count: count)
+        )
+        return await client.avatars(query: query, offset: offset, count: count)
+    }
+
+    func requests() -> [ProviderDiceBearRequest] { recordedRequests }
 }
 
 private actor ProviderPagedOpenverse: OpenverseSearching {

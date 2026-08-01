@@ -122,4 +122,41 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertEqual(freeUse.creator, "Pablo Stanley")
         XCTAssertEqual(freeUse.license.url?.host, "www.dicebear.com")
     }
+
+    /// Finder 域必须由 App 构建号生成，防止新构建继续复用旧目录副本。
+    func testFileProviderDomainFollowsAppBuildVersion() {
+        XCTAssertEqual(
+            MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "16"),
+            "mirage-default-v16"
+        )
+        XCTAssertEqual(
+            MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: " 16.2 "),
+            "mirage-default-v16.2"
+        )
+        XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: nil))
+        XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "16 beta"))
+        XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "16..2"))
+        XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "１６"))
+        XCTAssertEqual(
+            MirageSystemIntegration.synchronizedFileProviderDomainIdentifier(
+                appBuildVersion: "16",
+                fileProviderBuildVersion: "16"
+            ),
+            "mirage-default-v16"
+        )
+        XCTAssertNil(
+            MirageSystemIntegration.synchronizedFileProviderDomainIdentifier(
+                appBuildVersion: "16",
+                fileProviderBuildVersion: "17"
+            )
+        )
+    }
+
+    /// 迁移范围不能只列举历史版本；升级和回退都要识别所有 Mirage 域。
+    func testFileProviderManagedDomainRecognitionCoversUpgradeAndRollback() {
+        XCTAssertTrue(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("mirage-default"))
+        XCTAssertTrue(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("mirage-default-v12"))
+        XCTAssertTrue(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("mirage-default-v99"))
+        XCTAssertFalse(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("another-provider-v16"))
+    }
 }

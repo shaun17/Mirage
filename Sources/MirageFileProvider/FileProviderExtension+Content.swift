@@ -164,7 +164,8 @@ extension FileProviderExtension {
 
     /// 根目录与资料库目录都不能通过 fetchContents 下载。
     private static func isDirectory(_ identifier: NSFileProviderItemIdentifier) -> Bool {
-        identifier == .rootContainer || identifier == ProviderIdentifiers.recent
+        identifier == .rootContainer || identifier == ProviderIdentifiers.avatars
+            || identifier == ProviderIdentifiers.recent
             || identifier == ProviderIdentifiers.favorites || identifier == ProviderIdentifiers.searchBacking
             || ProviderIdentifiers.discoveryPageReference(from: identifier) != nil
     }

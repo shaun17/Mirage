@@ -274,6 +274,7 @@ public actor AppGroupStorage {
     private static let providerHistoryLimit = 64
     // v3 将 Finder 推荐发布迁移为递归逻辑页，旧 scope 必须开启新锚点纪元。
     private static let providerSchemaVersion = 3
+    private static let providerDiscoveryScopePrefix = "discovery:v3:"
     private static let favoritesSchemaVersion = 1
     private static let searchBackingSchemaVersion = 1
     private static let discoveryGenerationSchemaVersion = 1
@@ -1392,7 +1393,8 @@ public actor AppGroupStorage {
            !(2...SearchPaginationCursor.maximumPage).contains(maximumOpenedDiscoveryPage) {
             throw StorageSnapshotValidationError.invalidProviderState
         }
-        for scope in state.scopes.values {
+        var publishedDiscoveryPages = Set<Int>()
+        for (scopeKey, scope) in state.scopes {
             guard scope.minimumValidAnchor <= state.generation else {
                 throw StorageSnapshotValidationError.invalidProviderState
             }
@@ -1404,6 +1406,34 @@ public actor AppGroupStorage {
                 }
                 previousGeneration = batch.generation
             }
+
+            guard scopeKey.hasPrefix(Self.providerDiscoveryScopePrefix) else { continue }
+            let rawPage = String(scopeKey.dropFirst(Self.providerDiscoveryScopePrefix.count))
+            guard let page = Int(rawPage),
+                  String(page) == rawPage,
+                  (2...SearchPaginationCursor.maximumPage).contains(page) else {
+                throw StorageSnapshotValidationError.invalidProviderState
+            }
+            guard scope.hasCommittedSnapshot else { continue }
+
+            let generations = scope.items.compactMap(\.discoveryGeneration)
+            guard !generations.isEmpty,
+                  generations.count == scope.items.count,
+                  Set(generations).count == 1 else {
+                // 早期 schema v3 已写出的递归 scope 没有 lineage，无法安全推导所属 generation。
+                // 让既有恢复流程提升 anchor 并清空 scope，系统随后执行完整重枚举。
+                throw StorageSnapshotValidationError.invalidProviderState
+            }
+            publishedDiscoveryPages.insert(page)
+        }
+
+        if let maximumOpenedDiscoveryPage = state.maximumOpenedDiscoveryPage {
+            let expectedPages = Set(2...maximumOpenedDiscoveryPage)
+            guard publishedDiscoveryPages == expectedPages else {
+                throw StorageSnapshotValidationError.invalidProviderState
+            }
+        } else if !publishedDiscoveryPages.isEmpty {
+            throw StorageSnapshotValidationError.invalidProviderState
         }
     }
 

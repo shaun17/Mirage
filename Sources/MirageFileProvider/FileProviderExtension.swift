@@ -45,6 +45,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         let scope: ProviderEnumerationScope
         switch containerItemIdentifier {
         case .rootContainer: scope = .root
+        case ProviderIdentifiers.avatars: scope = .avatars
         case ProviderIdentifiers.searchBacking: scope = .search
         case ProviderIdentifiers.recent: scope = .recent
         case ProviderIdentifiers.favorites: scope = .favorites

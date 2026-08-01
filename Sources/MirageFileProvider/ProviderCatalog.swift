@@ -14,6 +14,11 @@ struct ProviderCatalog: Sendable {
     func rootDirectories() -> [ProviderItem] {
         [
             ProviderItem(
+                directory: ProviderIdentifiers.avatars,
+                parent: .rootContainer,
+                name: "头像"
+            ),
+            ProviderItem(
                 directory: ProviderIdentifiers.recent,
                 parent: .rootContainer,
                 name: "最近使用"
@@ -40,6 +45,8 @@ struct ProviderCatalog: Sendable {
             items = try await rootItems()
         case let .discoveryPage(reference):
             items = try await discoveryPageItems(reference)
+        case .avatars:
+            items = try await repository.avatarItems()
         case .search:
             items = try await repository.cachedSearchItems()
         case .recent:
@@ -61,12 +68,11 @@ struct ProviderCatalog: Sendable {
         switch identifier {
         case .rootContainer:
             return .root()
-        case ProviderIdentifiers.recent:
-            return rootDirectories()[0]
-        case ProviderIdentifiers.favorites:
-            return rootDirectories()[1]
-        case ProviderIdentifiers.searchBacking:
-            return rootDirectories()[2]
+        case ProviderIdentifiers.avatars,
+             ProviderIdentifiers.recent,
+             ProviderIdentifiers.favorites,
+             ProviderIdentifiers.searchBacking:
+            return rootDirectories().first { $0.itemIdentifier == identifier }
         default:
             if let reference = ProviderIdentifiers.discoveryPageReference(from: identifier) {
                 guard let parentBatch = try await repository.parentBatch(
@@ -112,7 +118,7 @@ struct ProviderCatalog: Sendable {
         case .root, .discoveryPage:
             // 根换代或新子目录首次公开后，把完整可达树加入系统唯一有效的刷新入口。
             await repository.signalWorkingSet()
-        case .search, .recent, .favorites, .workingSet, .single:
+        case .avatars, .search, .recent, .favorites, .workingSet, .single:
             break
         }
         return current
@@ -211,6 +217,7 @@ private struct ProviderWorkingSetSnapshot: Sendable {
 enum ProviderEnumerationScope: Sendable {
     case root
     case discoveryPage(DiscoveryPageReference)
+    case avatars
     case search
     case recent
     case favorites
@@ -224,6 +231,7 @@ extension ProviderEnumerationScope {
         switch self {
         case .root: return "root"
         case let .discoveryPage(reference): return "discovery:v3:\(reference.page)"
+        case .avatars: return "avatars:v1"
         case .search: return "search"
         case .recent: return "recent"
         case .favorites: return "favorites"

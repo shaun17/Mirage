@@ -7,6 +7,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let storage: AppGroupStorage?
     private let manager: NSFileProviderManager?
     private let discoveryFeed: (any DiscoveryFeedProviding)?
+    private let diceBear: any DiceBearProviding
+
+    /// Finder 的头像分类与 Mirage App 默认头像使用同一固定查询；分段大小受 DiceBear 单次 20 条限制。
+    private static let avatarChunks = [(offset: 0, count: 20), (offset: 20, count: 20), (offset: 40, count: 10)]
+    private static let avatarItemCount = 50
 
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
@@ -17,6 +22,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         let storage = try? AppGroupStorage()
         self.storage = storage
         self.manager = manager
+        self.diceBear = diceBear
         self.discoveryFeed = storage.map {
             DiscoveryFeedRepository(
                 storage: $0,
@@ -32,15 +38,85 @@ actor ProviderRepository: ProviderSearchResultStoring {
     init(
         manager: NSFileProviderManager?,
         storage: AppGroupStorage,
-        discoveryFeed: any DiscoveryFeedProviding
+        discoveryFeed: any DiscoveryFeedProviding,
+        diceBear: any DiceBearProviding = DiceBearClient()
     ) {
         self.storage = storage
         self.manager = manager
         self.discoveryFeed = discoveryFeed
+        self.diceBear = diceBear
     }
 
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
     func invalidate() {}
+
+    /// 只有用户进入“头像”目录时才生成独立的前 50 个 DiceBear 头像，不读取混合推荐流。
+    func avatarItems() async throws -> [ProviderItem] {
+        let storage = try requireStorage()
+        if let cached = try await cachedAvatarItems(in: storage) { return cached }
+
+        var seen = Set<String>()
+        var records: [RemoteImageRecord] = []
+        for chunk in Self.avatarChunks {
+            try Task.checkCancellation()
+            let generated = await diceBear.avatars(
+                query: DiscoveryRecommendation.query,
+                offset: chunk.offset,
+                count: chunk.count
+            )
+            for record in generated
+                where record.source == .diceBear && seen.insert(record.id).inserted {
+                records.append(record)
+            }
+        }
+        try Task.checkCancellation()
+        for record in records {
+            try await storage.writeItem(record)
+        }
+        try Task.checkCancellation()
+        return records.map { ProviderItem(record: $0, view: .avatar) }
+    }
+
+    /// 已提交 scope、逐条元数据和当前 ProviderItem 指纹全部一致时直接复用，避免锚点轮询重复写盘。
+    private func cachedAvatarItems(in storage: AppGroupStorage) async throws -> [ProviderItem]? {
+        guard let states = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.avatars.storageKey
+        ), states.count == Self.avatarItemCount else {
+            return nil
+        }
+        var items: [ProviderItem] = []
+        items.reserveCapacity(states.count)
+        for state in states {
+            try Task.checkCancellation()
+            let identifier = NSFileProviderItemIdentifier(state.identifier)
+            guard let reference = ProviderIdentifiers.recordReference(from: identifier),
+                  reference.view == .avatar,
+                  reference.discoveryPage == nil else {
+                return nil
+            }
+            let record: RemoteImageRecord
+            do {
+                guard let cachedRecord = try await storage.readItem(id: reference.recordID) else {
+                    return nil
+                }
+                record = cachedRecord
+            } catch is DecodingError {
+                // 单条缓存损坏不应让目录永久不可枚举；重新生成会原子覆盖该文件。
+                return nil
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                // fileExists 与实际读取之间若被清理，按普通 cache miss 自愈。
+                return nil
+            }
+            guard record.source == .diceBear else { return nil }
+            let item = ProviderItem(record: record, view: .avatar)
+            guard item.itemIdentifier == identifier,
+                  item.changeFingerprint == state.fingerprint else {
+                return nil
+            }
+            items.append(item)
+        }
+        return items
+    }
 
     /// 根目录固定公开推荐流的首个 50 张批次；底层仍按 Mirage 的 20 张共享页读取。
     func discoveryRootBatch() async throws -> ProviderDiscoveryBatch {
@@ -323,6 +399,15 @@ actor ProviderRepository: ProviderSearchResultStoring {
             occurrence = try await storage.readDiscoveryRecord(id: reference.recordID).map {
                 ProviderOccurrence(reference: reference, record: $0)
             }
+        case .avatar:
+            guard try await storage.providerScope(
+                ProviderEnumerationScope.avatars.storageKey,
+                contains: identifier.rawValue
+            ), let record = try await storage.readItem(id: reference.recordID),
+               record.source == .diceBear else {
+                return nil
+            }
+            occurrence = ProviderOccurrence(reference: reference, record: record)
         case .search:
             occurrence = try await storage.readSearchRecord(id: reference.recordID).map {
                 ProviderOccurrence(reference: reference, record: $0)
@@ -419,7 +504,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                     ),
                     openedDiscoveryPage: reference.page
                 )
-            case .search, .recent, .favorites, .workingSet, .single:
+            case .avatars, .search, .recent, .favorites, .workingSet, .single:
                 return try await storage.commitProviderScopes([commit])
             }
         } catch is ProviderPublicationError {
