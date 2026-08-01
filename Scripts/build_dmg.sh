@@ -2,67 +2,267 @@
 
 set -euo pipefail
 
+fail() {
+  print -u2 -- "错误：$*"
+  exit 1
+}
+
 # 始终从脚本所在位置解析工程根目录，避免调用方当前目录影响产物路径。
 SCRIPT_DIRECTORY="${0:A:h}"
 PROJECT_DIRECTORY="${SCRIPT_DIRECTORY:h}"
+PROJECT_SPEC="${PROJECT_DIRECTORY}/project.yml"
 BUILD_DIRECTORY="${PROJECT_DIRECTORY}/build"
-ARCHIVE_PATH="${BUILD_DIRECTORY}/Mirage.xcarchive"
-ARCHIVE_DERIVED_DATA_PATH="${BUILD_DIRECTORY}/ArchiveDerivedData"
+BUILD_TMP_DIRECTORY="${BUILD_DIRECTORY}/tmp"
 DIST_DIRECTORY="${PROJECT_DIRECTORY}/dist"
-DMG_PATH="${DIST_DIRECTORY}/Mirage-0.1.0-dev.dmg"
+RELEASE_MODE="${RELEASE_MODE:-development}"
 
-# 自动签名需要 Xcode 已登录开发者账号；设为 0 可用于仅验证无签名编译。
+for required_command in awk codesign ditto hdiutil plutil security shasum spctl xcodebuild xcodegen xcrun; do
+  command -v "${required_command}" >/dev/null 2>&1 \
+    || fail "缺少必要命令：${required_command}"
+done
+
+[[ -f "${PROJECT_SPEC}" ]] || fail "未找到项目配置：${PROJECT_SPEC}"
+
+read_project_setting() {
+  local setting_name="$1"
+
+  awk -v key="${setting_name}" '
+    $0 ~ "^[[:space:]]*" key ":[[:space:]]*" {
+      value = $0
+      sub("^[[:space:]]*" key ":[[:space:]]*", "", value)
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/[\"[:space:]]/, "", value)
+      print value
+      exit
+    }
+  ' "${PROJECT_SPEC}"
+}
+
+MARKETING_VERSION="$(read_project_setting MARKETING_VERSION)"
+BUILD_NUMBER="$(read_project_setting CURRENT_PROJECT_VERSION)"
+DEVELOPMENT_TEAM="$(read_project_setting DEVELOPMENT_TEAM)"
+
+VERSION_PATTERN='^[0-9]+([.][0-9]+)*$'
+BUILD_PATTERN='^[0-9]+$'
+TEAM_PATTERN='^[A-Z0-9]{10}$'
+
+[[ "${MARKETING_VERSION}" =~ ${VERSION_PATTERN} ]] \
+  || fail "project.yml 中的 MARKETING_VERSION 无效：${MARKETING_VERSION:-<空>}"
+[[ "${BUILD_NUMBER}" =~ ${BUILD_PATTERN} ]] \
+  || fail "project.yml 中的 CURRENT_PROJECT_VERSION 无效：${BUILD_NUMBER:-<空>}"
+[[ "${DEVELOPMENT_TEAM}" =~ ${TEAM_PATTERN} ]] \
+  || fail "project.yml 中的 DEVELOPMENT_TEAM 无效：${DEVELOPMENT_TEAM:-<空>}"
+
+case "${RELEASE_MODE}" in
+  development)
+    DMG_FILENAME="Mirage-${MARKETING_VERSION}-development.dmg"
+    EXPECTED_AUTHORITY="Authority=Apple Development:"
+    ;;
+  developer-id)
+    DMG_FILENAME="Mirage-${MARKETING_VERSION}.dmg"
+    EXPECTED_AUTHORITY="Authority=Developer ID Application:"
+    ;;
+  *)
+    fail "RELEASE_MODE 仅支持 development 或 developer-id，当前值：${RELEASE_MODE}"
+    ;;
+esac
+
+DMG_PATH="${DIST_DIRECTORY}/${DMG_FILENAME}"
+SHA256_FILENAME="${DMG_FILENAME}.sha256"
+SHA256_PATH="${DIST_DIRECTORY}/${SHA256_FILENAME}"
+
+# 自动签名需要 Xcode 已登录开发者账号；设为 0 可禁止 Xcode 更新 profile。
 PROVISIONING_ARGUMENTS=()
-if [[ "${ALLOW_PROVISIONING_UPDATES:-1}" == "1" ]]; then
-  PROVISIONING_ARGUMENTS+=("-allowProvisioningUpdates")
+case "${ALLOW_PROVISIONING_UPDATES:-1}" in
+  1)
+    PROVISIONING_ARGUMENTS+=("-allowProvisioningUpdates")
+    ;;
+  0)
+    ;;
+  *)
+    fail "ALLOW_PROVISIONING_UPDATES 仅支持 0 或 1"
+    ;;
+esac
+
+DEVELOPER_IDENTITY_HASH=""
+if [[ "${RELEASE_MODE}" == "developer-id" ]]; then
+  [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]] \
+    || fail "developer-id 模式必须设置 NOTARY_KEYCHAIN_PROFILE"
+
+  DEVELOPER_IDENTITY_HASH="$(
+    security find-identity -v -p codesigning \
+      | awk -v team="${DEVELOPMENT_TEAM}" '
+          /"Developer ID Application:/ && index($0, "(" team ")") {
+            print $2
+            exit
+          }
+        '
+  )"
+  [[ -n "${DEVELOPER_IDENTITY_HASH}" ]] \
+    || fail "未找到团队 ${DEVELOPMENT_TEAM} 的有效 Developer ID Application 证书及私钥"
+
+  # 在耗时构建前验证 profile 确实存在且可用于访问公证服务。
+  xcrun notarytool history \
+    --keychain-profile "${NOTARY_KEYCHAIN_PROFILE}" \
+    >/dev/null \
+    || fail "NOTARY_KEYCHAIN_PROFILE 无效或无法访问公证服务"
 fi
+
+mkdir -p "${BUILD_TMP_DIRECTORY}" "${DIST_DIRECTORY}"
+WORK_DIRECTORY="$(mktemp -d "${BUILD_TMP_DIRECTORY}/mirage-release.XXXXXX")"
+
+cleanup() {
+  local cleanup_path="${WORK_DIRECTORY:-}"
+
+  # 只允许清理本工程 build/tmp 下由 mktemp 创建的唯一工作目录。
+  if [[ -n "${cleanup_path}" && "${cleanup_path}" == "${BUILD_TMP_DIRECTORY}/"* ]]; then
+    rm -rf -- "${cleanup_path}"
+  fi
+}
+trap cleanup EXIT
+
+ARCHIVE_PATH="${WORK_DIRECTORY}/Mirage.xcarchive"
+ARCHIVE_DERIVED_DATA_PATH="${WORK_DIRECTORY}/ArchiveDerivedData"
+EXPORT_DIRECTORY="${WORK_DIRECTORY}/Export"
+STAGING_DIRECTORY="${WORK_DIRECTORY}/DmgRoot"
+WORK_DMG_PATH="${WORK_DIRECTORY}/${DMG_FILENAME}"
+
+print "开始构建 Mirage ${MARKETING_VERSION} (${BUILD_NUMBER})，模式：${RELEASE_MODE}"
 
 # 重新生成工程，保证 project.yml 是构建配置的唯一来源。
 cd "${PROJECT_DIRECTORY}"
-xcodegen generate --spec "${PROJECT_DIRECTORY}/project.yml"
+xcodegen generate --spec "${PROJECT_SPEC}"
 
-mkdir -p "${BUILD_DIRECTORY}" "${DIST_DIRECTORY}"
-
-# 每次归档只清理工程 build 目录内的派生签名缓存，避免 Xcode 复用已轮换的 profile UUID。
-rm -rf "${ARCHIVE_PATH}" "${ARCHIVE_DERIVED_DATA_PATH}"
-
-# Archive 会先签嵌入的 File Provider，再签宿主 App，便于后续完整验签。
+# Archive 会先签嵌入的 File Provider，再签宿主 App。
 xcodebuild \
   -project "${PROJECT_DIRECTORY}/Mirage.xcodeproj" \
   -scheme Mirage \
   -configuration Release \
-  -destination "platform=macOS" \
+  -destination "generic/platform=macOS" \
   -derivedDataPath "${ARCHIVE_DERIVED_DATA_PATH}" \
   -archivePath "${ARCHIVE_PATH}" \
   "${PROVISIONING_ARGUMENTS[@]}" \
   archive
 
-APP_PATH="${ARCHIVE_PATH}/Products/Applications/Mirage.app"
-if [[ ! -d "${APP_PATH}" ]]; then
-  print -u2 "未找到归档后的 Mirage.app"
-  exit 1
+if [[ "${RELEASE_MODE}" == "developer-id" ]]; then
+  EXPORT_OPTIONS_PLIST="$(mktemp "${WORK_DIRECTORY}/ExportOptions.XXXXXX")"
+  plutil -create xml1 "${EXPORT_OPTIONS_PLIST}"
+  plutil -insert method -string developer-id "${EXPORT_OPTIONS_PLIST}"
+  plutil -insert signingStyle -string automatic "${EXPORT_OPTIONS_PLIST}"
+  plutil -insert teamID -string "${DEVELOPMENT_TEAM}" "${EXPORT_OPTIONS_PLIST}"
+
+  xcodebuild \
+    -exportArchive \
+    -archivePath "${ARCHIVE_PATH}" \
+    -exportPath "${EXPORT_DIRECTORY}" \
+    -exportOptionsPlist "${EXPORT_OPTIONS_PLIST}" \
+    "${PROVISIONING_ARGUMENTS[@]}"
+
+  APP_PATH="${EXPORT_DIRECTORY}/Mirage.app"
+else
+  APP_PATH="${ARCHIVE_PATH}/Products/Applications/Mirage.app"
 fi
 
-# DMG 只打包已经通过嵌套签名验证的产物，避免交付安装后才暴露 appex 签名问题。
+[[ -d "${APP_PATH}" ]] || fail "未找到构建后的 Mirage.app：${APP_PATH}"
+
+FILE_PROVIDER_PATH="${APP_PATH}/Contents/PlugIns/MirageFileProvider.appex"
+[[ -d "${FILE_PROVIDER_PATH}" ]] \
+  || fail "未找到嵌入的 MirageFileProvider.appex"
+
+verify_bundle_signature() {
+  local bundle_path="$1"
+  local signature_details
+
+  codesign --verify --strict --verbose=2 "${bundle_path}"
+  signature_details="$(codesign -dv --verbose=4 "${bundle_path}" 2>&1)"
+
+  [[ "${signature_details}" == *"${EXPECTED_AUTHORITY}"* ]] \
+    || fail "签名 Authority 不符合 ${RELEASE_MODE} 模式：${bundle_path}"
+  [[ "${signature_details}" == *"TeamIdentifier=${DEVELOPMENT_TEAM}"* ]] \
+    || fail "签名 TeamIdentifier 不匹配：${bundle_path}"
+}
+
+# 先验签嵌套扩展，再深度验证宿主 App 的完整签名封装。
+verify_bundle_signature "${FILE_PROVIDER_PATH}"
+verify_bundle_signature "${APP_PATH}"
 codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
-STAGING_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/mirage-dmg.XXXXXX")"
-cleanup() {
-  # 临时目录由本脚本创建且路径已固定前缀，可以安全清理。
-  rm -rf "${STAGING_DIRECTORY}"
-}
-trap cleanup EXIT
+verify_bundle_version() {
+  local bundle_path="$1"
+  local info_plist="${bundle_path}/Contents/Info.plist"
+  local actual_version
+  local actual_build
 
+  [[ -f "${info_plist}" ]] || fail "未找到 bundle Info.plist：${bundle_path}"
+  actual_version="$(plutil -extract CFBundleShortVersionString raw "${info_plist}")"
+  actual_build="$(plutil -extract CFBundleVersion raw "${info_plist}")"
+
+  [[ "${actual_version}" == "${MARKETING_VERSION}" ]] \
+    || fail "bundle 版本不匹配：${bundle_path}，预期 ${MARKETING_VERSION}，实际 ${actual_version}"
+  [[ "${actual_build}" == "${BUILD_NUMBER}" ]] \
+    || fail "bundle build number 不匹配：${bundle_path}，预期 ${BUILD_NUMBER}，实际 ${actual_build}"
+}
+
+verify_bundle_version "${FILE_PROVIDER_PATH}"
+verify_bundle_version "${APP_PATH}"
+
+mkdir -p "${STAGING_DIRECTORY}"
 ditto "${APP_PATH}" "${STAGING_DIRECTORY}/Mirage.app"
 ln -s /Applications "${STAGING_DIRECTORY}/Applications"
 
-# 开发版 DMG 允许覆盖同名构建产物；不会触碰工程或用户文件。
 hdiutil create \
   -volname "Mirage" \
   -srcfolder "${STAGING_DIRECTORY}" \
   -format UDZO \
-  -ov \
-  "${DMG_PATH}"
+  "${WORK_DMG_PATH}"
 
-hdiutil verify "${DMG_PATH}"
+if [[ "${RELEASE_MODE}" == "developer-id" ]]; then
+  # DMG 使用与导出 App 同团队的 Developer ID identity；没有证书时前置检查已失败。
+  codesign \
+    --force \
+    --timestamp \
+    --sign "${DEVELOPER_IDENTITY_HASH}" \
+    "${WORK_DMG_PATH}"
+  codesign --verify --verbose=2 "${WORK_DMG_PATH}"
+
+  NOTARY_RESULT_PATH="${WORK_DIRECTORY}/notary-result.json"
+  xcrun notarytool submit "${WORK_DMG_PATH}" \
+    --keychain-profile "${NOTARY_KEYCHAIN_PROFILE}" \
+    --wait \
+    --output-format json \
+    > "${NOTARY_RESULT_PATH}"
+
+  NOTARY_STATUS="$(plutil -extract status raw "${NOTARY_RESULT_PATH}")"
+  NOTARY_SUBMISSION_ID="$(plutil -extract id raw "${NOTARY_RESULT_PATH}")"
+  [[ "${NOTARY_STATUS}" == "Accepted" ]] \
+    || fail "公证未通过，submission ${NOTARY_SUBMISSION_ID} 状态：${NOTARY_STATUS}"
+
+  xcrun stapler staple "${WORK_DMG_PATH}"
+  xcrun stapler validate "${WORK_DMG_PATH}"
+
+  # 正式产物必须同时通过容器签名、App 签名和 Gatekeeper 校验。
+  codesign --verify --verbose=2 "${WORK_DMG_PATH}"
+  codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+  spctl --assess --type execute --verbose=2 "${APP_PATH}"
+  spctl --assess \
+    --type open \
+    --context context:primary-signature \
+    --verbose=2 \
+    "${WORK_DMG_PATH}"
+
+  print "公证已接受：${NOTARY_SUBMISSION_ID}"
+else
+  print "development 模式仅供本机验证；DMG 不会进行 Developer ID 签名或公证。"
+fi
+
+# 对最终字节执行磁盘镜像校验；全部通过后才发布到 dist。
+hdiutil verify "${WORK_DMG_PATH}"
+mv -f -- "${WORK_DMG_PATH}" "${DMG_PATH}"
+
+(
+  cd "${DIST_DIRECTORY}"
+  shasum -a 256 "${DMG_FILENAME}" > "${SHA256_FILENAME}"
+)
+
 print "DMG 已生成：${DMG_PATH}"
+print "SHA-256 已生成：${SHA256_PATH}"
