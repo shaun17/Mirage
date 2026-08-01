@@ -1,3 +1,4 @@
+import AppKit
 import MirageCore
 import MirageDetailWindow
 import SwiftUI
@@ -20,30 +21,27 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(model: model)
         } detail: {
-            selectedContent
+            ZStack(alignment: .trailing) {
+                selectedContent
+
+                if let inspectedRecord {
+                    DetailDrawerShell(
+                        record: inspectedRecord,
+                        onDismiss: dismissDetailDrawer
+                    )
+                    .transition(detailDrawerTransition)
+                    .zIndex(1)
+                }
+            }
         }
         .navigationTitle("Mirage")
-        .overlay(alignment: .trailing) {
-            if let inspectedRecord {
-                ImageDetailPopover(
-                    record: inspectedRecord,
-                    onDismiss: dismissDetailDrawer
-                )
-                .frame(width: DetailDrawerMetrics.width)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .background {
-                    Rectangle()
-                        .fill(.regularMaterial)
-                }
-                .overlay(alignment: .leading) {
-                    Color.secondary.opacity(0.2)
-                        .frame(width: 1)
-                }
-                .contentShape(Rectangle())
-                .shadow(color: .black.opacity(0.12), radius: 10, x: -3)
-                .transition(detailDrawerTransition)
-                .zIndex(1)
-            }
+        .background(alignment: .topLeading) {
+            DetailDrawerEscapeMonitor(
+                isEnabled: inspectedRecord != nil,
+                onEscape: dismissDetailDrawer
+            )
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -160,7 +158,7 @@ struct ContentView: View {
     private var detailDrawerTransition: AnyTransition {
         accessibilityReduceMotion
             ? .identity
-            : .move(edge: .trailing)
+            : .move(edge: .trailing).combined(with: .opacity)
     }
 
     private var detailDrawerPresentationAnimation: Animation? {
@@ -182,6 +180,152 @@ struct ContentView: View {
     /// 把两个 SwiftUI 输入收敛成一个可比较状态，任一变化都会重新计算搜索活跃性。
     private var searchLifecycleState: SearchLifecycleState {
         SearchLifecycleState(scenePhase: scenePhase, selection: model.selection)
+    }
+}
+
+/// 在根视图监听当前窗口的 Escape；零尺寸且不参与命中，不能覆盖抽屉的鼠标交互。
+private struct DetailDrawerEscapeMonitor: NSViewRepresentable {
+    let isEnabled: Bool
+    let onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isEnabled: isEnabled, onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> WindowTrackingView {
+        let view = WindowTrackingView()
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.window = window
+        }
+        context.coordinator.startMonitoring()
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowTrackingView, context: Context) {
+        context.coordinator.window = nsView.window
+        context.coordinator.isEnabled = isEnabled
+        context.coordinator.onEscape = onEscape
+    }
+
+    static func dismantleNSView(_ nsView: WindowTrackingView, coordinator: Coordinator) {
+        nsView.onWindowChange = nil
+        coordinator.stopMonitoring()
+    }
+
+    @MainActor
+    final class Coordinator {
+        weak var window: NSWindow?
+        var isEnabled: Bool
+        var onEscape: () -> Void
+        private var eventMonitor: Any?
+
+        init(isEnabled: Bool, onEscape: @escaping () -> Void) {
+            self.isEnabled = isEnabled
+            self.onEscape = onEscape
+        }
+
+        func startMonitoring() {
+            guard eventMonitor == nil else { return }
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard
+                    event.keyCode == 53,
+                    event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+                    let self,
+                    isEnabled,
+                    let window,
+                    event.window === window
+                else {
+                    return event
+                }
+
+                onEscape()
+                return nil
+            }
+        }
+
+        func stopMonitoring() {
+            guard let eventMonitor else { return }
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
+
+    @MainActor
+    final class WindowTrackingView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChange?(window)
+        }
+    }
+}
+
+/// 抽屉背景与详情作为一个合成层移动；内容短暂延迟淡入，避免缓存图片抢在材质面板前出现。
+private struct DetailDrawerShell: View {
+    let record: RemoteImageRecord
+    let onDismiss: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @State private var revealsContent = false
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(.regularMaterial)
+                .contentShape(Rectangle())
+                .onTapGesture { }
+
+            if accessibilityReduceMotion || revealsContent {
+                ImageDetailPopover(record: record)
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: DetailDrawerMetrics.width)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .overlay(alignment: .leading) {
+            Color.secondary.opacity(0.2)
+                .frame(width: 1)
+        }
+        .overlay(alignment: .topTrailing) {
+            ZStack {
+                Color.clear
+                Image(systemName: "chevron.right.2")
+                    .font(.body.weight(.semibold))
+            }
+            .frame(width: 64, height: 64)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onDismiss)
+            .help("收起详情（Esc）")
+            .accessibilityElement()
+            .accessibilityLabel("收起详情")
+            .accessibilityHint("也可按 Escape 键收起")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onDismiss() }
+        }
+        .contentShape(Rectangle())
+        .clipped()
+        .shadow(color: .black.opacity(0.12), radius: 10, x: -3)
+        .task(id: accessibilityReduceMotion) {
+            if accessibilityReduceMotion {
+                revealsContent = true
+                return
+            }
+            guard !revealsContent else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(35))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.12)) {
+                revealsContent = true
+            }
+        }
     }
 }
 
