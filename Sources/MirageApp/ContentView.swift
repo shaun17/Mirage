@@ -65,6 +65,20 @@ struct ContentView: View {
             // 同步状态变化直接提交，避免旧异步 task 在取消后反向覆盖最新生命周期。
             model.searchModel.setActive(isActive)
         }
+        .onChange(of: model.selection) { oldSelection, newSelection in
+            guard oldSelection != newSelection else { return }
+            dismissDetailDrawer()
+        }
+        .onChange(of: model.favoriteIDs) { oldIDs, newIDs in
+            guard
+                let inspectedRecord,
+                oldIDs.contains(inspectedRecord.id),
+                !newIDs.contains(inspectedRecord.id)
+            else {
+                return
+            }
+            dismissDetailDrawer()
+        }
         .task(id: scenePhase) {
             // 返回前台时同时同步资料库并复查扩展，用户启用后无需重启 App。
             guard scenePhase == .active, !Task.isCancelled else { return }

@@ -1,7 +1,7 @@
 import MirageCore
 import SwiftUI
 
-/// 搜索页提供来源筛选、前缀提示和完整的异步状态反馈。
+/// 搜索页提供来源筛选和完整的异步状态反馈。
 struct DiscoverView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var searchModel: SearchModel
@@ -43,9 +43,6 @@ struct DiscoverView: View {
             .pickerStyle(.segmented)
             .frame(width: 220, alignment: .leading)
 
-            Text("也可输入“头像:”或“图片:”前缀")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if let message = model.libraryAvailability.unavailableDescription {
                 Label("收藏不可用", systemImage: "heart.slash")
                     .font(.caption)
