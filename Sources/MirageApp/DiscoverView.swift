@@ -1,10 +1,13 @@
 import MirageCore
+import Foundation
 import SwiftUI
 
 /// 搜索页提供来源筛选和完整的异步状态反馈。
 struct DiscoverView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var searchModel: SearchModel
+    @State private var queryDraft = ""
+    @State private var filterDraft: SearchFilter = .avatars
     /// 详情交给窗口级覆盖抽屉统一呈现。
     var onShowDetails: (RemoteImageRecord) -> Void = { _ in }
 
@@ -19,7 +22,22 @@ struct DiscoverView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("发现")
-        .searchable(text: $searchModel.query, placement: .toolbar, prompt: "搜索头像或图片")
+        .searchable(text: $queryDraft, placement: .toolbar, prompt: "搜索头像或图片")
+        .onAppear(perform: synchronizeCriteriaDrafts)
+        .onChange(of: queryDraft) { _, query in
+            commitQueryAfterViewUpdate(query)
+        }
+        .onChange(of: filterDraft) { _, filter in
+            commitFilterAfterViewUpdate(filter)
+        }
+        .onChange(of: searchModel.query) { _, query in
+            guard queryDraft != query else { return }
+            queryDraft = query
+        }
+        .onChange(of: searchModel.filter) { _, filter in
+            guard filterDraft != filter else { return }
+            filterDraft = filter
+        }
         .onChange(of: searchModel.accessibilityEvent) { _, event in
             guard let event else { return }
             AccessibilityNotification.Announcement(event.message).post()
@@ -34,7 +52,7 @@ struct DiscoverView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
-            Picker("内容类型", selection: $searchModel.filter) {
+            Picker("内容类型", selection: $filterDraft) {
                 ForEach(SearchFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
                 }
@@ -54,6 +72,32 @@ struct DiscoverView: View {
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+    }
+
+    /// 本地草稿保持 AppKit Binding 的同步语义，模型只在下一主队列轮次接收变更。
+    private func commitQueryAfterViewUpdate(_ query: String) {
+        DispatchQueue.main.async { [weak searchModel] in
+            guard let searchModel, searchModel.query != query else { return }
+            searchModel.query = query
+        }
+    }
+
+    /// 分段 Picker 使用同一提交边界，快速切换仍由 SearchModel 合并成最后一次搜索。
+    private func commitFilterAfterViewUpdate(_ filter: SearchFilter) {
+        DispatchQueue.main.async { [weak searchModel] in
+            guard let searchModel, searchModel.filter != filter else { return }
+            searchModel.filter = filter
+        }
+    }
+
+    /// 视图重新出现或模型由外部恢复条件时，让控件草稿与唯一状态源保持一致。
+    private func synchronizeCriteriaDrafts() {
+        if queryDraft != searchModel.query {
+            queryDraft = searchModel.query
+        }
+        if filterDraft != searchModel.filter {
+            filterDraft = searchModel.filter
+        }
     }
 
     /// 每一种搜索结果都有独立视觉和辅助功能语义。

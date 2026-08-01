@@ -34,35 +34,28 @@ struct LibraryGridView: View {
                     description: Text(emptyDescription)
                 )
             } else {
-                GeometryReader { viewport in
-                    ScrollView {
-                        LazyVStack(spacing: 16) {
-                            LazyVGrid(columns: columns, spacing: 20) {
-                                ForEach(records) { record in
-                                    ImageCard(
-                                        record: record,
-                                        isFavorite: favoriteIDs.contains(record.id),
-                                        allowsFavoriteChanges: allowsFavoriteChanges,
-                                        onToggleFavorite: { onToggleFavorite(record) },
-                                        onShowDetails: { onShowDetails(record) }
-                                    )
-                                }
-                            }
-                            if let pagination {
-                                PaginationLoadTrigger(
-                                    state: pagination.state,
-                                    viewportHeight: viewport.size.height,
-                                    loadNextPage: pagination.loadNextPage
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        LazyVGrid(columns: columns, spacing: 20) {
+                            ForEach(records) { record in
+                                ImageCard(
+                                    record: record,
+                                    isFavorite: favoriteIDs.contains(record.id),
+                                    allowsFavoriteChanges: allowsFavoriteChanges,
+                                    onToggleFavorite: { onToggleFavorite(record) },
+                                    onShowDetails: { onShowDetails(record) }
                                 )
-                                // 新页面追加后重建触发器，防止旧尾部仍在视口内时连续偷跑下一页。
-                                .id(records.last?.id)
-                                .frame(height: 1)
+                                .modifier(
+                                    AutomaticPaginationTailModifier(
+                                        taskID: automaticPaginationTaskID(for: record),
+                                        loadNextPage: pagination?.loadNextPage ?? {}
+                                    )
+                                )
                             }
-                            paginationFooter
                         }
-                        .padding(20)
+                        paginationFooter
                     }
-                    .coordinateSpace(name: PaginationCoordinateSpace.name)
+                    .padding(20)
                 }
             }
         }
@@ -107,57 +100,44 @@ struct LibraryGridView: View {
             }
         }
     }
-}
 
-/// 搜索滚动区使用固定坐标空间测量尾部位置，避免把 Lazy 容器的预取误判成真实可见。
-private enum PaginationCoordinateSpace {
-    static let name = "Mirage.LibraryGrid.Scroll"
-}
-
-/// 记录尾部哨兵在滚动视口中的真实矩形；每次滚动都会通过偏好值更新。
-private struct PaginationTriggerFramePreferenceKey: PreferenceKey {
-    static let defaultValue = CGRect.null
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
+    /// 只给当前最后一张真实卡片分配任务标识；分页状态离开 ready 时会自动取消旧任务。
+    private func automaticPaginationTaskID(
+        for record: RemoteImageRecord
+    ) -> AutomaticPaginationTailTaskID? {
+        guard let pagination,
+              pagination.state.allowsAutomaticLoading,
+              record.id == records.last?.id,
+              let firstID = records.first?.id else {
+            return nil
+        }
+        return AutomaticPaginationTailTaskID(
+            firstID: firstID,
+            lastID: record.id,
+            count: records.count
+        )
     }
 }
 
-/// 尾部进入视口前方的加载阈值后触发一页，同时保留显式按钮作为键盘和 VoiceOver 兜底。
-private struct PaginationLoadTrigger: View {
-    let state: SearchPaginationState
-    let viewportHeight: CGFloat
+/// 首尾标识与数量共同区分结果会话和新页面，避免旧尾部任务误触发新条件的分页。
+private struct AutomaticPaginationTailTaskID: Hashable {
+    let firstID: String
+    let lastID: String
+    let count: Int
+}
+
+/// Lazy 网格实例化最后一张卡片时预取下一页，不再读取任何子视图坐标或回写布局状态。
+private struct AutomaticPaginationTailModifier: ViewModifier {
+    let taskID: AutomaticPaginationTailTaskID?
     let loadNextPage: () -> Void
 
-    @State private var frameInViewport = CGRect.null
-    private let loadAheadDistance: CGFloat = 160
-
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear.preference(
-                key: PaginationTriggerFramePreferenceKey.self,
-                value: proxy.frame(in: .named(PaginationCoordinateSpace.name))
-            )
+    func body(content: Content) -> some View {
+        content.task(id: taskID) {
+            guard taskID != nil else { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            loadNextPage()
         }
-        .onPreferenceChange(PaginationTriggerFramePreferenceKey.self) { frame in
-            frameInViewport = frame
-            requestNextPageIfReady()
-        }
-        .onChange(of: state) { _, _ in
-            requestNextPageIfReady()
-        }
-        .accessibilityHidden(true)
-    }
-
-    /// 只有哨兵真正靠近可见区域且分页就绪时才请求，模型层再保证同页只有一个任务。
-    private func requestNextPageIfReady() {
-        guard state.allowsAutomaticLoading, !frameInViewport.isNull else { return }
-        let visibleRange = (-loadAheadDistance)...(viewportHeight + loadAheadDistance)
-        guard frameInViewport.maxY >= visibleRange.lowerBound,
-              frameInViewport.minY <= visibleRange.upperBound else {
-            return
-        }
-        loadNextPage()
     }
 }
 

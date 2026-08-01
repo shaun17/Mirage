@@ -5,10 +5,16 @@ import Foundation
 @MainActor
 final class SearchModel: ObservableObject {
     @Published var query = "" {
-        didSet { scheduleSearch() }
+        didSet {
+            guard query != oldValue else { return }
+            deferSearchAfterCriteriaChange()
+        }
     }
     @Published var filter: SearchFilter = .avatars {
-        didSet { scheduleSearch() }
+        didSet {
+            guard filter != oldValue else { return }
+            deferSearchAfterCriteriaChange()
+        }
     }
     @Published private(set) var state: SearchState = .idle
     @Published private(set) var results: [RemoteImageRecord] = []
@@ -20,6 +26,7 @@ final class SearchModel: ObservableObject {
     private let service: ImageSearchService
     private var isWaitingForRecommendationFeed: Bool
     private var recommendationFeed: (any DiscoveryFeedProviding)?
+    private var criteriaChangeRevision: UInt64 = 0
     private var initialTask: Task<Void, Never>?
     private var loadMoreTask: Task<Void, Never>?
     private var loadMoreTaskID: UUID?
@@ -104,14 +111,38 @@ final class SearchModel: ObservableObject {
         loadMoreTask?.cancel()
         sessionID = UUID()
         initialTask = nil
+        // 条件变更任务仍需在下一轮把旧结果清为 idle；它会因 isActive=false 而保持离线。
         // 续页句柄由原任务退出时清理；期间保持 loading，禁止同一页并发重入。
         if state == .searching {
             state = .idle
         }
     }
 
+    /// Picker 和搜索框会在 SwiftUI 更新事务中写入筛选条件；把派生状态提交延后一轮，避免同步重入布局。
+    private func deferSearchAfterCriteriaChange() {
+        initialTask?.cancel()
+        loadMoreTask?.cancel()
+
+        // 立即让旧请求和旧分页失效，但不在控件的写入事务中发布新的视图状态。
+        sessionID = UUID()
+        initialTask = nil
+        loadMoreTask = nil
+        loadMoreTaskID = nil
+        activeRequest = nil
+        nextPage = nil
+
+        criteriaChangeRevision &+= 1
+        let revision = criteriaChangeRevision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.criteriaChangeRevision == revision else { return }
+            self.scheduleSearch()
+        }
+    }
+
     /// 条件变化立即隔离旧会话，并在400毫秒静默期后请求第一页。
     private func scheduleSearch() {
+        // 显式重试或配置变化会使尚未执行的条件调度失效；条件调度自身也在这里完成消费。
+        criteriaChangeRevision &+= 1
         initialTask?.cancel()
         loadMoreTask?.cancel()
         let newSessionID = UUID()

@@ -97,7 +97,7 @@ enum SearchPaginationState: Equatable {
     case failed(String)
     case exhausted
 
-    /// 只有准备态允许几何触底自动发起请求，其他状态都需要等待或用户操作。
+    /// 只有准备态允许尾部卡片预取下一页，其他状态都需要等待或用户操作。
     var allowsAutomaticLoading: Bool {
         self == .ready
     }

@@ -14,6 +14,86 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(SearchModel().filter, .avatars)
     }
 
+    /// 筛选控件只应同步发布自身绑定值；结果清空和状态切换必须离开当前 SwiftUI 更新事务。
+    func testFilterChangeDefersDerivedStateReset() async {
+        let openverse = OpenverseCallCounter()
+        let model = SearchModel(
+            service: ImageSearchService(
+                openverse: openverse,
+                diceBear: DiceBearClient(styles: [.pixelArt])
+            )
+        )
+        model.setActive(true)
+        let loaded = await waitUntil { model.results.count == 20 }
+        XCTAssertTrue(loaded)
+
+        let previousResults = model.results
+        model.filter = .photos
+
+        XCTAssertEqual(model.state, .results)
+        XCTAssertEqual(model.results, previousResults)
+
+        let completedDeferredSearch = await waitUntil {
+            model.state == .empty && model.results.isEmpty
+        }
+        XCTAssertTrue(completedDeferredSearch)
+    }
+
+    /// 同一主线程轮次中的快速切换只执行最后一个条件，避免中间筛选启动无效网络和布局更新。
+    func testRapidFilterChangesAreCoalesced() async {
+        let openverse = OpenverseCallCounter()
+        let model = SearchModel(
+            service: ImageSearchService(
+                openverse: openverse,
+                diceBear: DiceBearClient(styles: [.pixelArt])
+            )
+        )
+        model.setActive(true)
+        let loaded = await waitUntil { model.results.count == 20 }
+        XCTAssertTrue(loaded)
+
+        model.filter = .photos
+        model.filter = .all
+        model.filter = .avatars
+
+        try? await Task.sleep(for: .milliseconds(100))
+        let openverseCalls = await openverse.callCount()
+        XCTAssertEqual(openverseCalls, 0)
+        XCTAssertEqual(model.filter, .avatars)
+        XCTAssertEqual(model.state, .results)
+        XCTAssertEqual(model.results.count, 20)
+    }
+
+    /// 条件写入后立刻离开发现页也必须完成离线重置，返回时才能按新条件重新加载。
+    func testDeferredCriteriaResetSurvivesTemporaryInactivity() async {
+        let openverse = OpenverseCallCounter()
+        let model = SearchModel(
+            service: ImageSearchService(
+                openverse: openverse,
+                diceBear: DiceBearClient(styles: [.pixelArt])
+            )
+        )
+        model.setActive(true)
+        let loaded = await waitUntil { model.results.count == 20 }
+        XCTAssertTrue(loaded)
+
+        model.filter = .photos
+        model.setActive(false)
+
+        let resetWhileInactive = await waitUntil {
+            model.state == .idle && model.results.isEmpty
+        }
+        XCTAssertTrue(resetWhileInactive)
+        let callsWhileInactive = await openverse.callCount()
+        XCTAssertEqual(callsWhileInactive, 0)
+
+        model.setActive(true)
+        let loadedNewCriteria = await waitUntil { model.state == .empty }
+        XCTAssertTrue(loadedNewCriteria)
+        let callsAfterResume = await openverse.callCount()
+        XCTAssertEqual(callsAfterResume, 1)
+    }
+
     /// 默认空查询直接生成头像，不应访问 Openverse 或共享图片推荐流。
     func testDefaultAvatarFilterLoadsDiceBearWithoutOpenverse() async {
         let openverse = OpenverseCallCounter()
