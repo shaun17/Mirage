@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Branding/AppIconMaster-v3.png" alt="Mirage App Icon" width="148">
+  <img src="Branding/AppIconRounded-v3.png" alt="Mirage App Icon" width="148">
 </p>
 
 <h1 align="center">Mirage</h1>
