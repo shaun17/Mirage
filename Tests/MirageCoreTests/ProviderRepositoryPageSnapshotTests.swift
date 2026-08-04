@@ -56,18 +56,25 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, [1, 2])
     }
 
-    /// “头像”目录按需生成 50 个稳定 DiceBear occurrence，完全不读取 Openverse 推荐流。
-    func testAvatarFolderLoadsFiftyStableDiceBearItemsWithoutOpenverse() async throws {
+    /// “头像”首页生成 50 个稳定 occurrence，并在末尾发布唯一“加载更多”目录。
+    func testAvatarFolderPublishesFirstFiftyAndLoadMoreWithoutOpenverse() async throws {
         let context = try makeContext()
 
         let first = try await context.catalog.preparedItems(for: .avatars)
         let images = Self.images(in: first)
+        let directories = first.filter { $0.contentType == .folder }
+        XCTAssertEqual(first.count, 51)
         XCTAssertEqual(images.count, 50)
         XCTAssertEqual(Set(images.map(\.itemIdentifier)).count, 50)
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier == ProviderIdentifiers.avatars
                 && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v10:")
         })
+        let continuation = try XCTUnwrap(directories.only)
+        XCTAssertEqual(continuation.filename, "加载更多")
+        XCTAssertEqual(continuation.itemIdentifier.rawValue, "avatar-page:v1:2")
+        XCTAssertEqual(continuation.parentItemIdentifier, ProviderIdentifiers.avatars)
+        XCTAssertEqual(first.last?.itemIdentifier, continuation.itemIdentifier)
         let initialOpenverseRequests = await context.openverse.requestedPages()
         XCTAssertEqual(initialOpenverseRequests, [])
         let diceBearRequests = await context.diceBear.requests()
@@ -79,6 +86,8 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
                 ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 40, count: 10)
             ]
         )
+        let generationDays = await context.diceBear.generationDays()
+        XCTAssertEqual(Set(generationDays.map(\.identifier)), [Self.avatarSeedDay1.identifier])
 
         for item in images {
             let occurrence = try await context.repository.occurrence(for: item.itemIdentifier)
@@ -110,6 +119,89 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertNil(forged)
     }
 
+    /// 打开头像第 2 层只生成 offsets 50...99，并发布指向第 3 层的稳定入口。
+    func testOpeningSecondAvatarPageLoadsNextFiftyAndPublishesThirdPage() async throws {
+        let context = try makeContext()
+        let first = try await context.catalog.preparedItems(for: .avatars)
+        let firstImages = Self.images(in: first)
+        let second = try XCTUnwrap(AvatarPageReference(page: 2))
+        let third = try XCTUnwrap(AvatarPageReference(page: 3))
+
+        let lookedUpSecond = try await context.catalog.item(for: second.itemIdentifier)
+        XCTAssertEqual(lookedUpSecond?.filename, "加载更多")
+        XCTAssertEqual(lookedUpSecond?.parentItemIdentifier, ProviderIdentifiers.avatars)
+        var requests = await context.diceBear.requests()
+        XCTAssertEqual(requests.count, 3)
+
+        let unpublishedThird = try await context.catalog.item(for: third.itemIdentifier)
+        XCTAssertNil(unpublishedThird)
+        await XCTAssertThrowsErrorAsync(
+            try await context.repository.avatarItems(for: third)
+        ) { error in
+            let providerError = error as NSError
+            XCTAssertEqual(providerError.domain, NSFileProviderErrorDomain)
+            XCTAssertEqual(providerError.code, NSFileProviderError.Code.noSuchItem.rawValue)
+        }
+        requests = await context.diceBear.requests()
+        XCTAssertEqual(requests.count, 3)
+
+        let page = try await context.catalog.preparedItems(for: .avatarPage(second))
+        let images = Self.images(in: page)
+        XCTAssertEqual(page.count, 51)
+        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(Set(images.map(\.itemIdentifier)).count, 50)
+        XCTAssertTrue(Set(images.map(\.itemIdentifier)).isDisjoint(
+            with: Set(firstImages.map(\.itemIdentifier))
+        ))
+        XCTAssertTrue(images.allSatisfy {
+            $0.parentItemIdentifier == second.itemIdentifier
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v1:2:db:v10:")
+        })
+        let continuation = try XCTUnwrap(page.last)
+        XCTAssertEqual(continuation.filename, "加载更多")
+        XCTAssertEqual(continuation.itemIdentifier, third.itemIdentifier)
+        XCTAssertEqual(continuation.parentItemIdentifier, second.itemIdentifier)
+        XCTAssertEqual(page.filter { $0.contentType == .folder }.count, 1)
+
+        requests = await context.diceBear.requests()
+        XCTAssertEqual(
+            requests,
+            [
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 0, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 20, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 40, count: 10),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 50, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 70, count: 20),
+                ProviderDiceBearRequest(query: DiscoveryRecommendation.query, offset: 90, count: 10)
+            ]
+        )
+        let openverseRequests = await context.openverse.requestedPages()
+        XCTAssertEqual(openverseRequests, [])
+
+        let repeated = try await context.catalog.preparedItems(for: .avatarPage(second))
+        XCTAssertEqual(page.map(\.itemIdentifier), repeated.map(\.itemIdentifier))
+        let repeatedRequests = await context.diceBear.requests()
+        XCTAssertEqual(repeatedRequests, requests)
+
+        let restoredRepository = ProviderRepository(
+            manager: nil,
+            storage: context.storage,
+            discoveryFeed: context.discoveryFeed,
+            diceBear: context.diceBear
+        )
+        let firstPageIdentifier = try XCTUnwrap(images.first?.itemIdentifier)
+        let restored = try await restoredRepository.occurrence(for: firstPageIdentifier)
+        XCTAssertEqual(restored?.reference.avatarPage, second)
+        XCTAssertEqual(restored?.record.source, .diceBear)
+
+        let forged = ProviderIdentifiers.avatarPageItemIdentifier(
+            recordID: "db:v10:forged",
+            page: second
+        )
+        let forgedOccurrence = try await restoredRepository.occurrence(for: forged)
+        XCTAssertNil(forgedOccurrence)
+    }
+
     /// 单条头像 JSON 损坏时缓存应失效并被确定性结果覆盖，不能让目录持续枚举失败。
     func testAvatarFolderRegeneratesCorruptCachedRecord() async throws {
         let context = try makeContext()
@@ -131,6 +223,31 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(regenerated.map(\.itemIdentifier), cachedAgain.map(\.itemIdentifier))
         let cachedRequests = await context.diceBear.requests()
         XCTAssertEqual(cachedRequests.count, 6)
+    }
+
+    /// 同一天跨进程继续命中缓存；进入下一 UTC 日期后必须替换整批头像而非复用昨日记录。
+    func testAvatarFolderRotatesPersistedSnapshotAcrossUTCDateBoundary() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let firstContext = try makeContext(storage: storage, now: { Self.avatarSeedDate1 })
+        let first = try await firstContext.catalog.preparedItems(for: .avatars)
+        let firstIDs = Set(Self.images(in: first).map(\.itemIdentifier))
+        XCTAssertEqual(firstIDs.count, 50)
+
+        let restoredSameDay = try makeContext(storage: storage, now: { Self.avatarSeedDate1Later })
+        let repeated = try await restoredSameDay.catalog.preparedItems(for: .avatars)
+        XCTAssertEqual(Set(Self.images(in: repeated).map(\.itemIdentifier)), firstIDs)
+        let sameDayRequests = await restoredSameDay.diceBear.requests()
+        XCTAssertEqual(sameDayRequests, [])
+
+        let nextDay = try makeContext(storage: storage, now: { Self.avatarSeedDate2 })
+        let rotated = try await nextDay.catalog.preparedItems(for: .avatars)
+        let rotatedIDs = Set(Self.images(in: rotated).map(\.itemIdentifier))
+        XCTAssertEqual(rotatedIDs.count, 50)
+        XCTAssertTrue(firstIDs.isDisjoint(with: rotatedIDs))
+        let nextDayRequests = await nextDay.diceBear.requests()
+        XCTAssertEqual(nextDayRequests.count, 3)
+        let nextDayGenerationDays = await nextDay.diceBear.generationDays()
+        XCTAssertEqual(Set(nextDayGenerationDays.map(\.identifier)), [Self.avatarSeedDay2.identifier])
     }
 
     /// 系统可能先枚举 working set；其中已经发布的根入口也必须能被回查和打开。
@@ -695,7 +812,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(second.nextPage, 3)
     }
 
-    private func makeContext(storage injectedStorage: AppGroupStorage? = nil) throws -> ProviderTestContext {
+    private func makeContext(
+        storage injectedStorage: AppGroupStorage? = nil,
+        now: @escaping @Sendable () -> Date = {
+            ProviderRepositoryPageSnapshotTests.avatarSeedDate1
+        }
+    ) throws -> ProviderTestContext {
         let storage: AppGroupStorage
         if let injectedStorage {
             storage = injectedStorage
@@ -703,7 +825,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             storage = try AppGroupStorage(baseURL: temporaryURL)
         }
         let openverse = ProviderPagedOpenverse()
-        let diceBear = ProviderRecordingDiceBear()
+        let diceBear = ProviderRecordingDiceBear(now: now)
         let feed = DiscoveryFeedRepository(
             storage: storage,
             service: ImageSearchService(openverse: openverse, diceBear: diceBear),
@@ -728,6 +850,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
     private static func images(in items: [ProviderItem]) -> [ProviderItem] {
         items.filter { $0.contentType == .png }
     }
+
+    private static let avatarSeedDate1 = Date(timeIntervalSince1970: 1_754_092_801)
+    private static let avatarSeedDate1Later = Date(timeIntervalSince1970: 1_754_179_199)
+    private static let avatarSeedDate2 = Date(timeIntervalSince1970: 1_754_179_200)
+    private static let avatarSeedDay1 = DiceBearGenerationDay(date: avatarSeedDate1)
+    private static let avatarSeedDay2 = DiceBearGenerationDay(date: avatarSeedDate2)
 
     private static func discoveryDirectories(in items: [ProviderItem]) -> [ProviderItem] {
         let fixed: Set<NSFileProviderItemIdentifier> = [
@@ -787,17 +915,38 @@ private struct ProviderDiceBearRequest: Equatable, Sendable {
 }
 
 private actor ProviderRecordingDiceBear: DiceBearProviding {
-    private let client = DiceBearClient(styles: [.pixelArt])
+    private let client: DiceBearClient
     private var recordedRequests: [ProviderDiceBearRequest] = []
+    private var recordedGenerationDays: [DiceBearGenerationDay] = []
 
-    func avatars(query: String, offset: Int, count: Int) async -> [RemoteImageRecord] {
+    init(now: @escaping @Sendable () -> Date) {
+        client = DiceBearClient(styles: [.pixelArt], now: now)
+    }
+
+    func currentGenerationDay() async -> DiceBearGenerationDay {
+        await client.currentGenerationDay()
+    }
+
+    func avatars(
+        query: String,
+        offset: Int,
+        count: Int,
+        generationDay: DiceBearGenerationDay
+    ) async -> [RemoteImageRecord] {
         recordedRequests.append(
             ProviderDiceBearRequest(query: query, offset: offset, count: count)
         )
-        return await client.avatars(query: query, offset: offset, count: count)
+        recordedGenerationDays.append(generationDay)
+        return await client.avatars(
+            query: query,
+            offset: offset,
+            count: count,
+            generationDay: generationDay
+        )
     }
 
     func requests() -> [ProviderDiceBearRequest] { recordedRequests }
+    func generationDays() -> [DiceBearGenerationDay] { recordedGenerationDays }
 }
 
 private actor ProviderPagedOpenverse: OpenverseSearching {

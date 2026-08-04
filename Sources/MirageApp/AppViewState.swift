@@ -24,24 +24,35 @@ enum AppSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// 搜索来源筛选；显式前缀和分段选择最终都交给 Core 的同一解析规则。
+/// 搜索来源筛选；图片和头像分段交给 Core 的统一前缀规则。
 enum SearchFilter: String, CaseIterable, Identifiable {
     case avatars
     case photos
     case all
+    /// 保留旧 rawValue，避免未来恢复既有界面状态时把原 GIPHY 分类识别为未知值。
+    case gif = "emoji"
 
     var id: Self { self }
+
+    /// GIPHY 内容只属于 App 会话；进入或离开该会话时必须关闭仍在展示的详情资源。
+    func crossesGIFBoundary(to other: SearchFilter) -> Bool {
+        (self == .gif) != (other == .gif)
+    }
+
     var title: String {
         switch self {
         case .all: return "全部"
         case .photos: return "图片"
         case .avatars: return "头像"
+        case .gif: return "GIF"
         }
     }
 
     /// 分段筛选覆盖输入中的旧前缀，避免产生“图片:头像:”一类无效查询。
     func serviceQuery(for rawQuery: String) -> String {
         guard self != .all else { return rawQuery }
+        // GIPHY 使用独立的混合目录入口，不经过字符串查询路由。
+        guard self != .gif else { return rawQuery }
         let text = SearchQueryParser.parse(rawQuery).text
         return self == .photos ? "图片:\(text)" : "头像:\(text)"
     }
@@ -112,6 +123,7 @@ enum LibraryAvailability: Equatable {
 /// 分页状态把自动加载、显式继续、失败和真正结束分开，避免把正常空页当成错误。
 enum SearchPaginationState: Equatable {
     case unavailable
+    case loadingSources
     case ready
     case loading
     case needsContinuation(String)

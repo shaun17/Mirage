@@ -10,14 +10,17 @@ struct ImageDetailPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("图片详情")
+                Text(record.source == .giphy ? "GIF 详情" : "图片详情")
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
 
                 Spacer()
+                if record.source == .giphy {
+                    GiphyAttributionLink()
+                }
             }
 
-            ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: 512)
+            RemoteThumbnailImage(record: record, maximumPixelSize: 512)
                 .id(record.thumbnailURL)
                 .frame(width: 320, height: 220)
                 .background(.quaternary)
@@ -31,10 +34,14 @@ struct ImageDetailPopover: View {
             LabeledContent("来源", value: record.source.displayName)
             authorRow
             linkRow(title: "来源页", url: record.sourcePageURL)
-            linkRow(title: "许可", url: record.license.url, label: record.license.displayName)
+            linkRow(
+                title: record.source == .giphy ? "使用条款" : "许可",
+                url: record.license.url,
+                label: record.license.displayName
+            )
 
             Divider()
-            Text("许可信息来自内容提供方，仅供参考。使用前请核对来源页，并自行确认肖像权、商标权及其他适用限制。")
+            Text(usageNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -64,5 +71,12 @@ struct ImageDetailPopover: View {
         } else {
             LabeledContent(title, value: label ?? "未提供")
         }
+    }
+
+    private var usageNote: String {
+        if record.source == .giphy {
+            return "此 Emoji、GIF 或 Sticker 由 GIPHY 提供，仅在 Mirage App 中瞬时预览，不会写入收藏或 Finder。使用前请核对 GIPHY 来源页与 API 条款。"
+        }
+        return "许可信息来自内容提供方，仅供参考。使用前请核对来源页，并自行确认肖像权、商标权及其他适用限制。"
     }
 }

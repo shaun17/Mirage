@@ -1,6 +1,8 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
+import MirageCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -101,5 +103,343 @@ struct ThumbnailImage: View {
             image = loaded
             didFail = loaded == nil
         }
+    }
+}
+
+/// 根据来源的数据处理约束选择预览路径：普通图片复用有界缓存，GIPHY 仅做瞬时加载。
+struct RemoteThumbnailImage: View {
+    let record: RemoteImageRecord
+    let maximumPixelSize: Int
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isVisible = false
+
+    var body: some View {
+        Group {
+            if record.source.allowsMediaCaching {
+                ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: maximumPixelSize)
+            } else if scenePhase == .active, isVisible {
+                TransientAnimatedImage(
+                    url: record.thumbnailURL,
+                    animates: !reduceMotion,
+                    accessibilityLabel: "“\(record.title)”的 GIPHY 动图预览"
+                )
+            } else {
+                Color.clear
+                    .accessibilityHidden(true)
+            }
+        }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
+    }
+}
+
+/// 直接呈现动画媒体，但不使用 URLCache 或应用内解码缓存。
+private struct TransientAnimatedImage: NSViewRepresentable {
+    let url: URL
+    let animates: Bool
+    let accessibilityLabel: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSImageView {
+        let imageView = NSImageView()
+        imageView.imageAlignment = .alignCenter
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.setAccessibilityLabel(accessibilityLabel)
+        context.coordinator.load(url: url, animates: animates, into: imageView)
+        return imageView
+    }
+
+    func updateNSView(_ imageView: NSImageView, context: Context) {
+        imageView.setAccessibilityLabel(accessibilityLabel)
+        context.coordinator.load(url: url, animates: animates, into: imageView)
+    }
+
+    static func dismantleNSView(_ imageView: NSImageView, coordinator: Coordinator) {
+        coordinator.cancel()
+        imageView.image = nil
+    }
+
+    @MainActor
+    final class Coordinator {
+        private var activeURL: URL?
+        private var task: Task<Void, Never>?
+
+        func load(url: URL, animates: Bool, into imageView: NSImageView) {
+            imageView.animates = animates
+            guard activeURL != url else { return }
+
+            cancel()
+            activeURL = url
+            imageView.image = nil
+
+            guard GiphyEmojiClient.isAllowedMediaURL(url) else {
+                showFailure(in: imageView)
+                activeURL = nil
+                return
+            }
+
+            let session = TransientGiphyMediaLoader.sharedSession
+            var request = URLRequest(
+                url: url,
+                cachePolicy: .reloadIgnoringLocalCacheData,
+                timeoutInterval: 20
+            )
+            request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+            request.setValue("image/gif,image/webp,image/png,image/jpeg", forHTTPHeaderField: "Accept")
+
+            task = Task { @MainActor [weak self, weak imageView] in
+                do {
+                    let image = try await TransientGiphyMediaLoader.image(
+                        for: request,
+                        using: session
+                    )
+                    try Task.checkCancellation()
+                    guard let self,
+                          self.activeURL == url else { return }
+                    imageView?.image = image
+                } catch is CancellationError {
+                    return
+                } catch let error as URLError where error.code == .cancelled {
+                    return
+                } catch {
+                    guard self?.activeURL == url else { return }
+                    if let imageView { self?.showFailure(in: imageView) }
+                    self?.activeURL = nil
+                }
+            }
+        }
+
+        func cancel() {
+            task?.cancel()
+            task = nil
+            activeURL = nil
+        }
+
+        private func showFailure(in imageView: NSImageView) {
+            imageView.setAccessibilityLabel("GIPHY 动图加载失败")
+            imageView.image = NSImage(
+                systemSymbolName: "photo.badge.exclamationmark",
+                accessibilityDescription: "GIPHY 动图加载失败"
+            )
+        }
+    }
+}
+
+/// 瞬时动图下载在收包时即限制大小，并拒绝跳出 GIPHY CDN 的重定向。
+enum TransientGiphyMediaLoader {
+    private static let maximumMediaBytes = 16 * 1_024 * 1_024
+    private static let maximumPixelDimension = 2_048
+    private static let maximumFrameCount = 240
+    /// 单任务 RGBA 展开量约 64 MiB；配合两个全局许可，将瞬时解码总量限制在约 128 MiB。
+    private static let maximumDecodedPixelFrames = 16 * 1_024 * 1_024
+    private static let loadGate = TransientGiphyLoadGate(maximumConcurrentLoads: 2)
+    private static let allowedMIMETypes: Set<String> = [
+        "image/gif", "image/webp", "image/png", "image/jpeg"
+    ]
+
+    static let sharedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 30
+        configuration.httpMaximumConnectionsPerHost = 6
+        return URLSession(
+            configuration: configuration,
+            delegate: GiphyMediaRedirectDelegate(),
+            delegateQueue: nil
+        )
+    }()
+
+    nonisolated static func image(
+        for request: URLRequest,
+        using session: URLSession
+    ) async throws -> NSImage {
+        try await loadGate.withPermit {
+            try await loadImage(for: request, using: session)
+        }
+    }
+
+    private nonisolated static func loadImage(
+        for request: URLRequest,
+        using session: URLSession
+    ) async throws -> NSImage {
+        guard let requestedURL = request.url,
+              GiphyEmojiClient.isAllowedMediaURL(requestedURL) else {
+            throw URLError(.unsupportedURL)
+        }
+
+        let (bytes, response) = try await session.bytes(for: request)
+        try Task.checkCancellation()
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let finalURL = http.url,
+              GiphyEmojiClient.isAllowedMediaURL(finalURL) else {
+            throw URLError(.badServerResponse)
+        }
+        if let mimeType = http.mimeType?.lowercased(),
+           !allowedMIMETypes.contains(mimeType) {
+            throw URLError(.cannotDecodeContentData)
+        }
+        let expectedLength = http.expectedContentLength
+        guard expectedLength <= 0 || expectedLength <= Int64(maximumMediaBytes) else {
+            throw URLError(.dataLengthExceedsMaximum)
+        }
+
+        var data = Data()
+        if expectedLength > 0 {
+            data.reserveCapacity(Int(expectedLength))
+        }
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maximumMediaBytes else {
+                throw URLError(.dataLengthExceedsMaximum)
+            }
+            data.append(byte)
+        }
+        guard !data.isEmpty else { throw URLError(.zeroByteResource) }
+        guard isWithinDecodeBudget(data) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+
+        try Task.checkCancellation()
+        let image = NSImage(data: data)
+        try Task.checkCancellation()
+        guard let image else { throw URLError(.cannotDecodeContentData) }
+        return image
+    }
+
+    /// 压缩字节数不足以约束动画展开内存；在交给 NSImage 前检查像素和帧数预算。
+    private nonisolated static func isWithinDecodeBudget(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount > 0, frameCount <= maximumFrameCount else { return false }
+
+        var decodedPixelFrames = 0
+        for index in 0..<frameCount {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(
+                source,
+                index,
+                nil
+            ) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int,
+            width > 0, height > 0,
+            width <= maximumPixelDimension,
+            height <= maximumPixelDimension else {
+                return false
+            }
+            let (framePixels, pixelOverflow) = width.multipliedReportingOverflow(by: height)
+            let (newTotal, totalOverflow) = decodedPixelFrames.addingReportingOverflow(framePixels)
+            guard !pixelOverflow,
+                  !totalOverflow,
+                  newTotal <= maximumDecodedPixelFrames else {
+                return false
+            }
+            decodedPixelFrames = newTotal
+        }
+        return true
+    }
+}
+
+/// 跨所有 GIPHY CDN host 共用的取消安全许可池，避免每个 host 各自放大下载与解码并发。
+actor TransientGiphyLoadGate {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private let maximumConcurrentLoads: Int
+    private var activeLoads = 0
+    private var waiters: [Waiter] = []
+
+    init(maximumConcurrentLoads: Int) {
+        self.maximumConcurrentLoads = max(maximumConcurrentLoads, 1)
+    }
+
+    func withPermit<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        guard activeLoads >= maximumConcurrentLoads else {
+            activeLoads += 1
+            return
+        }
+
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(Waiter(id: id, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
+    }
+
+    private func release() {
+        if !waiters.isEmpty {
+            let waiter = waiters.removeFirst()
+            waiter.continuation.resume()
+        } else {
+            activeLoads = max(activeLoads - 1, 0)
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+}
+
+private final class GiphyMediaRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url,
+              GiphyEmojiClient.isAllowedMediaURL(url) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+/// GIPHY 要求在使用其内容的位置持续展示官方品牌标记。
+struct GiphyAttributionLink: View {
+    private static let destination = URL(string: "https://giphy.com/")!
+
+    var body: some View {
+        Link(destination: Self.destination) {
+            Image("PoweredByGiphy")
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 100, height: 21)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.black, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Powered by GIPHY")
+        .accessibilityHint("打开 GIPHY 网站")
     }
 }

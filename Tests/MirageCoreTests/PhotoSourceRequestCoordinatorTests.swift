@@ -744,8 +744,11 @@ private actor BatchPhotoSource: PhotoSourceSearching {
     private static func metadata(for sourceID: PhotoSourceID) -> (source: ImageSource, license: LicenseInfo) {
         switch sourceID {
         case .openverse: return (.openverse, .cc0)
+        case .metMuseum: return (.metMuseum, .cc0)
+        case .nasa: return (.nasa, .nasaMediaUsage)
         case .pexels: return (.pexels, .pexels)
         case .pixabay: return (.pixabay, .pixabay)
+        case .giphy: return (.giphy, .giphy)
         }
     }
 }

@@ -5,8 +5,9 @@ import SwiftUI
 
 /// 主窗口只用于发现和管理内容；上传动作始终发生在目标 App 的文件面板中。
 struct ContentView: View {
-    /// 应用入口创建并持有模型，这里只观察单一状态源。
+    /// 应用入口创建并持有模型；嵌套搜索模型不会由 AppModel 转发，因此需要单独观察。
     @ObservedObject var model: AppModel
+    @ObservedObject private var searchModel: SearchModel
 
     /// 场景阶段用于在窗口重新进入前台时同步 File Provider 写入的数据。
     @Environment(\.scenePhase) private var scenePhase
@@ -15,6 +16,12 @@ struct ContentView: View {
     /// 整个窗口共用一个覆盖式详情抽屉；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
     @State private var inspectedRecord: RemoteImageRecord?
     @State private var showsUsageHelp = false
+    @State private var lastAnnouncedProviderState: ProviderState?
+
+    init(model: AppModel) {
+        self.model = model
+        _searchModel = ObservedObject(wrappedValue: model.searchModel)
+    }
 
     /// 构建主导航，并让前台刷新任务严格跟随当前场景阶段。
     var body: some View {
@@ -69,6 +76,14 @@ struct ContentView: View {
             guard oldSelection != newSelection else { return }
             dismissDetailDrawer()
         }
+        .onChange(of: searchModel.filter) { oldFilter, newFilter in
+            guard oldFilter.crossesGIFBoundary(to: newFilter) else { return }
+            dismissDetailDrawer()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active, inspectedRecord?.source == .giphy else { return }
+            dismissDetailDrawer()
+        }
         .onChange(of: model.favoriteIDs) { oldIDs, newIDs in
             guard
                 let inspectedRecord,
@@ -78,6 +93,12 @@ struct ContentView: View {
                 return
             }
             dismissDetailDrawer()
+        }
+        .onChange(of: model.providerState) { _, state in
+            guard let message = state.accessibilityAnnouncement else { return }
+            guard state != lastAnnouncedProviderState else { return }
+            lastAnnouncedProviderState = state
+            AccessibilityNotification.Announcement(message).post()
         }
         .task(id: scenePhase) {
             // 返回前台时同时同步资料库并复查扩展，用户启用后无需重启 App。
@@ -95,7 +116,7 @@ struct ContentView: View {
         case .discover:
             DiscoverView(
                 model: model,
-                searchModel: model.searchModel,
+                searchModel: searchModel,
                 onShowDetails: { presentDetailDrawer(for: $0) }
             )
         case .favorites:

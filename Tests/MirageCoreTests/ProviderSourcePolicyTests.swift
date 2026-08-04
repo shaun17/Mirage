@@ -85,9 +85,11 @@ final class ProviderSourcePolicyTests: XCTestCase {
         let favorites = try await repository.favoriteItems()
         let identifier = RecordReference(recordID: pixabay.id, view: .favorite).itemIdentifier
         let occurrence = try await repository.occurrence(for: identifier)
+        let library = try await storage.readLibrarySnapshot()
+        XCTAssertTrue(library.favoriteIDs.contains(pixabay.id))
+        XCTAssertTrue(pixabay.source.allowsPersistentLibraryStorage)
         XCTAssertTrue(favorites.isEmpty)
         XCTAssertNil(occurrence)
-        XCTAssertFalse(pixabay.source.allowsPersistentLibraryStorage)
     }
 
     private static func record(id: String, source: ImageSource) -> RemoteImageRecord {
@@ -95,7 +97,9 @@ final class ProviderSourcePolicyTests: XCTestCase {
         switch source {
         case .pexels: license = .pexels
         case .pixabay: license = .pixabay
-        case .openverse, .diceBear: license = .cc0
+        case .nasa: license = .nasaMediaUsage
+        case .giphy: license = .giphy
+        case .openverse, .metMuseum, .diceBear: license = .cc0
         }
         return RemoteImageRecord(
             id: id,

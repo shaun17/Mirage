@@ -24,13 +24,23 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
 
     public func search(query: String, cursor: PhotoSearchCursor?, pageSize: Int) async throws -> PhotoSearchPage {
         let states = try resolvedStates(cursor: cursor, pageSize: pageSize, legacyPage: nil)
-        return try await load(query: query, states: states)
+        return try await load(query: query, states: states, onBatch: nil)
+    }
+
+    public func search(
+        query: String,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int,
+        onBatch: @escaping PhotoSearchBatchHandler
+    ) async throws -> PhotoSearchPage {
+        let states = try resolvedStates(cursor: cursor, pageSize: pageSize, legacyPage: nil)
+        return try await load(query: query, states: states, onBatch: onBatch)
     }
 
     public func search(query: String, page: Int, pageSize: Int) async throws -> PhotoSearchPage {
         guard page >= 1 else { throw PhotoSearchError.invalidCursor }
         let states = try resolvedStates(cursor: nil, pageSize: pageSize, legacyPage: page)
-        return try await load(query: query, states: states)
+        return try await load(query: query, states: states, onBatch: nil)
     }
 
     private func resolvedStates(
@@ -74,8 +84,13 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
         }
     }
 
-    private func load(query: String, states: [PhotoSourceCursorState]) async throws -> PhotoSearchPage {
+    private func load(
+        query: String,
+        states: [PhotoSourceCursorState],
+        onBatch: PhotoSearchBatchHandler?
+    ) async throws -> PhotoSearchPage {
         let sourceByID = Dictionary(uniqueKeysWithValues: sources.map { ($0.sourceID, $0) })
+        let stateByID = Dictionary(uniqueKeysWithValues: states.map { ($0.sourceID, $0) })
         let outcomes = await withTaskGroup(of: SourceOutcome.self, returning: [SourceOutcome].self) { group in
             for state in states where !state.exhausted {
                 guard let source = sourceByID[state.sourceID] else { continue }
@@ -95,9 +110,22 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
                 }
             }
             var values: [SourceOutcome] = []
-            for await value in group { values.append(value) }
+            for await value in group {
+                values.append(value)
+                guard !Task.isCancelled,
+                      let onBatch,
+                      case let .success(sourceID, page) = value,
+                      let state = stateByID[sourceID],
+                      Self.hasValidCursor(page.nextCursor) else {
+                    continue
+                }
+                let records = Self.visibleRecords(from: page, for: state)
+                guard !records.isEmpty else { continue }
+                await onBatch(PhotoSearchBatch(sourceID: sourceID, records: records))
+            }
             return values
         }
+        try Task.checkCancellation()
         if outcomes.contains(where: \.isCancelled) { throw CancellationError() }
 
         let byID = Dictionary(uniqueKeysWithValues: outcomes.map { ($0.sourceID, $0) })
@@ -112,7 +140,7 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
             }
             switch outcome {
             case let .success(_, page):
-                guard (page.nextCursor?.rawValue.utf8.count ?? 0) <= 1_024 else {
+                guard Self.hasValidCursor(page.nextCursor) else {
                     issues.append(PhotoSourceIssue(
                         sourceID: state.sourceID,
                         kind: .invalidResponse,
@@ -122,9 +150,7 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
                     continue
                 }
                 successfulSources += 1
-                pages.append(Array(page.records
-                    .filter { $0.source.photoSourceID == state.sourceID }
-                    .prefix(state.pageSize)))
+                pages.append(Self.visibleRecords(from: page, for: state))
                 nextStates.append(PhotoSourceCursorState(
                     sourceID: state.sourceID,
                     cursor: page.nextCursor,
@@ -144,6 +170,19 @@ public struct AggregatedPhotoSearcher: PhotoSearching, Sendable {
             ? PhotoSearchCursor(configurationRevision: configurationRevision, states: nextStates)
             : nil
         return PhotoSearchPage(records: records, nextCursor: next, issues: issues)
+    }
+
+    private static func hasValidCursor(_ cursor: PhotoSourceCursor?) -> Bool {
+        (cursor?.rawValue.utf8.count ?? 0) <= 1_024
+    }
+
+    private static func visibleRecords(
+        from page: PhotoSourcePage,
+        for state: PhotoSourceCursorState
+    ) -> [RemoteImageRecord] {
+        Array(page.records
+            .filter { $0.source.photoSourceID == state.sourceID }
+            .prefix(state.pageSize))
     }
 
     private static func quotas(total: Int, count: Int) -> [Int] {

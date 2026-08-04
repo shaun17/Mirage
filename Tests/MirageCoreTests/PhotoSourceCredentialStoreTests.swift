@@ -60,6 +60,22 @@ final class PhotoSourceCredentialStoreTests: XCTestCase {
         XCTAssertNil(removedPixabay)
     }
 
+    func testMissingAppGroupEntitlementFailsBeforeCredentialFileAccess() async {
+        let store = AppGroupPhotoSourceCredentialStore(
+            baseURL: nil,
+            hasRequiredAppGroupEntitlement: false
+        )
+
+        do {
+            _ = try await store.credential(for: .giphy)
+            XCTFail("缺少 App Group 权限时应立即失败")
+        } catch let error as PhotoSourceCredentialError {
+            XCTAssertEqual(error, .missingAppGroupEntitlement)
+        } catch {
+            XCTFail("错误分类不正确：\(error)")
+        }
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(
             "MiragePhotoSourceCredentialTests-\(UUID().uuidString)",

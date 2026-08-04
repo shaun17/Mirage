@@ -22,6 +22,7 @@
 		1A08F66A8FDFA65017F213E5 /* DiscoveryFeedRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */; };
 		1C8AF389EE4655A8882C8938 /* DetailWindowReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A96510E9F960BAD5C8FAA3CF /* DetailWindowReader.swift */; };
 		1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91490DF02E6BF161DA088775 /* OpenverseClient.swift */; };
+		2CC413DFB4793C69D095FBC1 /* MetMuseumClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEA8A56C0943AA2FC9ADE20A /* MetMuseumClient.swift */; };
 		23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
 		25F113DAF0298D779B665D72 /* PhotoSourceRequestPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9B5F67E7FD1D98C6DB1333 /* PhotoSourceRequestPolicy.swift */; };
 		265F7B297127DC301663C68E /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
@@ -30,11 +31,16 @@
 		2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */; };
 		2F6E6A490E1F415CCCA9DA66 /* PixabayClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68810992B725D344AE6457FE /* PixabayClientTests.swift */; };
+		2442E64331C433BF9532E3EE /* MetMuseumClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EB0E75EC0D2AAA16265EDF9 /* MetMuseumClientTests.swift */; };
 		2F7EEFF8EED40EE2DA3589D5 /* ImageDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */; };
 		3255F9CAD35B8A4106F839F2 /* DiceBearStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */; };
 		362F5B103E70FAA8FBA8BF19 /* PhotoSourceSettingsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D781E15D20DBD8EDB4252BF9 /* PhotoSourceSettingsModelTests.swift */; };
 		371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712852E84B8494D2634B17A9 /* ImageSearchService.swift */; };
 		3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */; };
+		C1A4F7890E2D4C10A8B9F012 /* GiphyEmojiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A4F7890E2D4C10A8B9F011 /* GiphyEmojiClient.swift */; };
+		C1A4F7890E2D4C10A8B9F014 /* GiphyEmojiClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A4F7890E2D4C10A8B9F013 /* GiphyEmojiClientTests.swift */; };
+		C1A4F7890E2D4C10A8B9F016 /* GiphyCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A4F7890E2D4C10A8B9F015 /* GiphyCatalogClient.swift */; };
+		C1A4F7890E2D4C10A8B9F018 /* GiphyCatalogClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A4F7890E2D4C10A8B9F017 /* GiphyCatalogClientTests.swift */; };
 		4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */; };
 		4AB55F4BCEF3FEF8EA8034E1 /* DetailWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */; };
 		4D1C1DFF1F15D855BB8E4879 /* PhotoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD59051C53C7E99FE6187AD /* PhotoSource.swift */; };
@@ -52,6 +58,7 @@
 		5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */; };
 		61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
 		619EB03775C37070DAD75119 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
+		6F7EC1559ACF562A306AB57A /* NASAImagesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BC7EEBA6DAC48B5389D59C /* NASAImagesClient.swift */; };
 		705CBFFD8A543C52F747FA19 /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
 		7077B5D834EE7563D1E76A84 /* ProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */; };
 		7292A0A34B51275F855EC788 /* SearchPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */; };
@@ -67,6 +74,7 @@
 		96EE0D4B2968CB78CC0F7EE2 /* SearchPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */; };
 		98AAFE21526102B7BA6B703D /* DetailDrawerMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4136DEAEF791EE9942C29E33 /* DetailDrawerMetrics.swift */; };
 		98B96EBA4646C81722A518CC /* DetailWindowLayoutState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68433E1057AAED506C0900F3 /* DetailWindowLayoutState.swift */; };
+		98242B3563636FF915BAC20D /* NASAImagesClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D211C0CE00B4780D047748CD /* NASAImagesClientTests.swift */; };
 		99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */; };
 		9B2B3683BDD6F188F4FF94B4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4317C2B9AEBF745304572E2B /* AppModel.swift */; };
 		9BFD2C5ECDDEF2EF2F422870 /* SearchEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B056F3E07F529D27482171E /* SearchEnumerator.swift */; };
@@ -200,6 +208,10 @@
 		28FBD235ACD44F4965213D6E /* libMirageCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libMirageCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchServiceTests.swift; sourceTree = "<group>"; };
 		323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryFeedSnapshotMutationNotifier.swift; sourceTree = "<group>"; };
+		C1A4F7890E2D4C10A8B9F011 /* GiphyEmojiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GiphyEmojiClient.swift; sourceTree = "<group>"; };
+		C1A4F7890E2D4C10A8B9F013 /* GiphyEmojiClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GiphyEmojiClientTests.swift; sourceTree = "<group>"; };
+		C1A4F7890E2D4C10A8B9F015 /* GiphyCatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GiphyCatalogClient.swift; sourceTree = "<group>"; };
+		C1A4F7890E2D4C10A8B9F017 /* GiphyCatalogClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GiphyCatalogClientTests.swift; sourceTree = "<group>"; };
 		3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchCache.swift; sourceTree = "<group>"; };
 		4136DEAEF791EE9942C29E33 /* DetailDrawerMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailDrawerMetrics.swift; sourceTree = "<group>"; };
 		4317C2B9AEBF745304572E2B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -218,6 +230,7 @@
 		63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDownloader.swift; sourceTree = "<group>"; };
 		68433E1057AAED506C0900F3 /* DetailWindowLayoutState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailWindowLayoutState.swift; sourceTree = "<group>"; };
 		68810992B725D344AE6457FE /* PixabayClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixabayClientTests.swift; sourceTree = "<group>"; };
+		70BC7EEBA6DAC48B5389D59C /* NASAImagesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NASAImagesClient.swift; sourceTree = "<group>"; };
 		68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorageTests.swift; sourceTree = "<group>"; };
 		69BF7C96AF68F9EFE65696D1 /* PhotoSourceSettingsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceSettingsModel.swift; sourceTree = "<group>"; };
 		6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAsyncSupport.swift; sourceTree = "<group>"; };
@@ -234,6 +247,7 @@
 		89EF2418290A4416BD485F54 /* PhotoSourceBatchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceBatchStore.swift; sourceTree = "<group>"; };
 		8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		91490DF02E6BF161DA088775 /* OpenverseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenverseClient.swift; sourceTree = "<group>"; };
+		9EB0E75EC0D2AAA16265EDF9 /* MetMuseumClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetMuseumClientTests.swift; sourceTree = "<group>"; };
 		9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderDiscoveryTreePlanner.swift; sourceTree = "<group>"; };
 		92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepositoryPageSnapshotTests.swift; sourceTree = "<group>"; };
 		948E8761E82C9C91131B7E14 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -256,6 +270,7 @@
 		CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
 		CBA4F055A61FA0925976D9BC /* PexelsClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PexelsClientTests.swift; sourceTree = "<group>"; };
 		D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		D211C0CE00B4780D047748CD /* NASAImagesClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NASAImagesClientTests.swift; sourceTree = "<group>"; };
 		D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteImageRecord.swift; sourceTree = "<group>"; };
 		D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModel.swift; sourceTree = "<group>"; };
 		D781E15D20DBD8EDB4252BF9 /* PhotoSourceSettingsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceSettingsModelTests.swift; sourceTree = "<group>"; };
@@ -265,6 +280,7 @@
 		E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchResultStoring.swift; sourceTree = "<group>"; };
 		E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoader.swift; sourceTree = "<group>"; };
 		EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		EEA8A56C0943AA2FC9ADE20A /* MetMuseumClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetMuseumClient.swift; sourceTree = "<group>"; };
 		EE02568E93053F434F591C23 /* MirageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirageApp.swift; sourceTree = "<group>"; };
 		EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileProviderExtension+Content.swift"; sourceTree = "<group>"; };
 		EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailWindowCoordinator.swift; sourceTree = "<group>"; };
@@ -313,8 +329,12 @@
 				979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */,
 				735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */,
 				6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */,
+				C1A4F7890E2D4C10A8B9F017 /* GiphyCatalogClientTests.swift */,
+				C1A4F7890E2D4C10A8B9F013 /* GiphyEmojiClientTests.swift */,
 				32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */,
 				239F4289745FA622404CE85B /* ImageTranscoderTests.swift */,
+				9EB0E75EC0D2AAA16265EDF9 /* MetMuseumClientTests.swift */,
+				D211C0CE00B4780D047748CD /* NASAImagesClientTests.swift */,
 				B2514621218B785F24793DCD /* OpenverseClientTests.swift */,
 				CBA4F055A61FA0925976D9BC /* PexelsClientTests.swift */,
 				08209B3D2F6AABD808F0B2A8 /* PhotoSourceCredentialStoreTests.swift */,
@@ -368,9 +388,13 @@
 				84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */,
 				323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */,
 				072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */,
+				C1A4F7890E2D4C10A8B9F015 /* GiphyCatalogClient.swift */,
+				C1A4F7890E2D4C10A8B9F011 /* GiphyEmojiClient.swift */,
 				712852E84B8494D2634B17A9 /* ImageSearchService.swift */,
 				D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */,
 				5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */,
+				EEA8A56C0943AA2FC9ADE20A /* MetMuseumClient.swift */,
+				70BC7EEBA6DAC48B5389D59C /* NASAImagesClient.swift */,
 				91490DF02E6BF161DA088775 /* OpenverseClient.swift */,
 				DEE2FB4C67079FDC77A4C7B2 /* OpenverseContentSafetyPolicy.swift */,
 				C4CC5C99EE46F274897367E4 /* OpenversePhotoSource.swift */,
@@ -700,9 +724,13 @@
 				99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */,
 				545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */,
 				5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */,
+				C1A4F7890E2D4C10A8B9F016 /* GiphyCatalogClient.swift in Sources */,
+				C1A4F7890E2D4C10A8B9F012 /* GiphyEmojiClient.swift in Sources */,
 				371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */,
 				AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */,
 				4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */,
+				2CC413DFB4793C69D095FBC1 /* MetMuseumClient.swift in Sources */,
+				6F7EC1559ACF562A306AB57A /* NASAImagesClient.swift in Sources */,
 				1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */,
 				FD9E9BBF0C19A37BE49C3666 /* OpenverseContentSafetyPolicy.swift in Sources */,
 				F7545C12AD9D94FD02E6F782 /* OpenversePhotoSource.swift in Sources */,
@@ -744,8 +772,12 @@
 				2B126922A34AF6562188BDDD /* DetailWindowLayoutStateTests.swift in Sources */,
 				1A08F66A8FDFA65017F213E5 /* DiscoveryFeedRepositoryTests.swift in Sources */,
 				C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */,
+				C1A4F7890E2D4C10A8B9F018 /* GiphyCatalogClientTests.swift in Sources */,
+				C1A4F7890E2D4C10A8B9F014 /* GiphyEmojiClientTests.swift in Sources */,
 				3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */,
 				EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */,
+				2442E64331C433BF9532E3EE /* MetMuseumClientTests.swift in Sources */,
+				98242B3563636FF915BAC20D /* NASAImagesClientTests.swift in Sources */,
 				D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */,
 				D47EFB0A88F5378E3D8F92F5 /* PexelsClientTests.swift in Sources */,
 				CE626F554C731E200D9E98D1 /* PhotoSourceCredentialStoreTests.swift in Sources */,

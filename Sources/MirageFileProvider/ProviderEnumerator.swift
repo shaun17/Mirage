@@ -153,15 +153,15 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
         relay.install(task)
     }
 
-    /// v12 前缀使扁平动态目录时代的旧锚点全部过期，系统会按递归分页目录重新枚举。
+    /// v13 前缀使旧头像终止快照过期，系统会重新枚举并发现“加载更多”目录。
     private static func encode(_ value: UInt64) -> NSFileProviderSyncAnchor {
-        NSFileProviderSyncAnchor(rawValue: Data("v12:\(value)".utf8))
+        NSFileProviderSyncAnchor(rawValue: Data("v13:\(value)".utf8))
     }
 
     /// 严格拒绝损坏锚点，避免错误地把未知状态当成首次同步。
     private static func decode(_ anchor: NSFileProviderSyncAnchor) throws -> UInt64 {
         guard let text = String(data: anchor.rawValue, encoding: .utf8),
-              text.hasPrefix("v12:"),
+              text.hasPrefix("v13:"),
               let value = UInt64(text.dropFirst(4)) else {
             throw ProviderChangeStorageError.invalidAnchor
         }

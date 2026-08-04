@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public protocol PhotoSourceCredentialReading: Sendable {
     func credential(for sourceID: PhotoSourceID) async throws -> String?
@@ -15,6 +16,7 @@ public enum PhotoSourceCredentialError: Error, LocalizedError, Equatable, Sendab
     case unavailableStorage
     case corruptStorage
     case persistence
+    case missingAppGroupEntitlement
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +25,8 @@ public enum PhotoSourceCredentialError: Error, LocalizedError, Equatable, Sendab
         case .unavailableStorage: return "无法访问图片数据源持久数据。"
         case .corruptStorage: return "图片数据源持久数据已损坏。"
         case .persistence: return "无法保存图片数据源设置。"
+        case .missingAppGroupEntitlement:
+            return "当前构建缺少 Mirage App Group 权限，请使用正常开发签名重新运行。"
         }
     }
 }
@@ -43,16 +47,36 @@ public actor AppGroupPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
 
     private let fileManager: FileManager
     private let fileURL: URL?
+    private let initializationError: PhotoSourceCredentialError?
 
     public init(baseURL: URL? = nil) {
+        self.init(
+            baseURL: baseURL,
+            hasRequiredAppGroupEntitlement: Self.hasRequiredAppGroupEntitlement()
+        )
+    }
+
+    init(baseURL: URL?, hasRequiredAppGroupEntitlement: Bool) {
         let fileManager = FileManager.default
         self.fileManager = fileManager
-        let root = baseURL ?? fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: AppGroupStorage.appGroupIdentifier
-        )?
-        .appendingPathComponent("Library", isDirectory: true)
-        .appendingPathComponent("Application Support", isDirectory: true)
-        .appendingPathComponent("Mirage", isDirectory: true)
+        let root: URL?
+        if let baseURL {
+            // 测试使用显式沙盒目录，不依赖宿主进程签名。
+            root = baseURL
+            self.initializationError = nil
+        } else if hasRequiredAppGroupEntitlement {
+            root = fileManager.containerURL(
+                forSecurityApplicationGroupIdentifier: AppGroupStorage.appGroupIdentifier
+            )?
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Mirage", isDirectory: true)
+            self.initializationError = root == nil ? .unavailableStorage : nil
+        } else {
+            // 无签名 Debug 可能解析到既有容器路径，却在 open 时永久阻塞；读文件前直接失败。
+            root = nil
+            self.initializationError = .missingAppGroupEntitlement
+        }
         self.fileURL = root?.appendingPathComponent(
             "photo-source-credentials-v1.json",
             isDirectory: false
@@ -81,6 +105,7 @@ public actor AppGroupPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
     }
 
     private func load() throws -> Payload {
+        if let initializationError { throw initializationError }
         guard let fileURL else { throw PhotoSourceCredentialError.unavailableStorage }
         guard fileManager.fileExists(atPath: fileURL.path) else { return .empty }
         do {
@@ -108,6 +133,7 @@ public actor AppGroupPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
     }
 
     private func persist(_ payload: Payload) throws {
+        if let initializationError { throw initializationError }
         guard let fileURL else { throw PhotoSourceCredentialError.unavailableStorage }
         do {
             let directoryURL = fileURL.deletingLastPathComponent()
@@ -130,5 +156,18 @@ public actor AppGroupPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
         } catch {
             throw PhotoSourceCredentialError.persistence
         }
+    }
+
+    private nonisolated static func hasRequiredAppGroupEntitlement() -> Bool {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(
+                task,
+                "com.apple.security.application-groups" as CFString,
+                nil
+              ),
+              let groups = value as? [String] else {
+            return false
+        }
+        return groups.contains(AppGroupStorage.appGroupIdentifier)
     }
 }

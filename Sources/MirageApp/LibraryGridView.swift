@@ -4,9 +4,27 @@ import SwiftUI
 /// 搜索网格的分页展示状态与动作；收藏页传 nil 保持静态列表。
 struct GridPagination {
     let state: SearchPaginationState
+    let contentName: String
+    let continueButtonTitle: String
     let loadNextPage: () -> Void
     let continueLoading: () -> Void
     let retry: () -> Void
+
+    init(
+        state: SearchPaginationState,
+        contentName: String = "图片",
+        continueButtonTitle: String = "继续查找",
+        loadNextPage: @escaping () -> Void,
+        continueLoading: @escaping () -> Void,
+        retry: @escaping () -> Void
+    ) {
+        self.state = state
+        self.contentName = contentName
+        self.continueButtonTitle = continueButtonTitle
+        self.loadNextPage = loadNextPage
+        self.continueLoading = continueLoading
+        self.retry = retry
+    }
 }
 
 /// 收藏与搜索共用的自适应网格，最近使用通过独立只读包装调用。
@@ -69,16 +87,20 @@ struct LibraryGridView: View {
     private var paginationFooter: some View {
         if let pagination {
             switch pagination.state {
-            case .loading:
-                ProgressView("正在加载更多图片…")
+            case .loadingSources:
+                ProgressView("其他\(pagination.contentName)数据源仍在加载…")
                     .padding(.vertical, 8)
-                    .accessibilityLabel("正在加载更多图片")
+                    .accessibilityLabel("其他\(pagination.contentName)数据源仍在加载")
+            case .loading:
+                ProgressView("正在加载更多\(pagination.contentName)…")
+                    .padding(.vertical, 8)
+                    .accessibilityLabel("正在加载更多\(pagination.contentName)")
             case let .needsContinuation(message):
                 VStack(spacing: 8) {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("继续查找", action: pagination.continueLoading)
+                    Button(pagination.continueButtonTitle, action: pagination.continueLoading)
                 }
                 .padding(.vertical, 8)
             case let .failed(message):
@@ -86,16 +108,16 @@ struct LibraryGridView: View {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("重新加载更多图片", action: pagination.retry)
+                    Button("重新加载更多\(pagination.contentName)", action: pagination.retry)
                 }
                 .padding(.vertical, 8)
             case .exhausted:
-                Text("已加载全部结果")
+                Text("已加载全部\(pagination.contentName)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 8)
             case .ready:
-                Button("加载更多图片", action: pagination.loadNextPage)
+                Button("加载更多\(pagination.contentName)", action: pagination.loadNextPage)
                     .padding(.vertical, 8)
             case .unavailable:
                 EmptyView()

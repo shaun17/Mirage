@@ -4,10 +4,19 @@ import Foundation
 public struct ImageSearchCursor: Codable, Equatable, Sendable {
     public let page: Int
     public let photoCursor: PhotoSearchCursor?
+    /// 保留既有编码字段名以兼容旧游标；现在承载整个 GIPHY 混合目录的复合游标。
+    public let emojiCursor: PhotoSourceCursor?
 
-    public init(page: Int, photoCursor: PhotoSearchCursor?) {
+    public var giphyCursor: PhotoSourceCursor? { emojiCursor }
+
+    public init(
+        page: Int,
+        photoCursor: PhotoSearchCursor?,
+        emojiCursor: PhotoSourceCursor? = nil
+    ) {
         self.page = page
         self.photoCursor = photoCursor
+        self.emojiCursor = emojiCursor
     }
 }
 
@@ -41,17 +50,20 @@ public struct ImageSearchPage: Sendable {
 /// 解析内容范围并组合聚合照片与本地头像；具体照片来源由 PhotoSearching 决定。
 public struct ImageSearchService: Sendable {
     private let photos: any PhotoSearching
+    private let giphy: (any PhotoSourceSearching)?
     private let diceBear: any DiceBearProviding
     private let automaticAvatarCount: Int
     private let maximumPageSize: Int
 
     public init(
         photos: any PhotoSearching,
+        giphy: (any PhotoSourceSearching)? = nil,
         diceBear: any DiceBearProviding = DiceBearClient(),
         automaticAvatarCount: Int = 4,
         maximumPageSize: Int = DiscoveryRecommendation.pageSize
     ) {
         self.photos = photos
+        self.giphy = giphy
         self.diceBear = diceBear
         self.automaticAvatarCount = min(max(automaticAvatarCount, 0), 20)
         self.maximumPageSize = min(
@@ -62,6 +74,7 @@ public struct ImageSearchService: Sendable {
 
     public init(
         openverse: any OpenverseSearching = OpenverseClient(),
+        giphy: (any PhotoSourceSearching)? = nil,
         diceBear: any DiceBearProviding = DiceBearClient(),
         automaticAvatarCount: Int = 4,
         maximumPageSize: Int = DiscoveryRecommendation.pageSize
@@ -71,6 +84,7 @@ public struct ImageSearchService: Sendable {
                 sources: [OpenversePhotoSource(client: openverse)],
                 configurationRevision: 0
             ),
+            giphy: giphy,
             diceBear: diceBear,
             automaticAvatarCount: automaticAvatarCount,
             maximumPageSize: maximumPageSize
@@ -81,18 +95,86 @@ public struct ImageSearchService: Sendable {
         await photos.configurationKey()
     }
 
+    /// App 内 GIPHY Emoji、GIF 与 Sticker 的独立混合入口；不接受关键词，也不与图片聚合。
+    public func giphyCatalog(
+        cursor: ImageSearchCursor?,
+        pageSize: Int = SearchPaginationCursor.maximumPageSize
+    ) async throws -> ImageSearchPage {
+        let page = cursor?.page ?? 1
+        let cursorIsConsistent = cursor == nil
+            ? page == 1
+            : page > 1 && cursor?.giphyCursor != nil
+        guard (1...SearchPaginationCursor.maximumPage).contains(page),
+              cursor?.photoCursor == nil,
+              cursorIsConsistent else {
+            throw PhotoSearchError.invalidCursor
+        }
+        guard let giphy else {
+            throw PhotoSearchError.allSourcesFailed([
+                PhotoSourceIssue(
+                    sourceID: .giphy,
+                    kind: .unavailable,
+                    message: "GIPHY 数据源仅支持 Mirage App 内的独立 GIF 页面。"
+                )
+            ])
+        }
+
+        let safePageSize = min(max(pageSize, 1), SearchPaginationCursor.maximumPageSize)
+        let result = try await giphy.search(
+            query: "",
+            cursor: cursor?.giphyCursor,
+            pageSize: safePageSize
+        )
+        let next = result.nextCursor.flatMap {
+            page < SearchPaginationCursor.maximumPage
+                ? ImageSearchCursor(page: page + 1, photoCursor: nil, emojiCursor: $0)
+                : nil
+        }
+        return ImageSearchPage(records: result.records, nextCursor: next, issues: result.issues)
+    }
+
     public func search(
         _ rawQuery: String,
         cursor: ImageSearchCursor?,
         pageSize: Int = 20
     ) async throws -> ImageSearchPage {
         let page = cursor?.page ?? 1
-        return try await search(rawQuery, page: page, photoCursor: cursor?.photoCursor, pageSize: pageSize)
+        return try await search(
+            rawQuery,
+            page: page,
+            photoCursor: cursor?.photoCursor,
+            pageSize: pageSize,
+            onPartialResults: nil
+        )
+    }
+
+    /// App 交互搜索可在完整游标就绪前接收来源级结果；Finder 等原子调用方继续使用旧入口。
+    public func search(
+        _ rawQuery: String,
+        cursor: ImageSearchCursor?,
+        pageSize: Int = 20,
+        onPartialResults: @escaping @Sendable ([RemoteImageRecord]) async -> Void
+    ) async throws -> ImageSearchPage {
+        let page = cursor?.page ?? 1
+        return try await search(
+            rawQuery,
+            page: page,
+            photoCursor: cursor?.photoCursor,
+            pageSize: pageSize,
+            onPartialResults: onPartialResults
+        )
     }
 
     /// 旧页码入口继续服务测试和历史快照；返回值仍携带完整的新游标。
     public func search(_ rawQuery: String, page: Int = 1, pageSize: Int = 20) async throws -> ImageSearchPage {
-        try await search(rawQuery, page: page, photoCursor: nil, pageSize: pageSize, usesLegacyPage: true)
+        try await search(
+            rawQuery,
+            page: page,
+            photoCursor: nil,
+            pageSize: pageSize,
+            usesLegacyPage: true,
+            onPartialResults: nil
+        )
     }
 
     private func search(
@@ -100,7 +182,8 @@ public struct ImageSearchService: Sendable {
         page: Int,
         photoCursor: PhotoSearchCursor?,
         pageSize: Int,
-        usesLegacyPage: Bool = false
+        usesLegacyPage: Bool = false,
+        onPartialResults: (@Sendable ([RemoteImageRecord]) async -> Void)?
     ) async throws -> ImageSearchPage {
         let query = SearchQueryParser.parse(rawQuery)
         guard !query.text.isEmpty else { return ImageSearchPage(records: [], nextCursor: nil) }
@@ -117,7 +200,8 @@ public struct ImageSearchService: Sendable {
                 page: page,
                 cursor: photoCursor,
                 pageSize: safePageSize,
-                usesLegacyPage: usesLegacyPage
+                usesLegacyPage: usesLegacyPage,
+                onPartialResults: onPartialResults
             )
             return Self.imagePage(from: result, currentPage: page, pageSize: safePageSize)
         case .avatar:
@@ -134,7 +218,8 @@ public struct ImageSearchService: Sendable {
                 page: page,
                 cursor: photoCursor,
                 pageSize: photoCount,
-                usesLegacyPage: usesLegacyPage
+                usesLegacyPage: usesLegacyPage,
+                onPartialResults: onPartialResults
             )
             let avatars = await diceBear.avatars(
                 query: query.text,
@@ -159,9 +244,19 @@ public struct ImageSearchService: Sendable {
         page: Int,
         cursor: PhotoSearchCursor?,
         pageSize: Int,
-        usesLegacyPage: Bool
+        usesLegacyPage: Bool,
+        onPartialResults: (@Sendable ([RemoteImageRecord]) async -> Void)?
     ) async throws -> PhotoSearchPage {
         if usesLegacyPage { return try await photos.search(query: query, page: page, pageSize: pageSize) }
+        if let onPartialResults {
+            return try await photos.search(
+                query: query,
+                cursor: cursor,
+                pageSize: pageSize
+            ) { batch in
+                await onPartialResults(batch.records)
+            }
+        }
         return try await photos.search(query: query, cursor: cursor, pageSize: pageSize)
     }
 
@@ -187,4 +282,5 @@ public struct ImageSearchService: Sendable {
         guard !result.overflow else { throw SearchPaginationCursorError.invalidValues }
         return result.partialValue
     }
+
 }

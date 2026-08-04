@@ -27,19 +27,77 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels])
     }
 
-    /// Settings 固定展示三个入口；Pixabay 当前开放 App 搜索，但 Finder 等待条款确认。
-    func testRegistryIncludesAppOnlyPixabayAsThirdProvider() {
-        XCTAssertEqual(PhotoSourceRegistry.descriptors.map(\.id), [.openverse, .pexels, .pixabay])
+    /// Settings 按稳定顺序展示六个入口，并明确声明新来源的使用边界。
+    func testRegistryIncludesMetNASAAndGiphyAsAppOnlyProviders() {
+        XCTAssertEqual(
+            PhotoSourceRegistry.descriptors.map(\.id),
+            [.openverse, .metMuseum, .nasa, .pexels, .pixabay, .giphy]
+        )
+        let openverse = PhotoSourceRegistry.descriptor(for: .openverse)
+        let metMuseum = PhotoSourceRegistry.descriptor(for: .metMuseum)
+        let nasa = PhotoSourceRegistry.descriptor(for: .nasa)
         let pixabay = PhotoSourceRegistry.descriptor(for: .pixabay)
         let pexels = PhotoSourceRegistry.descriptor(for: .pexels)
+        let giphy = PhotoSourceRegistry.descriptor(for: .giphy)
+        let freeRegistrationLabel = "免费使用 · 注册即可获取 API Key"
         XCTAssertEqual(pexels?.supportedSurfaces, [.app, .fileProvider])
+        XCTAssertEqual(pexels?.credentialAcquisitionLabel, freeRegistrationLabel)
         XCTAssertEqual(pixabay?.availability, .available)
         XCTAssertEqual(pixabay?.supportedSurfaces, [.app])
+        XCTAssertEqual(pixabay?.credentialAcquisitionLabel, freeRegistrationLabel)
+        XCTAssertNil(openverse?.credentialAcquisitionLabel)
+        XCTAssertEqual(metMuseum?.credentialRequirement, PhotoSourceCredentialRequirement.none)
+        XCTAssertEqual(metMuseum?.supportedSurfaces, [.app])
+        XCTAssertFalse(metMuseum?.allowsAutomatedRecommendations ?? true)
+        XCTAssertTrue(metMuseum?.allowsPersistentLibraryStorage ?? false)
+        XCTAssertEqual(nasa?.credentialRequirement, PhotoSourceCredentialRequirement.none)
+        XCTAssertEqual(nasa?.supportedSurfaces, [.app])
+        XCTAssertFalse(nasa?.allowsAutomatedRecommendations ?? true)
+        XCTAssertTrue(nasa?.allowsPersistentLibraryStorage ?? false)
+        XCTAssertEqual(ImageSource.metMuseum.photoSourceID, .metMuseum)
+        XCTAssertTrue(ImageSource.metMuseum.allowsPersistentLibraryStorage)
+        XCTAssertEqual(ImageSource.nasa.photoSourceID, .nasa)
+        XCTAssertTrue(ImageSource.nasa.allowsPersistentLibraryStorage)
         XCTAssertEqual(pixabay?.allowsAutomatedRecommendations, false)
-        XCTAssertEqual(pixabay?.allowsPersistentLibraryStorage, false)
+        XCTAssertEqual(pixabay?.allowsPersistentLibraryStorage, true)
+        XCTAssertTrue(ImageSource.pixabay.allowsPersistentLibraryStorage)
         XCTAssertEqual(pixabay?.searchResultAttribution?.text, "Images provided by Pixabay")
         XCTAssertEqual(pixabay?.searchResultAttribution?.url.host, "pixabay.com")
-        XCTAssertNotNil(pixabay?.searchResultAttribution?.note)
+        XCTAssertEqual(
+            pixabay?.searchResultAttribution?.note,
+            "可在 App 内收藏，暂不用于 Finder 或自动推荐"
+        )
+        XCTAssertEqual(giphy?.supportedSurfaces, [.app])
+        XCTAssertEqual(giphy?.summary, "使用你自己的 GIPHY API Key 浏览 Emoji、GIF 与 Sticker")
+        XCTAssertEqual(giphy?.resultPresentation, .isolated)
+        XCTAssertFalse(giphy?.allowsAutomatedRecommendations ?? true)
+        XCTAssertFalse(giphy?.allowsPersistentLibraryStorage ?? true)
+        XCTAssertFalse(giphy?.allowsMediaCaching ?? true)
+        XCTAssertEqual(giphy?.searchResultAttribution?.text, "Powered by GIPHY")
+        XCTAssertEqual(ImageSource.giphy.photoSourceID, .giphy)
+        XCTAssertFalse(ImageSource.giphy.allowsPersistentLibraryStorage)
+        XCTAssertFalse(ImageSource.giphy.allowsMediaCaching)
+    }
+
+    /// Met 与 NASA 都可进入 App 交互搜索，但不能越过政策开启 Finder。
+    func testMetAndNASACanEnableAppButRejectFileProvider() async throws {
+        let store = makeStore()
+
+        _ = try await store.saveConfiguration(for: .metMuseum, enabledSurfaces: [.app])
+        let updated = try await store.saveConfiguration(for: .nasa, enabledSurfaces: [.app])
+        XCTAssertEqual(updated.appSourceIDs, [.openverse, .metMuseum, .nasa])
+        XCTAssertEqual(updated.fileProviderSourceIDs, [.openverse])
+
+        for sourceID in [PhotoSourceID.metMuseum, .nasa] {
+            do {
+                _ = try await store.setEnabled(true, sourceID: sourceID, surface: .fileProvider)
+                XCTFail("App-only 来源不能用于 Finder: \(sourceID)")
+            } catch {
+                XCTAssertEqual(error as? PhotoSourcePreferencesError, .unsupportedSurface)
+            }
+        }
+        let snapshot = await store.snapshot()
+        XCTAssertEqual(snapshot, updated)
     }
 
     /// 只有真实设置变化才推进 revision；相同设置写入必须保持游标仍可使用。

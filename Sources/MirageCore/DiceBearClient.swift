@@ -1,11 +1,69 @@
 import Foundation
 
+/// DiceBear 生成批次所属的 UTC 公历日；标识可直接参与稳定 seed 计算。
+public struct DiceBearGenerationDay: Hashable, Sendable {
+    public let identifier: String
+
+    public init(date: Date) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        identifier = String(
+            format: "%04d-%02d-%02d",
+            locale: Locale(identifier: "en_US_POSIX"),
+            components.year!,
+            components.month!,
+            components.day!
+        )
+    }
+
+    /// 从持久化头像 ID 恢复生成日；只接受真实且 canonical 的 UTC 公历日期。
+    public init?(identifier: String) {
+        let fields = identifier.split(separator: "-", omittingEmptySubsequences: false)
+        guard fields.count == 3,
+              fields[0].count == 4,
+              fields[1].count == 2,
+              fields[2].count == 2,
+              let year = Int(fields[0]),
+              let month = Int(fields[1]),
+              let day = Int(fields[2]) else {
+            return nil
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)) else {
+            return nil
+        }
+        self.init(date: date)
+        guard self.identifier == identifier else { return nil }
+    }
+}
+
 public protocol DiceBearProviding: Sendable {
     /// 生成稳定、无个人信息的头像元数据，不发起网络请求。
-    func avatars(query: String, offset: Int, count: Int) async -> [RemoteImageRecord]
+    func avatars(
+        query: String,
+        offset: Int,
+        count: Int,
+        generationDay: DiceBearGenerationDay
+    ) async -> [RemoteImageRecord]
+
+    /// 获取当前生成日，供跨分页调用在开始时冻结同一日批次。
+    func currentGenerationDay() async -> DiceBearGenerationDay
 }
 
 public extension DiceBearProviding {
+    /// 旧调用入口每次只读取一次日期，再交给显式生成方法。
+    func avatars(query: String, offset: Int = 0, count: Int) async -> [RemoteImageRecord] {
+        let generationDay = await currentGenerationDay()
+        return await avatars(
+            query: query,
+            offset: offset,
+            count: count,
+            generationDay: generationDay
+        )
+    }
+
     /// 不需要分页的调用统一从第一个头像开始，保持发现页等旧调用语义。
     func avatars(query: String, count: Int) async -> [RemoteImageRecord] {
         await avatars(query: query, offset: 0, count: count)
@@ -16,29 +74,45 @@ public extension DiceBearProviding {
 public struct DiceBearClient: DiceBearProviding, Sendable {
     private let endpoint: URL
     private let styles: [DiceBearStyle]
+    private let now: @Sendable () -> Date
 
     public init(
         endpoint: URL = URL(string: "https://api.dicebear.com")!,
-        styles: [DiceBearStyle] = DiceBearStyle.allCases
+        styles: [DiceBearStyle] = DiceBearStyle.allCases,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.endpoint = endpoint
         self.styles = styles.isEmpty ? DiceBearStyle.allCases : styles
+        self.now = now
+    }
+
+    public func currentGenerationDay() async -> DiceBearGenerationDay {
+        DiceBearGenerationDay(date: now())
     }
 
     /// 查询文字只参与本地 SHA-256；风格按摘要稳定随机，原始文字不会进入远程 URL。
-    public func avatars(query: String, offset: Int = 0, count: Int) async -> [RemoteImageRecord] {
+    public func avatars(
+        query: String,
+        offset: Int,
+        count: Int,
+        generationDay: DiceBearGenerationDay
+    ) async -> [RemoteImageRecord] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let safeOffset = max(offset, 0)
         let safeCount = min(max(count, 0), 20)
         let end = safeOffset.addingReportingOverflow(safeCount)
         guard !end.overflow else { return [] }
         return (safeOffset..<end.partialValue).compactMap { index in
-            let material = "mirage|\(normalized)|\(index)"
+            let material = "mirage-daily-v1|\(generationDay.identifier)|\(normalized)|\(index)"
             let seedHash = StableImageID.seedHash(material)
             let style = selectedStyle(seedMaterial: material)
             guard let url = imageURL(style: style, seed: seedHash) else { return nil }
             return RemoteImageRecord(
-                id: StableImageID.diceBear(style: style.rawValue, seedMaterial: material),
+                id: StableImageID.dailyDiceBear(
+                    style: style.rawValue,
+                    generationDay: generationDay,
+                    seedMaterial: material
+                ),
                 title: "\(style.displayName) avatar",
                 source: .diceBear,
                 imageURL: url,

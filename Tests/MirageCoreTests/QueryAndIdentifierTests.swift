@@ -2,6 +2,8 @@ import XCTest
 @testable import MirageCore
 
 final class QueryAndIdentifierTests: XCTestCase {
+    private static let fixedNow = utcDate(year: 2026, month: 8, day: 2, hour: 12)
+
     /// 中文头像前缀应被移除，并保留清理后的查询文字。
     func testChineseAvatarPrefix() {
         XCTAssertEqual(SearchQueryParser.parse("  头像:  小猫  "), ParsedSearchQuery(text: "小猫", scope: .avatar))
@@ -10,6 +12,18 @@ final class QueryAndIdentifierTests: XCTestCase {
     /// 英文前缀不区分大小写，photo 仅选择照片来源。
     func testEnglishPhotoPrefixIsCaseInsensitive() {
         XCTAssertEqual(SearchQueryParser.parse("PHOTO: Ocean"), ParsedSearchQuery(text: "Ocean", scope: .photo))
+    }
+
+    /// GIPHY 不使用可输入的字符串前缀，避免普通搜索误进隔离目录。
+    func testEmojiLikePrefixesRemainOrdinarySearchText() {
+        XCTAssertEqual(
+            SearchQueryParser.parse("EMOJI: catalog"),
+            ParsedSearchQuery(text: "EMOJI: catalog", scope: .automatic)
+        )
+        XCTAssertEqual(
+            SearchQueryParser.parse(" 表情: giphy "),
+            ParsedSearchQuery(text: "表情: giphy", scope: .automatic)
+        )
     }
 
     /// 无前缀查询默认聚合两个来源。
@@ -23,6 +37,22 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertEqual(StableImageID.openverse(uuid: uuid), "ov:a0b1c2d3-e4f5-4678-9012-3456789abcde")
     }
 
+    func testMuseumAndNASAStableIDs() {
+        XCTAssertEqual(StableImageID.metMuseum(objectID: 42), "met:42")
+        XCTAssertEqual(
+            StableImageID.nasa(nasaID: "PIA 123/ABC"),
+            "nasa:e14bc80af1414cbd952fbf06368dc2f1cf7193512f1d8e353c7c2c5718fc8db9"
+        )
+    }
+
+    /// GIPHY 原始 ID 只参与摘要，应用持久标识不会直接暴露上游字符。
+    func testGiphyStableID() {
+        XCTAssertEqual(
+            StableImageID.giphy(id: "abc"),
+            "giphy:emoji:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        )
+    }
+
     /// DiceBear 使用标准 SHA-256，确保跨设备、跨进程结果一致。
     func testDiceBearStableID() {
         XCTAssertEqual(
@@ -33,7 +63,8 @@ final class QueryAndIdentifierTests: XCTestCase {
 
     /// DiceBear 地址固定为 10.x PNG，使用公共接口真实支持的256像素且不包含原始查询。
     func testDiceBearUsesHashedSeedAndRasterLimit() async throws {
-        let records = await DiceBearClient(styles: [.pixelArt]).avatars(query: "Private Name", count: 2)
+        let records = await DiceBearClient(styles: [.pixelArt], now: { Self.fixedNow })
+            .avatars(query: "Private Name", count: 2)
         XCTAssertEqual(records.count, 2)
         XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v10:pixel-art:") })
         XCTAssertTrue(records.allSatisfy { $0.imageURL.path == "/10.x/pixel-art/png" })
@@ -45,19 +76,56 @@ final class QueryAndIdentifierTests: XCTestCase {
         })
     }
 
-    /// Mirage 命名空间必须保持稳定，避免升级后同一查询产生另一组头像。
+    /// Mirage 每日命名空间必须保持稳定，避免同一 UTC 日内结果漂移。
     func testDiceBearMirageNamespaceIsStable() async throws {
-        let records = await DiceBearClient(styles: [.pixelArt]).avatars(query: "Private Name", count: 1)
+        let records = await DiceBearClient(styles: [.pixelArt], now: { Self.fixedNow })
+            .avatars(query: "Private Name", count: 1)
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(
             record.id,
-            "db:v10:pixel-art:f9219cd959300e7a13b7702df1bb1e1b31a38720c8e4ef52d304d5542b5d38aa"
+            "db:v10:pixel-art:2026-08-02:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
         )
+        XCTAssertEqual(StableImageID.diceBearGenerationDay(from: record.id)?.identifier, "2026-08-02")
+        XCTAssertNil(
+            StableImageID.diceBearGenerationDay(
+                from: "db:v10:pixel-art:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
+            )
+        )
+    }
+
+    /// 生成日始终按 UTC 公历输出 canonical yyyy-MM-dd，不受本机时区影响。
+    func testDiceBearGenerationDayUsesUTCGregorianIdentifier() {
+        let beforeMidnight = Self.utcDate(year: 2026, month: 8, day: 2, hour: 23, minute: 59)
+        let afterMidnight = Self.utcDate(year: 2026, month: 8, day: 3, hour: 0)
+
+        XCTAssertEqual(DiceBearGenerationDay(date: beforeMidnight).identifier, "2026-08-02")
+        XCTAssertEqual(DiceBearGenerationDay(date: afterMidnight).identifier, "2026-08-03")
+    }
+
+    /// 同一 UTC 日内不同时刻必须生成完全相同的头像记录。
+    func testDiceBearIsStableWithinSameUTCDay() async {
+        let morning = Self.utcDate(year: 2026, month: 8, day: 2, hour: 0, minute: 1)
+        let evening = Self.utcDate(year: 2026, month: 8, day: 2, hour: 23, minute: 59)
+        let first = await DiceBearClient(now: { morning }).avatars(query: " cat ", count: 20)
+        let later = await DiceBearClient(now: { evening }).avatars(query: "CAT", count: 20)
+
+        XCTAssertEqual(first, later)
+    }
+
+    /// 跨过 UTC 午夜后 seed、ID 与 URL 都必须切换，两日记录不得重叠。
+    func testDiceBearChangesAcrossUTCMidnight() async {
+        let beforeMidnight = Self.utcDate(year: 2026, month: 8, day: 2, hour: 23, minute: 59)
+        let afterMidnight = Self.utcDate(year: 2026, month: 8, day: 3, hour: 0)
+        let firstDay = await DiceBearClient(now: { beforeMidnight }).avatars(query: "cat", count: 20)
+        let secondDay = await DiceBearClient(now: { afterMidnight }).avatars(query: "cat", count: 20)
+
+        XCTAssertTrue(Set(firstDay.map(\.id)).isDisjoint(with: Set(secondDay.map(\.id))))
+        XCTAssertTrue(Set(firstDay.map(\.imageURL)).isDisjoint(with: Set(secondDay.map(\.imageURL))))
     }
 
     /// 头像分页必须使用绝对偏移，保证前后两页不会生成相同记录。
     func testDiceBearPaginationUsesDistinctOffsets() async {
-        let client = DiceBearClient(styles: [.pixelArt])
+        let client = DiceBearClient(styles: [.pixelArt], now: { Self.fixedNow })
         let firstPage = await client.avatars(query: "cat", offset: 0, count: 20)
         let secondPage = await client.avatars(query: "cat", offset: 20, count: 20)
         XCTAssertEqual(firstPage.count, 20)
@@ -82,7 +150,7 @@ final class QueryAndIdentifierTests: XCTestCase {
 
     /// 默认客户端按摘要稳定随机，并应在足够大的确定性样本中覆盖全部官方风格。
     func testDiceBearDefaultClientStablyUsesAllStyles() async {
-        let client = DiceBearClient()
+        let client = DiceBearClient(now: { Self.fixedNow })
         let first = await client.avatars(query: " cat ", offset: 0, count: 20)
         let repeated = await client.avatars(query: "CAT", offset: 0, count: 20)
         XCTAssertEqual(first, repeated)
@@ -100,16 +168,21 @@ final class QueryAndIdentifierTests: XCTestCase {
     /// 调整候选目录顺序不能改变同一查询的稳定随机结果。
     func testDiceBearStyleSelectionDoesNotDependOnCatalogOrder() async {
         let styles: [DiceBearStyle] = [.adventurer, .icons, .pixelArt, .lorelei]
-        let forward = await DiceBearClient(styles: styles).avatars(query: "cat", count: 20)
-        let reversed = await DiceBearClient(styles: Array(styles.reversed())).avatars(query: "cat", count: 20)
+        let forward = await DiceBearClient(styles: styles, now: { Self.fixedNow })
+            .avatars(query: "cat", count: 20)
+        let reversed = await DiceBearClient(styles: Array(styles.reversed()), now: { Self.fixedNow })
+            .avatars(query: "cat", count: 20)
         XCTAssertEqual(forward, reversed)
     }
 
     /// 非CC0风格必须携带真实许可证与作者，不能继续被统一标记为DiceBear CC0。
     func testDiceBearUsesStyleSpecificAttribution() async throws {
-        let ccByRecords = await DiceBearClient(styles: [.adventurer]).avatars(query: "a", count: 1)
-        let mitRecords = await DiceBearClient(styles: [.icons]).avatars(query: "a", count: 1)
-        let freeUseRecords = await DiceBearClient(styles: [.avataaars]).avatars(query: "a", count: 1)
+        let ccByRecords = await DiceBearClient(styles: [.adventurer], now: { Self.fixedNow })
+            .avatars(query: "a", count: 1)
+        let mitRecords = await DiceBearClient(styles: [.icons], now: { Self.fixedNow })
+            .avatars(query: "a", count: 1)
+        let freeUseRecords = await DiceBearClient(styles: [.avataaars], now: { Self.fixedNow })
+            .avatars(query: "a", count: 1)
         let ccBy = try XCTUnwrap(ccByRecords.first)
         let mit = try XCTUnwrap(mitRecords.first)
         let freeUse = try XCTUnwrap(freeUseRecords.first)
@@ -158,5 +231,23 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertTrue(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("mirage-default-v12"))
         XCTAssertTrue(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("mirage-default-v99"))
         XCTAssertFalse(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("another-provider-v16"))
+    }
+
+    private static func utcDate(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int = 0,
+        minute: Int = 0
+    ) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar.date(from: DateComponents(
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute
+        ))!
     }
 }

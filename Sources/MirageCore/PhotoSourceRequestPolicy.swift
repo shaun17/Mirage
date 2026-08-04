@@ -85,6 +85,22 @@ public enum PhotoSourceRequestPolicies {
                 maximumBatchSize: 50,
                 metadataTimeToLive: 60 * 60
             )
+        case .metMuseum:
+            return PhotoSourceRequestPolicy(
+                version: 1,
+                preferredBatchSize: 10,
+                maximumBatchSize: 20,
+                maximumQueryCharacters: 200,
+                metadataTimeToLive: 24 * 60 * 60
+            )
+        case .nasa:
+            return PhotoSourceRequestPolicy(
+                version: 1,
+                preferredBatchSize: 20,
+                maximumBatchSize: 100,
+                maximumQueryCharacters: 200,
+                metadataTimeToLive: 6 * 60 * 60
+            )
         case .pexels:
             return PhotoSourceRequestPolicy(
                 version: 1,
@@ -102,6 +118,17 @@ public enum PhotoSourceRequestPolicies {
                 maximumQueryCharacters: 100,
                 metadataTimeToLive: 24 * 60 * 60,
                 requiresPersistentCoordination: true
+            )
+        case .giphy:
+            // GIPHY 结果走独立、非持久化的 App 内通道；混合目录每页最多交付 40 个对象。
+            return PhotoSourceRequestPolicy(
+                version: 2,
+                preferredBatchSize: 40,
+                maximumBatchSize: 40,
+                connectionTestBatchSize: 3,
+                metadataTimeToLive: 0,
+                requiresPersistentCoordination: false,
+                rateLimitFallback: 60 * 60
             )
         }
     }

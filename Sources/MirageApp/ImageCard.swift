@@ -1,3 +1,4 @@
+import Foundation
 import MirageCore
 import SwiftUI
 
@@ -24,13 +25,13 @@ struct ImageCard: View {
                     Text(record.title)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
-                    Text("\(record.source.displayName) · \(record.license.displayName)")
+                    Text(metadataLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                if allowsFavoriteChanges {
+                if record.source.allowsPersistentLibraryStorage && allowsFavoriteChanges {
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "heart.fill" : "heart")
                             .foregroundStyle(isFavorite ? .red : .secondary)
@@ -38,7 +39,7 @@ struct ImageCard: View {
                     .buttonStyle(.borderless)
                     .help(isFavorite ? "取消收藏" : "收藏")
                     .accessibilityLabel(isFavorite ? "取消收藏 \(record.title)" : "收藏 \(record.title)")
-                } else if isFavorite {
+                } else if record.source.allowsPersistentLibraryStorage && isFavorite {
                     Image(systemName: "heart.fill")
                         .foregroundStyle(.red)
                         .accessibilityLabel("已收藏")
@@ -60,9 +61,22 @@ struct ImageCard: View {
             .frame(maxWidth: .infinity)
             .background(.quaternary)
             .overlay {
-                ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: 512)
+                RemoteThumbnailImage(record: record, maximumPixelSize: 512)
+                    .padding(record.source == .giphy ? 8 : 0)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// GIPHY 卡片优先显示创作者归属；普通图片继续显示来源与许可。
+    private var metadataLine: String {
+        guard record.source == .giphy else {
+            return "\(record.source.displayName) · \(record.license.displayName)"
+        }
+        guard let creator = record.creator?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !creator.isEmpty else {
+            return "GIPHY"
+        }
+        return "\(creator) · GIPHY"
     }
 }

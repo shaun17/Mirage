@@ -10,9 +10,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let diceBear: any DiceBearProviding
     private let sourcePreferences: (any PhotoSourcePreferencesReading)?
 
-    /// Finder 的头像分类与 Mirage App 默认头像使用同一固定查询；分段大小受 DiceBear 单次 20 条限制。
-    private static let avatarChunks = [(offset: 0, count: 20), (offset: 20, count: 20), (offset: 40, count: 10)]
-    private static let avatarItemCount = 50
+    /// Finder 头像分页按绝对 offset 生成；每次调用仍受 DiceBear 单次 20 条限制。
+    private static let avatarChunkSize = 20
 
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
@@ -62,48 +61,129 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
     func invalidate() {}
 
-    /// 只有用户进入“头像”目录时才生成独立的前 50 个 DiceBear 头像，不读取混合推荐流。
+    /// “头像”首页保留原有 50 个 occurrence，并追加一个真实的“加载更多”目录。
     func avatarItems() async throws -> [ProviderItem] {
+        try await avatarItems(page: 1)
+    }
+
+    /// 头像续页只有被父 scope 公开后才能打开，避免构造 ID 提前生成任意深度数据。
+    func avatarItems(for reference: AvatarPageReference) async throws -> [ProviderItem] {
+        guard try await isAvatarPagePublished(reference) else {
+            throw ProviderError.noSuchItem(reference.itemIdentifier)
+        }
+        return try await avatarItems(page: reference.page)
+    }
+
+    /// 回查分页目录只验证父 scope 中已经提交的入口，不生成该页的 50 个头像。
+    func isAvatarPagePublished(_ reference: AvatarPageReference) async throws -> Bool {
         let storage = try requireStorage()
-        if let cached = try await cachedAvatarItems(in: storage) { return cached }
+        let parentScope: ProviderEnumerationScope
+        if reference.page == 2 {
+            parentScope = .avatars
+        } else {
+            parentScope = .avatarPage(try AvatarPageReference(validating: reference.page - 1))
+        }
+        return try await storage.providerScope(
+            parentScope.storageKey,
+            contains: reference.itemIdentifier.rawValue
+        )
+    }
+
+    /// 每个可见目录生成固定 50 个确定性 DiceBear 头像，不读取混合推荐流或 Openverse。
+    private func avatarItems(page: Int) async throws -> [ProviderItem] {
+        let storage = try requireStorage()
+        // 一批头像可能跨越多个 20 条分段；日期必须只捕获一次，避免午夜混入两天 seed。
+        let generationDay = await diceBear.currentGenerationDay()
+        if let cached = try await cachedAvatarItems(
+            in: storage,
+            page: page,
+            generationDay: generationDay
+        ) {
+            return cached
+        }
+
+        let range = try ProviderAvatarTreePlanner.recordRange(for: page)
 
         var seen = Set<String>()
         var records: [RemoteImageRecord] = []
-        for chunk in Self.avatarChunks {
+        var offset = range.lowerBound
+        while offset < range.upperBound {
             try Task.checkCancellation()
+            let count = min(Self.avatarChunkSize, range.upperBound - offset)
             let generated = await diceBear.avatars(
                 query: DiscoveryRecommendation.query,
-                offset: chunk.offset,
-                count: chunk.count
+                offset: offset,
+                count: count,
+                generationDay: generationDay
             )
             for record in generated
                 where record.source == .diceBear && seen.insert(record.id).inserted {
                 records.append(record)
             }
+            offset += count
+        }
+        guard records.count == ProviderAvatarTreePlanner.batchSize else {
+            throw ProviderError.serverUnreachable("无法生成完整的头像批次。")
         }
         try Task.checkCancellation()
         for record in records {
             try await storage.writeItem(record)
         }
         try Task.checkCancellation()
-        return records.map { ProviderItem(record: $0, view: .avatar) }
+        return try ProviderAvatarTreePlanner.items(
+            for: ProviderAvatarBatch(
+                page: page,
+                records: records,
+                hasMore: page < AvatarPageReference.maximumPage
+            )
+        )
     }
 
-    /// 已提交 scope、逐条元数据和当前 ProviderItem 指纹全部一致时直接复用，避免锚点轮询重复写盘。
-    private func cachedAvatarItems(in storage: AppGroupStorage) async throws -> [ProviderItem]? {
-        guard let states = try await storage.providerScopeSnapshot(
-            ProviderEnumerationScope.avatars.storageKey
-        ), states.count == Self.avatarItemCount else {
+    /// 已提交 scope、逐条元数据、分页入口和指纹一致时直接复用，避免重复生成与写盘。
+    private func cachedAvatarItems(
+        in storage: AppGroupStorage,
+        page: Int,
+        generationDay: DiceBearGenerationDay
+    ) async throws -> [ProviderItem]? {
+        let scope: ProviderEnumerationScope
+        let expectedPage: AvatarPageReference?
+        if page == 1 {
+            scope = .avatars
+            expectedPage = nil
+        } else {
+            let reference = try AvatarPageReference(validating: page)
+            scope = .avatarPage(reference)
+            expectedPage = reference
+        }
+        let hasMore = page < AvatarPageReference.maximumPage
+        let emptyBatch = ProviderAvatarBatch(page: page, records: [], hasMore: hasMore)
+        let expectedContinuation = try ProviderAvatarTreePlanner.continuationItem(after: emptyBatch)
+        let expectedCount = ProviderAvatarTreePlanner.batchSize + (expectedContinuation == nil ? 0 : 1)
+        guard let states = try await storage.providerScopeSnapshot(scope.storageKey),
+              states.count == expectedCount else {
             return nil
         }
-        var items: [ProviderItem] = []
-        items.reserveCapacity(states.count)
-        for state in states {
+        let imageStates: ArraySlice<ProviderStoredItemState>
+        if let expectedContinuation {
+            guard let continuationState = states.last,
+                  continuationState.identifier == expectedContinuation.itemIdentifier.rawValue,
+                  continuationState.fingerprint == expectedContinuation.changeFingerprint else {
+                return nil
+            }
+            imageStates = states.dropLast()
+        } else {
+            imageStates = states[...]
+        }
+
+        var records: [RemoteImageRecord] = []
+        records.reserveCapacity(imageStates.count)
+        for state in imageStates {
             try Task.checkCancellation()
             let identifier = NSFileProviderItemIdentifier(state.identifier)
             guard let reference = ProviderIdentifiers.recordReference(from: identifier),
                   reference.view == .avatar,
-                  reference.discoveryPage == nil else {
+                  reference.discoveryPage == nil,
+                  reference.avatarPage == expectedPage else {
                 return nil
             }
             let record: RemoteImageRecord
@@ -119,15 +199,26 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 // fileExists 与实际读取之间若被清理，按普通 cache miss 自愈。
                 return nil
             }
-            guard record.source == .diceBear else { return nil }
-            let item = ProviderItem(record: record, view: .avatar)
+            guard record.source == .diceBear,
+                  StableImageID.diceBearGenerationDay(from: record.id) == generationDay else {
+                return nil
+            }
+            let item: ProviderItem
+            if expectedPage != nil {
+                item = ProviderItem(record: record, reference: reference)
+            } else {
+                item = ProviderItem(record: record, view: .avatar)
+            }
             guard item.itemIdentifier == identifier,
                   item.changeFingerprint == state.fingerprint else {
                 return nil
             }
-            items.append(item)
+            records.append(record)
         }
-        return items
+        guard records.count == ProviderAvatarTreePlanner.batchSize else { return nil }
+        return try ProviderAvatarTreePlanner.items(
+            for: ProviderAvatarBatch(page: page, records: records, hasMore: hasMore)
+        )
     }
 
     /// 根目录固定公开推荐流的首个 40 张批次；底层仍按 Mirage 的 20 张共享页读取。
@@ -388,6 +479,17 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         guard let reference = ProviderIdentifiers.recordReference(from: identifier) else { return nil }
         let storage = try requireStorage()
+        if let avatarPage = reference.avatarPage {
+            guard try await storage.providerScope(
+                ProviderEnumerationScope.avatarPage(avatarPage).storageKey,
+                contains: identifier.rawValue
+            ), let record = try await storage.readItem(id: reference.recordID),
+               record.source == .diceBear else {
+                return nil
+            }
+            try Task.checkCancellation()
+            return ProviderOccurrence(reference: reference, record: record)
+        }
         if let discoveryPage = reference.discoveryPage {
             let state = try await storage.providerScopeSnapshot(
                 ProviderEnumerationScope.discoveryPage(discoveryPage).storageKey
@@ -555,7 +657,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                     ),
                     openedDiscoveryPage: reference.page
                 )
-            case .avatars, .search, .recent, .favorites, .workingSet, .single:
+            case .avatars, .avatarPage, .search, .recent, .favorites, .workingSet, .single:
                 return try await storage.commitProviderScopes([commit])
             }
         } catch is ProviderPublicationError {

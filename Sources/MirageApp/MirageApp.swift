@@ -30,7 +30,11 @@ struct MirageApp: App {
         }
 
         Settings {
-            PhotoSourceSettingsView(model: model.sourceSettingsModel)
+            PhotoSourceSettingsView(
+                model: model.sourceSettingsModel,
+                providerState: model.providerState,
+                onRecheckProvider: model.configureProvider
+            )
         }
     }
 }

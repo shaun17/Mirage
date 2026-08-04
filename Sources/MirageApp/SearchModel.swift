@@ -23,6 +23,7 @@ final class SearchModel: ObservableObject {
     @Published private(set) var accessibilityEvent: SearchAccessibilityEvent?
 
     private static let pageSize = DiscoveryRecommendation.pageSize
+    private static let giphyPageSize = SearchPaginationCursor.maximumPageSize
     private static let maximumPagesPerLoad = 3
     private let service: ImageSearchService
     private var isWaitingForRecommendationFeed: Bool
@@ -33,6 +34,8 @@ final class SearchModel: ObservableObject {
     private var loadMoreTaskID: UUID?
     private var activeRequest: SearchRequest?
     private var nextCursor: ImageSearchCursor?
+    private var paginationRetryAt: Date?
+    private var giphyRetryAt: Date?
     private var sessionID = UUID()
     private var resultIDs = Set<String>()
     private var isActive = false
@@ -75,8 +78,14 @@ final class SearchModel: ObservableObject {
         scheduleSearch()
     }
 
-    /// 数据源开关或凭据变化后丢弃旧游标，防止一次结果混入两套配置。
-    func sourceConfigurationDidChange() {
+    /// 数据源开关或凭据变化后只重启受影响的搜索会话，防止无关设置绕过 GIPHY 退避。
+    func sourceConfigurationDidChange(sourceID: PhotoSourceID) {
+        if sourceID == .giphy {
+            giphyRetryAt = nil
+            guard filter == .gif else { return }
+        } else {
+            guard filter != .gif else { return }
+        }
         scheduleSearch()
     }
 
@@ -95,6 +104,20 @@ final class SearchModel: ObservableObject {
     /// 分页失败不会清空已有结果，用户重试时继续请求同一页。
     func retryLoadingNextPage() {
         guard isActive, case .failed = paginationState else { return }
+        if filter == .gif {
+            if let retryAt = giphyRetryAt {
+                guard retryAt <= Date() else {
+                    announce("GIPHY 限流尚未结束，请稍后重试加载更多 GIF。")
+                    return
+                }
+                giphyRetryAt = nil
+            }
+            if let paginationRetryAt, paginationRetryAt > Date() {
+                announce("GIPHY 限流尚未结束，请稍后重试加载更多 GIF。")
+                return
+            }
+        }
+        paginationRetryAt = nil
         startLoadingNextPage()
     }
 
@@ -113,13 +136,19 @@ final class SearchModel: ObservableObject {
 
     /// 离开发现页或窗口失活时取消页面等待，并使迟到响应失去提交资格。
     private func cancelPendingWork() {
+        let wasLoadingInitialPage = state == .searching || paginationState == .loadingSources
         initialTask?.cancel()
         loadMoreTask?.cancel()
         sessionID = UUID()
         initialTask = nil
         // 条件变更任务仍需在下一轮把旧结果清为 idle；它会因 isActive=false 而保持离线。
         // 续页句柄由原任务退出时清理；期间保持 loading，禁止同一页并发重入。
-        if state == .searching {
+        if wasLoadingInitialPage || filter == .gif {
+            activeRequest = nil
+            results = []
+            resultIDs = []
+            sourceIssues = []
+            resetPagination()
             state = .idle
         }
     }
@@ -167,46 +196,69 @@ final class SearchModel: ObservableObject {
             state = .idle
             return
         }
+        if request == .giphy, let retryAt = giphyRetryAt {
+            guard retryAt <= Date() else {
+                commitInitialFailure(.rateLimited("GIPHY 请求过于频繁，请稍后重试。"))
+                return
+            }
+            giphyRetryAt = nil
+        }
         state = .searching
         initialTask = Task { [weak self] in
             do {
-                if self?.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                if case .query = request,
+                   self?.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                     try await Task.sleep(for: .milliseconds(400))
                 }
                 guard let self else { return }
-                let loaded = try await self.firstVisiblePage(for: request)
+                let loaded = try await self.firstVisiblePage(for: request) { [weak self] records in
+                    await self?.commitInitialBatch(records, sessionID: newSessionID)
+                }
                 try Task.checkCancellation()
                 guard self.sessionID == newSessionID else { return }
                 let page = loaded.page
-                let records = Self.unique(page.records)
-                self.results = records
-                self.resultIDs = Set(records.map(\.id))
+                let additions = Self.unique(page.records, excluding: self.resultIDs)
+                self.resultIDs.formUnion(additions.map(\.id))
+                self.results.append(contentsOf: additions)
                 self.activeRequest = loaded.request
                 self.nextCursor = page.nextCursor
                 self.sourceIssues = page.issues
-                let paginationState = Self.paginationState(
+                self.updateRetryBoundaries(from: page.issues, for: request)
+                let paginationState = self.paginationState(
                     after: page,
-                    hasVisibleRecords: !records.isEmpty
+                    hasVisibleRecords: !self.results.isEmpty
                 )
                 self.paginationState = paginationState
-                self.state = records.isEmpty ? .empty : .results
-                if records.isEmpty {
+                self.state = self.results.isEmpty ? .empty : .results
+                if self.results.isEmpty {
                     self.announceEmptyResult(for: paginationState)
                 } else {
                     self.announceLoaded(
-                        records.count,
-                        total: records.count,
+                        self.results.count,
+                        total: self.results.count,
                         exhausted: paginationState == .exhausted
                     )
                 }
             } catch is CancellationError {
-                return
+                // 条件切换、离开页面等真实 Task 取消应保持静默；若下游把一次独立的
+                // I/O 中断包装成 CancellationError，则必须收敛为可见失败，不能永远 searching。
+                guard !Task.isCancelled, let self, self.sessionID == newSessionID else { return }
+                let message = request == .giphy
+                    ? "GIPHY 请求被中断，请重试。"
+                    : "搜索请求被中断，请重试。"
+                self.commitInitialFailure(.network(message))
             } catch let error as OpenverseError {
                 guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
                 self?.commitInitialFailure(SearchState(openverseError: error))
             } catch let error as PhotoSearchError {
-                guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
-                self?.commitInitialFailure(SearchState(photoSearchError: error))
+                guard !Task.isCancelled, let self, self.sessionID == newSessionID else { return }
+                if case let .allSourcesFailed(issues) = error {
+                    self.sourceIssues = issues
+                }
+                if request == .giphy {
+                    self.captureGiphyRetryBoundary(from: error)
+                }
+                self.commitInitialFailure(SearchState(photoSearchError: error))
             } catch {
                 guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
                 self?.commitInitialFailure(.failed(error.localizedDescription))
@@ -260,11 +312,16 @@ final class SearchModel: ObservableObject {
                 let additions = Self.unique(response.records, excluding: resultIDs)
                 nextCursor = response.nextCursor
                 sourceIssues = response.issues
+                updateRetryBoundaries(from: response.issues, for: request)
+                let responsePaginationState = paginationState(
+                    after: response,
+                    hasVisibleRecords: !results.isEmpty || !additions.isEmpty
+                )
                 if !additions.isEmpty {
                     resultIDs.formUnion(additions.map(\.id))
                     results.append(contentsOf: additions)
                     state = .results
-                    paginationState = response.nextCursor == nil ? .exhausted : .ready
+                    paginationState = responsePaginationState
                     announceLoaded(
                         additions.count,
                         total: results.count,
@@ -272,19 +329,31 @@ final class SearchModel: ObservableObject {
                     )
                     return
                 }
+                if case let .failed(message) = responsePaginationState {
+                    paginationState = responsePaginationState
+                    announceIncludingSourceIssues(message)
+                    return
+                }
                 guard let followingCursor = response.nextCursor,
                       followingCursor.page > requestedCursor.page else {
                     paginationState = .exhausted
-                    announceIncludingSourceIssues("已加载全部结果")
+                    announceIncludingSourceIssues(allLoadedMessage)
                     return
                 }
                 requestedCursor = followingCursor
             }
-            let message = "连续三页没有新的可用图片，可以继续查找。"
+            let message = continuationMessage
             paginationState = .needsContinuation(message)
             announceIncludingSourceIssues(message)
         } catch is CancellationError {
-            return
+            guard !Task.isCancelled,
+                  self.sessionID == sessionID,
+                  activeRequest == request else { return }
+            let message = request == .giphy
+                ? "GIPHY 请求被中断，请重试。"
+                : "搜索请求被中断，请重试。"
+            paginationState = .failed(message)
+            announce(message)
         } catch DiscoveryFeedError.snapshotExpired {
             guard sessionID == self.sessionID, case .recommendations = request else { return }
             restartExpiredRecommendationSession()
@@ -294,6 +363,13 @@ final class SearchModel: ObservableObject {
             announce(error.localizedDescription)
         } catch let error as PhotoSearchError {
             guard self.sessionID == sessionID else { return }
+            if case let .allSourcesFailed(issues) = error {
+                sourceIssues = issues
+            }
+            if request == .giphy {
+                captureGiphyRetryBoundary(from: error)
+                paginationRetryAt = giphyRetryAt
+            }
             paginationState = .failed(error.localizedDescription)
             announce(error.localizedDescription)
         } catch {
@@ -304,16 +380,26 @@ final class SearchModel: ObservableObject {
     }
 
     /// 初页被安全校验全部过滤时最多连续检查三页，避免单次触发无限请求。
-    private func firstVisiblePage(for request: SearchRequest) async throws -> SearchLoadResult {
+    private func firstVisiblePage(
+        for request: SearchRequest,
+        onPartialResults: @escaping @Sendable ([RemoteImageRecord]) async -> Void
+    ) async throws -> SearchLoadResult {
         var requestedCursor: ImageSearchCursor?
         var latest = SearchLoadResult(
             page: ImageSearchPage(records: [], nextPage: nil),
             request: request
         )
         for _ in 0..<Self.maximumPagesPerLoad {
-            let loaded = try await loadPage(for: latest.request, cursor: requestedCursor)
+            let loaded = try await loadPage(
+                for: latest.request,
+                cursor: requestedCursor,
+                onPartialResults: onPartialResults
+            )
             try Task.checkCancellation()
             latest = loaded
+            if request == .giphy, !loaded.page.issues.isEmpty {
+                return loaded
+            }
             guard loaded.page.records.isEmpty, let followingCursor = loaded.page.nextCursor,
                   followingCursor.page > (requestedCursor?.page ?? 0) else { return loaded }
             requestedCursor = followingCursor
@@ -324,7 +410,8 @@ final class SearchModel: ObservableObject {
     /// 空查询读取共享推荐 generation；普通关键词继续使用统一图片搜索服务。
     private func loadPage(
         for request: SearchRequest,
-        cursor: ImageSearchCursor?
+        cursor: ImageSearchCursor?,
+        onPartialResults: (@Sendable ([RemoteImageRecord]) async -> Void)? = nil
     ) async throws -> SearchLoadResult {
         switch request {
         case let .recommendations(generation):
@@ -346,13 +433,46 @@ final class SearchModel: ObservableObject {
                 request: .recommendations(result.generation)
             )
         case let .query(rawQuery):
-            let page = try await service.search(rawQuery, cursor: cursor, pageSize: Self.pageSize)
+            let page: ImageSearchPage
+            if let onPartialResults {
+                page = try await service.search(
+                    rawQuery,
+                    cursor: cursor,
+                    pageSize: Self.pageSize,
+                    onPartialResults: onPartialResults
+                )
+            } else {
+                page = try await service.search(rawQuery, cursor: cursor, pageSize: Self.pageSize)
+            }
             return SearchLoadResult(page: page, request: request)
+        case .giphy:
+            return SearchLoadResult(
+                page: try await service.giphyCatalog(cursor: cursor, pageSize: Self.giphyPageSize),
+                request: .giphy
+            )
+        }
+    }
+
+    /// 首个完成来源立即进入网格；完整页返回前不开放触底分页，也不提前提交来源错误。
+    private func commitInitialBatch(_ records: [RemoteImageRecord], sessionID: UUID) {
+        guard self.sessionID == sessionID, isActive else { return }
+        let additions = Self.unique(records, excluding: resultIDs)
+        guard !additions.isEmpty else { return }
+        let isFirstBatch = results.isEmpty
+        resultIDs.formUnion(additions.map(\.id))
+        results.append(contentsOf: additions)
+        paginationState = .loadingSources
+        state = .results
+        if isFirstBatch {
+            announce("已先加载 \(additions.count) 张图片，其他图片数据源仍在加载")
         }
     }
 
     /// 空搜索框映射为推荐流；只有不完整的手工关键词进入真正 idle 状态。
     private func pendingRequest() -> SearchRequest? {
+        if filter == .gif {
+            return .giphy
+        }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             if filter == .all {
@@ -365,7 +485,7 @@ final class SearchModel: ObservableObject {
             return .query(filter.serviceQuery(for: DiscoveryRecommendation.query))
         }
         let request = filter.serviceQuery(for: query)
-        // 统一以移除“头像:”或“图片:”前缀后的正文判断，单个中文字符也应是有效查询。
+        // 统一以移除内容范围前缀后的正文判断，单个中文字符也应是有效查询。
         guard !SearchQueryParser.parse(request).text.isEmpty else { return nil }
         return .query(request)
     }
@@ -375,6 +495,7 @@ final class SearchModel: ObservableObject {
         loadMoreTask = nil
         loadMoreTaskID = nil
         nextCursor = nil
+        paginationRetryAt = nil
         paginationState = .unavailable
     }
 
@@ -390,14 +511,66 @@ final class SearchModel: ObservableObject {
     }
 
     /// 根据当前服务页确定是继续自动加载、显式继续，还是已经全部结束。
-    private static func paginationState(
+    private func paginationState(
         after page: ImageSearchPage,
         hasVisibleRecords: Bool
     ) -> SearchPaginationState {
         guard page.nextPage != nil else { return .exhausted }
+        if filter == .gif, !page.issues.isEmpty {
+            if page.issues.contains(where: { $0.kind == .rateLimited }) {
+                return .failed("部分 GIPHY 内容受到限流，请稍后重试加载更多 GIF。")
+            }
+            if page.issues.contains(where: {
+                $0.kind == .missingCredential || $0.kind == .invalidCredential
+            }) {
+                return .failed("部分 GIPHY 接口无法使用，请检查 API Key 后重试。")
+            }
+            return .failed("部分 GIPHY 内容暂时不可用，请重试加载更多 GIF。")
+        }
         return hasVisibleRecords
             ? .ready
-            : .needsContinuation("连续三页没有新的可用图片，可以继续查找。")
+            : .needsContinuation(continuationMessage)
+    }
+
+    /// GIPHY 的限流门槛跨分页、筛选切换和窗口失活保留，避免重建会话后提前重复请求。
+    private func updateRetryBoundaries(
+        from issues: [PhotoSourceIssue],
+        for request: SearchRequest
+    ) {
+        guard request == .giphy else {
+            paginationRetryAt = nil
+            return
+        }
+        let rateLimitIssues = issues.filter { $0.kind == .rateLimited }
+        let retryAt = rateLimitIssues.isEmpty
+            ? nil
+            : rateLimitIssues.compactMap(\.retryAt).max()
+                ?? Date().addingTimeInterval(
+                    PhotoSourceRequestPolicies.policy(for: .giphy).rateLimitFallback
+                )
+        paginationRetryAt = retryAt
+
+        guard let retryAt else {
+            giphyRetryAt = nil
+            return
+        }
+        giphyRetryAt = max(giphyRetryAt ?? retryAt, retryAt)
+    }
+
+    /// GIPHY 不经过持久化请求协调器，因此整页 429 的退避必须在唯一 App 请求入口执行。
+    private func captureGiphyRetryBoundary(from error: PhotoSearchError) {
+        guard case let .allSourcesFailed(issues) = error,
+              issues.contains(where: { $0.kind == .rateLimited }) else {
+            return
+        }
+        let retryAt = issues
+            .filter { $0.kind == .rateLimited }
+            .compactMap(\.retryAt)
+            .max()
+            ?? Date().addingTimeInterval(
+                PhotoSourceRequestPolicies.policy(for: .giphy).rateLimitFallback
+            )
+        giphyRetryAt = max(giphyRetryAt ?? retryAt, retryAt)
     }
 
     /// 空结果只播报需要继续操作或已经结束，不制造“加载0张”的无意义通知。
@@ -406,8 +579,8 @@ final class SearchModel: ObservableObject {
         case let .needsContinuation(message):
             announceIncludingSourceIssues(message)
         case .exhausted:
-            announceIncludingSourceIssues("没有更多可用结果")
-        case .unavailable, .ready, .loading, .failed:
+            announceIncludingSourceIssues("没有更多可用\(contentReferenceName)")
+        case .unavailable, .loadingSources, .ready, .loading, .failed:
             break
         }
     }
@@ -415,8 +588,36 @@ final class SearchModel: ObservableObject {
     /// 把新增数量、总数和末页状态合并成一条完整的 VoiceOver 信息。
     private func announceLoaded(_ count: Int, total: Int, exhausted: Bool) {
         guard count > 0 else { return }
-        let suffix = exhausted ? "；已加载全部结果" : ""
-        announceIncludingSourceIssues("已加载 \(count) 张图片，共 \(total) 张\(suffix)")
+        let suffix = exhausted ? "；\(allLoadedMessage)" : ""
+        announceIncludingSourceIssues(
+            "已加载 \(count) \(countedContentName)，共 \(total) \(totalCountedContentName)\(suffix)"
+        )
+    }
+
+    private var contentName: String {
+        filter == .gif ? "GIF" : "图片"
+    }
+
+    private var countedContentName: String {
+        filter == .gif ? "个 GIF" : "张图片"
+    }
+
+    private var totalCountedContentName: String {
+        filter == .gif ? "个 GIF" : "张"
+    }
+
+    private var contentReferenceName: String {
+        filter == .gif ? " GIF" : "图片"
+    }
+
+    private var allLoadedMessage: String {
+        filter == .gif ? "已加载全部 GIF" : "已加载全部图片"
+    }
+
+    private var continuationMessage: String {
+        filter == .gif
+            ? "连续三页没有新的可用 GIF，可以继续浏览。"
+            : "连续三页没有新的可用图片，可以继续查找。"
     }
 
     /// 聚合搜索仍有可用结果时，把局部来源故障合并进同一次 VoiceOver 公告。
@@ -443,7 +644,7 @@ final class SearchModel: ObservableObject {
         case let .rateLimited(message):
             announce("请求过于频繁：\(message)")
         case let .failed(message):
-            announce("搜索失败：\(message)")
+            announce(filter == .gif ? "加载 GIF 失败：\(message)" : "搜索失败：\(message)")
         case .idle, .searching, .results, .empty:
             break
         }
@@ -464,6 +665,7 @@ final class SearchModel: ObservableObject {
 private enum SearchRequest: Equatable {
     case query(String)
     case recommendations(UInt64?)
+    case giphy
 }
 
 /// 一次加载同时返回可见页和解析后的稳定会话，第一页由此锁定推荐 generation。

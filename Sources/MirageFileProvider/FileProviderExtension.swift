@@ -53,7 +53,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         case ProviderIdentifiers.favorites: scope = .favorites
         case .workingSet: scope = .workingSet
         default:
-            if let reference = ProviderIdentifiers.discoveryPageReference(
+            if let reference = ProviderIdentifiers.avatarPageReference(
+                from: containerItemIdentifier
+            ) {
+                scope = .avatarPage(reference)
+            } else if let reference = ProviderIdentifiers.discoveryPageReference(
                 from: containerItemIdentifier
             ) {
                 scope = .discoveryPage(reference)

@@ -8,12 +8,40 @@ enum ProviderIdentifiers {
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
+    static let avatarPagePrefix = "avatar-page:v1:"
+    private static let avatarPageItemPrefix = "avatar-page-item:v1:"
     static let discoveryPagePrefix = "discover-page:v3:"
     private static let discoveryPageItemPrefix = "discover-page-item:v3:"
 
     /// 为同一远程记录在不同视图中生成互不冲突的条目标识。
     static func itemIdentifier(recordID: String, view: ProviderView) -> NSFileProviderItemIdentifier {
         NSFileProviderItemIdentifier("\(view.rawValue):\(recordID)")
+    }
+
+    /// 头像续页目录只编码逻辑页码；确定性 DiceBear 目录跨进程保持同一公开 ID。
+    static func avatarPageIdentifier(
+        _ reference: AvatarPageReference
+    ) -> NSFileProviderItemIdentifier {
+        NSFileProviderItemIdentifier(avatarPagePrefix + String(reference.page))
+    }
+
+    /// 头像续页 occurrence 同时编码逻辑页和稳定记录 ID，避免父级位置丢失。
+    static func avatarPageItemIdentifier(
+        recordID: String,
+        page reference: AvatarPageReference
+    ) -> NSFileProviderItemIdentifier {
+        NSFileProviderItemIdentifier(
+            avatarPageItemPrefix + String(reference.page) + ":" + recordID
+        )
+    }
+
+    /// 只接受 canonical v1 头像续页 ID；首页和越界页都不公开为子目录。
+    static func avatarPageReference(
+        from identifier: NSFileProviderItemIdentifier
+    ) -> AvatarPageReference? {
+        guard identifier.rawValue.hasPrefix(avatarPagePrefix) else { return nil }
+        let rawPage = String(identifier.rawValue.dropFirst(avatarPagePrefix.count))
+        return canonicalAvatarPage(rawPage)
     }
 
     /// 推荐续页目录的公开 ID 只包含逻辑页码，刷新 generation 不会让 Finder 误判为新目录。
@@ -44,6 +72,14 @@ enum ProviderIdentifiers {
 
     /// 从视图条目标识中还原远程记录 ID。
     static func recordReference(from identifier: NSFileProviderItemIdentifier) -> RecordReference? {
+        if identifier.rawValue.hasPrefix(avatarPageItemPrefix) {
+            let payload = identifier.rawValue.dropFirst(avatarPageItemPrefix.count)
+            guard let separator = payload.firstIndex(of: ":") else { return nil }
+            let rawPage = String(payload[..<separator])
+            let recordID = String(payload[payload.index(after: separator)...])
+            guard !recordID.isEmpty, let page = canonicalAvatarPage(rawPage) else { return nil }
+            return RecordReference(recordID: recordID, avatarPage: page)
+        }
         if identifier.rawValue.hasPrefix(discoveryPageItemPrefix) {
             let payload = identifier.rawValue.dropFirst(discoveryPageItemPrefix.count)
             guard let separator = payload.firstIndex(of: ":") else { return nil }
@@ -66,6 +102,12 @@ enum ProviderIdentifiers {
         guard let page = Int(rawPage), String(page) == rawPage else { return nil }
         return DiscoveryPageReference(page: page)
     }
+
+    /// 拒绝前导零、符号、整数溢出和超出头像目录容量的页码。
+    private static func canonicalAvatarPage(_ rawPage: String) -> AvatarPageReference? {
+        guard let page = Int(rawPage), String(page) == rawPage else { return nil }
+        return AvatarPageReference(page: page)
+    }
 }
 
 /// 远程图片在文件树中的呈现视图。
@@ -75,6 +117,38 @@ enum ProviderView: String, CaseIterable, Sendable {
     case search
     case recent
     case favorite
+}
+
+/// 递归头像目录的稳定逻辑位置；第 1 批直接位于“头像”，不公开分页目录 ID。
+struct AvatarPageReference: Hashable, Sendable {
+    /// 每层 50 张，最多公开 20 万个确定性头像，避免恶意构造无限深目录。
+    static let maximumPage = 4_000
+
+    let page: Int
+
+    init?(page: Int) {
+        guard (2...Self.maximumPage).contains(page) else { return nil }
+        self.page = page
+    }
+
+    init(validating page: Int) throws {
+        guard let reference = Self(page: page) else {
+            throw ProviderAvatarTreeError.invalidPage(page)
+        }
+        self = reference
+    }
+
+    var itemIdentifier: NSFileProviderItemIdentifier {
+        ProviderIdentifiers.avatarPageIdentifier(self)
+    }
+
+    /// 第 2 批挂在“头像”下；更深的“加载更多”挂在上一批目录下。
+    var parentItemIdentifier: NSFileProviderItemIdentifier {
+        guard page > 2, let parent = AvatarPageReference(page: page - 1) else {
+            return ProviderIdentifiers.avatars
+        }
+        return parent.itemIdentifier
+    }
 }
 
 /// 递归推荐目录的稳定逻辑位置。根页只在规划器内部表示，不对系统公开目录 ID。
@@ -118,6 +192,7 @@ struct RecordReference: Hashable, Sendable {
 
     private enum Location: Hashable, Sendable {
         case view(ProviderView)
+        case avatarPage(AvatarPageReference)
         case discoveryPage(DiscoveryPageReference)
     }
 
@@ -131,10 +206,16 @@ struct RecordReference: Hashable, Sendable {
         location = .discoveryPage(discoveryPage)
     }
 
+    init(recordID: String, avatarPage: AvatarPageReference) {
+        self.recordID = recordID
+        location = .avatarPage(avatarPage)
+    }
+
     /// 分页 occurrence 仍属于 discover 视图，供内容版本和仓库路由保持一致。
     var view: ProviderView {
         switch location {
         case let .view(view): return view
+        case .avatarPage: return .avatar
         case .discoveryPage: return .discover
         }
     }
@@ -144,10 +225,20 @@ struct RecordReference: Hashable, Sendable {
         return reference
     }
 
+    var avatarPage: AvatarPageReference? {
+        guard case let .avatarPage(reference) = location else { return nil }
+        return reference
+    }
+
     var itemIdentifier: NSFileProviderItemIdentifier {
         switch location {
         case let .view(view):
             return ProviderIdentifiers.itemIdentifier(recordID: recordID, view: view)
+        case let .avatarPage(reference):
+            return ProviderIdentifiers.avatarPageItemIdentifier(
+                recordID: recordID,
+                page: reference
+            )
         case let .discoveryPage(reference):
             return ProviderIdentifiers.discoveryPageItemIdentifier(
                 recordID: recordID,
@@ -159,6 +250,8 @@ struct RecordReference: Hashable, Sendable {
     /// 普通推荐图片挂根目录；分页 occurrence 必须挂在对应的稳定续页目录下。
     var parentItemIdentifier: NSFileProviderItemIdentifier {
         switch location {
+        case let .avatarPage(reference):
+            return reference.itemIdentifier
         case let .discoveryPage(reference):
             return reference.itemIdentifier
         case let .view(view):

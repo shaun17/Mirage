@@ -72,7 +72,10 @@ struct PhotoSourceProviderSettingsPane: View {
                 noCredentialContent
             }
 
-            Text("启用后将在所有受支持的位置使用此数据源。")
+            Text(
+                descriptor.searchResultAttribution?.note
+                    ?? "启用后将在所有受支持的位置使用此数据源。"
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -118,9 +121,13 @@ struct PhotoSourceProviderSettingsPane: View {
                 }
 
                 if let credentialURL = descriptor.credentialURL {
-                    Link("获取 API Key", destination: credentialURL)
+                    Link(destination: credentialURL) {
+                        Label(credentialAcquisitionLabel, systemImage: "key.fill")
+                    }
                         .font(.callout)
-                        .accessibilityLabel("获取 \(descriptor.displayName) API Key")
+                        .accessibilityLabel(
+                            "\(descriptor.displayName)，\(credentialAcquisitionLabel)"
+                        )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -164,5 +171,9 @@ struct PhotoSourceProviderSettingsPane: View {
             get: { model.credentialDrafts[descriptor.id, default: ""] },
             set: { model.setCredentialDraft($0, for: descriptor.id) }
         )
+    }
+
+    private var credentialAcquisitionLabel: String {
+        descriptor.credentialAcquisitionLabel ?? "获取 API Key"
     }
 }

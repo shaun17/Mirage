@@ -178,7 +178,7 @@ final class AppModel: ObservableObject {
 
     /// 设置保存后重启主 App 搜索；只有 Finder 支持的来源才通知扩展刷新。
     private func photoSourceConfigurationDidChange(sourceID: PhotoSourceID) async {
-        searchModel.sourceConfigurationDidChange()
+        searchModel.sourceConfigurationDidChange(sourceID: sourceID)
         guard PhotoSourceRegistry.descriptor(for: sourceID)?.supports(.fileProvider) == true else {
             return
         }

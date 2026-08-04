@@ -43,10 +43,143 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
             XCTAssertEqual(reference.itemIdentifier.rawValue, "\(view.rawValue):source:item:1")
             XCTAssertEqual(reference.parentItemIdentifier, parent)
             XCTAssertEqual(reference.view, view)
+            XCTAssertNil(reference.avatarPage)
             XCTAssertNil(reference.discoveryPage)
             XCTAssertEqual(
                 ProviderIdentifiers.recordReference(from: reference.itemIdentifier),
                 reference
+            )
+        }
+    }
+
+    /// 头像续页 ID、父级和 scope 必须独立于推荐流，并严格拒绝非 canonical 页码。
+    func testAvatarPageIdentifiersRoundTripAndUseIsolatedScopes() throws {
+        let second = try XCTUnwrap(AvatarPageReference(page: 2))
+        let third = try XCTUnwrap(AvatarPageReference(page: 3))
+        XCTAssertEqual(second.itemIdentifier.rawValue, "avatar-page:v1:2")
+        XCTAssertEqual(second.parentItemIdentifier, ProviderIdentifiers.avatars)
+        XCTAssertEqual(third.parentItemIdentifier, second.itemIdentifier)
+        XCTAssertEqual(ProviderIdentifiers.avatarPageReference(from: second.itemIdentifier), second)
+
+        let original = RecordReference(recordID: "db:v10:style:hash", avatarPage: second)
+        XCTAssertEqual(
+            original.itemIdentifier.rawValue,
+            "avatar-page-item:v1:2:db:v10:style:hash"
+        )
+        let decoded = try XCTUnwrap(
+            ProviderIdentifiers.recordReference(from: original.itemIdentifier)
+        )
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.view, .avatar)
+        XCTAssertEqual(decoded.avatarPage, second)
+        XCTAssertNil(decoded.discoveryPage)
+        XCTAssertEqual(decoded.parentItemIdentifier, second.itemIdentifier)
+        XCTAssertEqual(ProviderEnumerationScope.avatars.storageKey, "avatars:v2")
+        XCTAssertEqual(
+            ProviderEnumerationScope.avatarPage(second).storageKey,
+            "avatars:v2:2"
+        )
+
+        let invalidDirectories = [
+            "avatar-page:v0:2",
+            "avatar-page:v1:1",
+            "avatar-page:v1:02",
+            "avatar-page:v1:-2",
+            "avatar-page:v1:\(AvatarPageReference.maximumPage + 1)",
+            "avatar-page:v1:999999999999999999999999999999999999",
+            "avatar-page:v1:2:extra"
+        ]
+        for rawValue in invalidDirectories {
+            XCTAssertNil(
+                ProviderIdentifiers.avatarPageReference(
+                    from: NSFileProviderItemIdentifier(rawValue)
+                ),
+                rawValue
+            )
+        }
+
+        let invalidItems = [
+            "avatar-page-item:v0:2:record",
+            "avatar-page-item:v1:1:record",
+            "avatar-page-item:v1:02:record",
+            "avatar-page-item:v1:2:",
+            "avatar-page-item:v1:999999999999999999999999:record"
+        ]
+        for rawValue in invalidItems {
+            XCTAssertNil(
+                ProviderIdentifiers.recordReference(
+                    from: NSFileProviderItemIdentifier(rawValue)
+                ),
+                rawValue
+            )
+        }
+    }
+
+    /// 头像首页和递归页都固定 50 张，并在末尾发布唯一“加载更多”目录。
+    func testAvatarTreePublishesRecursiveLoadMoreDirectories() throws {
+        let first = ProviderAvatarBatch(
+            page: 1,
+            records: Self.records(prefix: "avatar-first", count: 50),
+            hasMore: true
+        )
+        let firstItems = try ProviderAvatarTreePlanner.items(for: first)
+        XCTAssertEqual(firstItems.count, 51)
+        XCTAssertTrue(firstItems.dropLast().allSatisfy {
+            $0.parentItemIdentifier == ProviderIdentifiers.avatars
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar:")
+        })
+        let secondDirectory = try XCTUnwrap(firstItems.last)
+        XCTAssertEqual(secondDirectory.filename, "加载更多")
+        XCTAssertEqual(secondDirectory.itemIdentifier.rawValue, "avatar-page:v1:2")
+        XCTAssertEqual(secondDirectory.parentItemIdentifier, ProviderIdentifiers.avatars)
+
+        let second = ProviderAvatarBatch(
+            page: 2,
+            records: Self.records(prefix: "avatar-second", count: 50),
+            hasMore: true
+        )
+        let secondItems = try ProviderAvatarTreePlanner.items(for: second)
+        XCTAssertEqual(secondItems.count, 51)
+        XCTAssertTrue(secondItems.dropLast().allSatisfy {
+            $0.parentItemIdentifier == secondDirectory.itemIdentifier
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v1:2:")
+        })
+        let thirdDirectory = try XCTUnwrap(secondItems.last)
+        XCTAssertEqual(thirdDirectory.filename, ProviderAvatarTreePlanner.continuationFolderName)
+        XCTAssertEqual(thirdDirectory.itemIdentifier.rawValue, "avatar-page:v1:3")
+        XCTAssertEqual(thirdDirectory.parentItemIdentifier, secondDirectory.itemIdentifier)
+
+        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 1), 0..<50)
+        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 2), 50..<100)
+        XCTAssertEqual(
+            try ProviderAvatarTreePlanner.recordRange(for: AvatarPageReference.maximumPage),
+            199_950..<200_000
+        )
+        XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: 0))
+        XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: Int.max))
+        XCTAssertThrowsError(
+            try ProviderAvatarTreePlanner.items(
+                for: ProviderAvatarBatch(
+                    page: 1,
+                    records: Self.records(prefix: "too-many", count: 51),
+                    hasMore: false
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? ProviderAvatarTreeError, .tooManyRecords(51))
+        }
+        XCTAssertThrowsError(
+            try ProviderAvatarTreePlanner.continuationItem(
+                after: ProviderAvatarBatch(
+                    page: AvatarPageReference.maximumPage,
+                    records: [],
+                    hasMore: true
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProviderAvatarTreeError,
+                .pageOverflow(AvatarPageReference.maximumPage)
             )
         }
     }

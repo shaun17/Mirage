@@ -3,8 +3,11 @@ import Foundation
 /// 可持久化的照片提供方标识；新增来源只需注册 descriptor 与适配器。
 public enum PhotoSourceID: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case openverse
+    case metMuseum = "met_museum"
+    case nasa
     case pexels
     case pixabay
+    case giphy
 
     public var id: Self { self }
 }
@@ -31,6 +34,12 @@ public enum PhotoSourceAvailability: String, Codable, Hashable, Sendable {
     case adapting
 }
 
+/// 聚合来源可以同页交错；隔离来源必须由独立内容入口单独展示。
+public enum PhotoSourceResultPresentation: String, Codable, Hashable, Sendable {
+    case aggregated
+    case isolated
+}
+
 /// 搜索结果页所需的平台归属由注册表声明，UI 无需认识具体供应商。
 public struct PhotoSourceAttribution: Hashable, Sendable {
     public let text: String
@@ -54,7 +63,11 @@ public struct PhotoSourceDescriptor: Identifiable, Hashable, Sendable {
     public let supportedSurfaces: Set<PhotoSourceSurface>
     public let allowsAutomatedRecommendations: Bool
     public let allowsPersistentLibraryStorage: Bool
+    public let allowsMediaCaching: Bool
+    public let resultPresentation: PhotoSourceResultPresentation
     public let credentialURL: URL?
+    /// Settings 中用于说明凭据获取方式；为空时沿用通用“获取 API Key”文案。
+    public let credentialAcquisitionLabel: String?
     public let termsURL: URL
     public let searchResultAttribution: PhotoSourceAttribution?
 
@@ -64,6 +77,13 @@ public struct PhotoSourceDescriptor: Identifiable, Hashable, Sendable {
 
     public func supports(_ surface: PhotoSourceSurface, purpose: PhotoSearchPurpose) -> Bool {
         supports(surface) && (purpose == .interactive || allowsAutomatedRecommendations)
+    }
+
+    public func supportsAggregatedSearch(
+        on surface: PhotoSourceSurface,
+        purpose: PhotoSearchPurpose
+    ) -> Bool {
+        resultPresentation == .aggregated && supports(surface, purpose: purpose)
     }
 }
 
@@ -78,9 +98,52 @@ public enum PhotoSourceRegistry {
             supportedSurfaces: [.app, .fileProvider],
             allowsAutomatedRecommendations: true,
             allowsPersistentLibraryStorage: true,
+            allowsMediaCaching: true,
+            resultPresentation: .aggregated,
             credentialURL: nil,
+            credentialAcquisitionLabel: nil,
             termsURL: URL(string: "https://docs.openverse.org/terms_of_use.html")!,
             searchResultAttribution: nil
+        ),
+        PhotoSourceDescriptor(
+            id: .metMuseum,
+            displayName: "The Met",
+            summary: "无需密钥的博物馆 CC0 公版艺术作品",
+            availability: .available,
+            credentialRequirement: .none,
+            supportedSurfaces: [.app],
+            allowsAutomatedRecommendations: false,
+            allowsPersistentLibraryStorage: true,
+            allowsMediaCaching: true,
+            resultPresentation: .aggregated,
+            credentialURL: nil,
+            credentialAcquisitionLabel: nil,
+            termsURL: URL(string: "https://www.metmuseum.org/policies/terms-and-conditions")!,
+            searchResultAttribution: PhotoSourceAttribution(
+                text: "Images provided by The Metropolitan Museum of Art",
+                url: URL(string: "https://www.metmuseum.org")!,
+                note: "仅展示开放获取（CC0）作品；暂不用于 Finder 或自动推荐"
+            )
+        ),
+        PhotoSourceDescriptor(
+            id: .nasa,
+            displayName: "NASA",
+            summary: "无需密钥的 NASA Image and Video Library 图片",
+            availability: .available,
+            credentialRequirement: .none,
+            supportedSurfaces: [.app],
+            allowsAutomatedRecommendations: false,
+            allowsPersistentLibraryStorage: true,
+            allowsMediaCaching: true,
+            resultPresentation: .aggregated,
+            credentialURL: nil,
+            credentialAcquisitionLabel: nil,
+            termsURL: URL(string: "https://www.nasa.gov/nasa-brand-center/images-and-media/")!,
+            searchResultAttribution: PhotoSourceAttribution(
+                text: "Images provided by NASA Image and Video Library",
+                url: URL(string: "https://images.nasa.gov")!,
+                note: "使用前请核对 NASA Media Usage Guidelines；可在 App 内收藏，暂不用于 Finder"
+            )
         ),
         PhotoSourceDescriptor(
             id: .pexels,
@@ -91,7 +154,10 @@ public enum PhotoSourceRegistry {
             supportedSurfaces: [.app, .fileProvider],
             allowsAutomatedRecommendations: true,
             allowsPersistentLibraryStorage: true,
+            allowsMediaCaching: true,
+            resultPresentation: .aggregated,
             credentialURL: URL(string: "https://www.pexels.com/api/new/")!,
+            credentialAcquisitionLabel: "免费使用 · 注册即可获取 API Key",
             termsURL: URL(string: "https://www.pexels.com/terms-of-service/")!,
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Photos provided by Pexels",
@@ -106,13 +172,36 @@ public enum PhotoSourceRegistry {
             credentialRequirement: .apiKey,
             supportedSurfaces: [.app],
             allowsAutomatedRecommendations: false,
-            allowsPersistentLibraryStorage: false,
+            allowsPersistentLibraryStorage: true,
+            allowsMediaCaching: true,
+            resultPresentation: .aggregated,
             credentialURL: URL(string: "https://pixabay.com/api/docs/")!,
+            credentialAcquisitionLabel: "免费使用 · 注册即可获取 API Key",
             termsURL: URL(string: "https://pixabay.com/service/terms/")!,
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Images provided by Pixabay",
                 url: URL(string: "https://pixabay.com")!,
-                note: "仅支持 App 搜索预览，暂不可收藏或用于 Finder"
+                note: "可在 App 内收藏，暂不用于 Finder 或自动推荐"
+            )
+        ),
+        PhotoSourceDescriptor(
+            id: .giphy,
+            displayName: "GIPHY",
+            summary: "使用你自己的 GIPHY API Key 浏览 Emoji、GIF 与 Sticker",
+            availability: .available,
+            credentialRequirement: .apiKey,
+            supportedSurfaces: [.app],
+            allowsAutomatedRecommendations: false,
+            allowsPersistentLibraryStorage: false,
+            allowsMediaCaching: false,
+            resultPresentation: .isolated,
+            credentialURL: URL(string: "https://developers.giphy.com/dashboard/")!,
+            credentialAcquisitionLabel: "注册并创建 GIPHY API Key",
+            termsURL: URL(string: "https://support.giphy.com/hc/en-us/articles/360028134111-GIPHY-API-Terms-of-Service")!,
+            searchResultAttribution: PhotoSourceAttribution(
+                text: "Powered by GIPHY",
+                url: URL(string: "https://giphy.com")!,
+                note: "仅在 App 内混合浏览；不进入 Finder、推荐或收藏"
             )
         )
     ]
@@ -127,19 +216,31 @@ public extension ImageSource {
     var photoSourceID: PhotoSourceID? {
         switch self {
         case .openverse: return .openverse
+        case .metMuseum: return .metMuseum
+        case .nasa: return .nasa
         case .pexels: return .pexels
         case .pixabay: return .pixabay
+        case .giphy: return .giphy
         case .diceBear: return nil
         }
     }
 
-    /// Pixabay 只允许临时显示搜索结果；未建立本地媒体缓存前不能把远程 URL 长期收藏。
+    /// 注册表统一声明能否长期写入资料库；临时预览来源不能把远程 URL 持久化收藏。
     var allowsPersistentLibraryStorage: Bool {
         guard let sourceID = photoSourceID,
               let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else {
             return true
         }
         return descriptor.allowsPersistentLibraryStorage
+    }
+
+    /// 标准 GIPHY 集成不得缓存媒体 URL 或媒体副本；UI 据此改走瞬时直连加载。
+    var allowsMediaCaching: Bool {
+        guard let sourceID = photoSourceID,
+              let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else {
+            return true
+        }
+        return descriptor.allowsMediaCaching
     }
 }
 
@@ -156,15 +257,19 @@ public struct PhotoSourcePage: Sendable {
     public let records: [RemoteImageRecord]
     public let nextCursor: PhotoSourceCursor?
     public let quota: PhotoSourceQuotaSnapshot?
+    /// 隔离来源也可以在返回可用记录时报告其内部子流故障。
+    public let issues: [PhotoSourceIssue]
 
     public init(
         records: [RemoteImageRecord],
         nextCursor: PhotoSourceCursor?,
-        quota: PhotoSourceQuotaSnapshot? = nil
+        quota: PhotoSourceQuotaSnapshot? = nil,
+        issues: [PhotoSourceIssue] = []
     ) {
         self.records = records
         self.nextCursor = nextCursor
         self.quota = quota
+        self.issues = issues
     }
 }
 
@@ -245,10 +350,41 @@ public struct PhotoSearchPage: Sendable {
     }
 }
 
+/// 单个来源完成后的可见批次；完整分页游标仍只由最终 PhotoSearchPage 提交。
+public struct PhotoSearchBatch: Sendable {
+    public let sourceID: PhotoSourceID
+    public let records: [RemoteImageRecord]
+
+    public init(sourceID: PhotoSourceID, records: [RemoteImageRecord]) {
+        self.sourceID = sourceID
+        self.records = records
+    }
+}
+
+public typealias PhotoSearchBatchHandler = @Sendable (PhotoSearchBatch) async -> Void
+
 public protocol PhotoSearching: Sendable {
     func search(query: String, cursor: PhotoSearchCursor?, pageSize: Int) async throws -> PhotoSearchPage
+    func search(
+        query: String,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int,
+        onBatch: @escaping PhotoSearchBatchHandler
+    ) async throws -> PhotoSearchPage
     func search(query: String, page: Int, pageSize: Int) async throws -> PhotoSearchPage
     func configurationKey() async -> String
+}
+
+public extension PhotoSearching {
+    /// 非聚合实现保持原子返回；调用方仍可统一使用增量入口而不改变既有 conformer。
+    func search(
+        query: String,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int,
+        onBatch: @escaping PhotoSearchBatchHandler
+    ) async throws -> PhotoSearchPage {
+        try await search(query: query, cursor: cursor, pageSize: pageSize)
+    }
 }
 
 public enum PhotoSearchError: Error, Equatable, Sendable {

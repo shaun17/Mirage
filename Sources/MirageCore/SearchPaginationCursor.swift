@@ -175,11 +175,14 @@ public struct SearchPaginationCursor: Codable, Equatable, Sendable {
     ) -> Bool {
         guard let cursor else { return true }
         guard cursor.page == page,
-              (1...maximumPage).contains(cursor.page),
-              let photoCursor = cursor.photoCursor else {
-            return cursor.page == page && cursor.photoCursor == nil
+              (1...maximumPage).contains(cursor.page) else {
+            return false
         }
-        guard !photoCursor.states.isEmpty,
+        guard let photoCursor = cursor.photoCursor else {
+            return (cursor.giphyCursor?.rawValue.utf8.count ?? 0) <= 1_024
+        }
+        guard cursor.giphyCursor == nil,
+              !photoCursor.states.isEmpty,
               photoCursor.states.count <= PhotoSourceID.allCases.count,
               Set(photoCursor.states.map(\.sourceID)).count == photoCursor.states.count else {
             return false

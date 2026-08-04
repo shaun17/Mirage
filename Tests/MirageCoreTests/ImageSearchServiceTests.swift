@@ -33,6 +33,68 @@ final class ImageSearchServiceTests: XCTestCase {
         ])
     }
 
+    /// GIF 目录只调用隔离的 GIPHY 混合来源，并保留其不透明复合游标。
+    func testGiphyCatalogUsesOnlyGiphyAndAllowsFortyItems() async throws {
+        let giphy = GiphyEmojiSpy()
+        let service = ImageSearchService(
+            photos: BatchForwardingPhotoSearcher(),
+            giphy: giphy,
+            diceBear: DiceBearClient(styles: [.pixelArt]),
+            maximumPageSize: 40
+        )
+
+        let first = try await service.giphyCatalog(cursor: nil, pageSize: 40)
+        let second = try await service.giphyCatalog(cursor: first.nextCursor, pageSize: 40)
+
+        XCTAssertEqual(first.records.map(\.source), [.giphy])
+        XCTAssertEqual(first.nextCursor?.page, 2)
+        XCTAssertEqual(first.nextCursor?.giphyCursor, PhotoSourceCursor(rawValue: "40"))
+        XCTAssertNil(first.nextCursor?.photoCursor)
+        XCTAssertEqual(second.records.map(\.source), [.giphy])
+        XCTAssertNil(second.nextCursor)
+        let calls = await giphy.recordedCalls()
+        XCTAssertEqual(calls, [
+            GiphyEmojiCall(query: "", cursor: nil, pageSize: 40),
+            GiphyEmojiCall(query: "", cursor: "40", pageSize: 40)
+        ])
+    }
+
+    /// 未装配 GIPHY 的 Finder/推荐服务必须明确拒绝 GIF 目录。
+    func testGiphyCatalogIsUnavailableWithoutAppOnlyGiphySource() async throws {
+        let service = ImageSearchService(openverse: OpenverseSpy())
+        do {
+            _ = try await service.giphyCatalog(cursor: nil)
+            XCTFail("未装配 GIPHY 时不应返回 GIF 内容")
+        } catch let PhotoSearchError.allSourcesFailed(issues) {
+            XCTAssertEqual(issues.map(\.sourceID), [.giphy])
+            XCTAssertEqual(issues.map(\.kind), [.unavailable])
+        }
+    }
+
+    func testGiphyCatalogRejectsFirstPageCursorAndMissingContinuationCursor() async {
+        let service = ImageSearchService(
+            photos: BatchForwardingPhotoSearcher(),
+            giphy: GiphyEmojiSpy()
+        )
+        let inconsistentCursors = [
+            ImageSearchCursor(
+                page: 1,
+                photoCursor: nil,
+                emojiCursor: PhotoSourceCursor(rawValue: "25")
+            ),
+            ImageSearchCursor(page: 2, photoCursor: nil, emojiCursor: nil)
+        ]
+
+        for cursor in inconsistentCursors {
+            do {
+                _ = try await service.giphyCatalog(cursor: cursor)
+                XCTFail("矛盾的 GIPHY 游标应被拒绝")
+            } catch {
+                XCTAssertEqual(error as? PhotoSearchError, .invalidCursor)
+            }
+        }
+    }
+
     /// 自动模式的小页应优先保留照片，不能让固定头像配额挤掉唯一结果位。
     func testAutomaticSearchWithOneItemPageKeepsPhotoPriority() async throws {
         let openverse = OpenverseSpy()
@@ -51,6 +113,26 @@ final class ImageSearchServiceTests: XCTestCase {
             OpenverseCall(page: 1, pageSize: 1),
             OpenverseCall(page: 2, pageSize: 1)
         ])
+    }
+
+    /// “全部”范围也应即时转发照片批次，头像只在完整照片页收敛后用于最终补位。
+    func testAutomaticSearchForwardsPhotoBatchBeforeFinalAvatarFill() async throws {
+        let probe = ImagePartialResultsProbe()
+        let service = ImageSearchService(
+            photos: BatchForwardingPhotoSearcher(),
+            diceBear: DiceBearClient(styles: [.pixelArt]),
+            automaticAvatarCount: 0,
+            maximumPageSize: 2
+        )
+
+        let page = try await service.search("nebula", cursor: nil, pageSize: 2) { records in
+            await probe.record(records)
+        }
+
+        let partials = await probe.snapshot()
+        XCTAssertEqual(partials.map { $0.map(\.id) }, [["nasa-partial"]])
+        XCTAssertEqual(page.records.first?.id, "nasa-partial")
+        XCTAssertEqual(page.records.map(\.source), [.nasa, .diceBear])
     }
 
     /// 全局 Finder 上限提高到 40 后，默认 App 服务仍必须把一次滚动限制为 20。
@@ -185,6 +267,49 @@ final class ImageSearchServiceTests: XCTestCase {
                 searchCursor: overflowingSourceQuota
             )
         )
+
+        let validGiphyCursor = ImageSearchCursor(
+            page: 2,
+            photoCursor: nil,
+            emojiCursor: PhotoSourceCursor(rawValue: "gm1:fixture")
+        )
+        XCTAssertNoThrow(
+            try SearchPaginationCursor(
+                page: 2,
+                pageSize: 40,
+                delivered: 40,
+                query: "",
+                searchCursor: validGiphyCursor
+            )
+        )
+        let oversizedGiphyCursor = ImageSearchCursor(
+            page: 2,
+            photoCursor: nil,
+            emojiCursor: PhotoSourceCursor(rawValue: String(repeating: "x", count: 1_025))
+        )
+        XCTAssertThrowsError(
+            try SearchPaginationCursor(
+                page: 2,
+                pageSize: 40,
+                delivered: 40,
+                query: "",
+                searchCursor: oversizedGiphyCursor
+            )
+        )
+        let mixedCursor = ImageSearchCursor(
+            page: 2,
+            photoCursor: searchCursor.photoCursor,
+            emojiCursor: PhotoSourceCursor(rawValue: "gm1:fixture")
+        )
+        XCTAssertThrowsError(
+            try SearchPaginationCursor(
+                page: 2,
+                pageSize: 40,
+                delivered: 40,
+                query: "",
+                searchCursor: mixedCursor
+            )
+        )
     }
 
     /// 极端页码必须在任何乘法前失败，不能让头像偏移计算造成运行时崩溃。
@@ -225,6 +350,87 @@ private struct NonForwardOpenverse: OpenverseSearching {
     /// 模拟服务端错误地把当前页再次声明成下一页。
     func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
         ImageSearchPage(records: [], nextPage: page)
+    }
+}
+
+private struct BatchForwardingPhotoSearcher: PhotoSearching {
+    func search(query: String, cursor: PhotoSearchCursor?, pageSize: Int) async throws -> PhotoSearchPage {
+        PhotoSearchPage(records: [Self.record], nextCursor: nil)
+    }
+
+    func search(
+        query: String,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int,
+        onBatch: @escaping PhotoSearchBatchHandler
+    ) async throws -> PhotoSearchPage {
+        await onBatch(PhotoSearchBatch(sourceID: .nasa, records: [Self.record]))
+        return PhotoSearchPage(records: [Self.record], nextCursor: nil)
+    }
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> PhotoSearchPage {
+        try await search(query: query, cursor: nil, pageSize: pageSize)
+    }
+
+    func configurationKey() async -> String { "batch-forwarding" }
+
+    private static let record = RemoteImageRecord(
+        id: "nasa-partial",
+        title: "NASA Partial",
+        source: .nasa,
+        imageURL: URL(string: "https://example.com/nasa-partial.jpg")!,
+        thumbnailURL: URL(string: "https://example.com/nasa-partial-thumb.jpg")!,
+        license: .nasaMediaUsage
+    )
+}
+
+private actor ImagePartialResultsProbe {
+    private var batches: [[RemoteImageRecord]] = []
+
+    func record(_ records: [RemoteImageRecord]) {
+        batches.append(records)
+    }
+
+    func snapshot() -> [[RemoteImageRecord]] {
+        batches
+    }
+}
+
+private struct GiphyEmojiCall: Equatable, Sendable {
+    let query: String
+    let cursor: String?
+    let pageSize: Int
+}
+
+private actor GiphyEmojiSpy: PhotoSourceSearching {
+    nonisolated let sourceID = PhotoSourceID.giphy
+    private var calls: [GiphyEmojiCall] = []
+
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int
+    ) async throws -> PhotoSourcePage {
+        calls.append(GiphyEmojiCall(query: query, cursor: cursor?.rawValue, pageSize: pageSize))
+        let offset = cursor.flatMap { Int($0.rawValue) } ?? 0
+        let url = URL(string: "https://media.giphy.com/media/emoji-(offset)/giphy.gif")!
+        return PhotoSourcePage(
+            records: [RemoteImageRecord(
+                id: "giphy-fixture-(offset)",
+                title: "GIPHY Emoji",
+                source: .giphy,
+                imageURL: url,
+                thumbnailURL: url,
+                sourcePageURL: URL(string: "https://giphy.com/gifs/emoji-(offset)"),
+                license: .giphy,
+                mimeType: "image/gif"
+            )],
+            nextCursor: offset == 0 ? PhotoSourceCursor(rawValue: "40") : nil
+        )
+    }
+
+    func recordedCalls() -> [GiphyEmojiCall] {
+        calls
     }
 }
 

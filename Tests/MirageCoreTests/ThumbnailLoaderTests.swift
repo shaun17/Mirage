@@ -81,6 +81,120 @@ final class ThumbnailLoaderTests: XCTestCase {
         XCTAssertGreaterThan(image.width, 0)
     }
 
+    /// 所有 GIPHY CDN host 共用同一个许可池，瞬时加载总并发不能超过全局上限。
+    func testTransientGiphyGateLimitsGlobalConcurrency() async {
+        let gate = TransientGiphyLoadGate(maximumConcurrentLoads: 2)
+        let tracker = TransientConcurrencyTracker()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<6 {
+                group.addTask {
+                    try? await gate.withPermit {
+                        await tracker.started()
+                        try await Task.sleep(for: .milliseconds(30))
+                        await tracker.finished()
+                    }
+                }
+            }
+        }
+
+        let snapshot = await tracker.snapshot()
+        XCTAssertEqual(snapshot.completed, 6)
+        XCTAssertLessThanOrEqual(snapshot.maximumActive, 2)
+    }
+
+    /// 已取消的视图任务必须在下载前终止，不能留下脱离生命周期的瞬时解码工作。
+    func testCancelledTransientGiphyLoadThrowsCancellation() async {
+        TransientGiphyURLProtocol.handler = { request in
+            (
+                Self.response(for: request.url!, mimeType: "image/png"),
+                Self.pngData()
+            )
+        }
+        let request = URLRequest(url: Self.giphyURL)
+        let session = Self.transientSession()
+        let task = Task<Void, any Error> {
+            withUnsafeCurrentTask { $0?.cancel() }
+            _ = try await TransientGiphyMediaLoader.image(for: request, using: session)
+        }
+
+        do {
+            _ = try await task.value
+            XCTFail("已取消任务不应继续下载或解码")
+        } catch is CancellationError {
+            // 预期路径。
+        } catch {
+            XCTFail("应保留结构化取消语义，实际为：\(error)")
+        }
+    }
+
+    /// 即使压缩字节很小，超过像素边界的媒体也必须在交给 NSImage 前被拒绝。
+    func testTransientGiphyLoadRejectsOversizedDecodeDimensions() async {
+        TransientGiphyURLProtocol.handler = { request in
+            (
+                Self.response(for: request.url!, mimeType: "image/png"),
+                Self.pngData(width: 2_049, height: 1)
+            )
+        }
+
+        do {
+            _ = try await TransientGiphyMediaLoader.image(
+                for: URLRequest(url: Self.giphyURL),
+                using: Self.transientSession()
+            )
+            XCTFail("超过像素预算的媒体不应解码")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .cannotDecodeContentData)
+        } catch {
+            XCTFail("错误类型不正确：\(error)")
+        }
+    }
+
+    /// 最终响应若跳出 GIPHY CDN，即使数据本身可解码也必须拒绝。
+    func testTransientGiphyLoadRejectsNonGiphyFinalURL() async {
+        TransientGiphyURLProtocol.handler = { _ in
+            (
+                Self.response(
+                    for: URL(string: "https://evil.example/redirected.gif")!,
+                    mimeType: "image/png"
+                ),
+                Self.pngData()
+            )
+        }
+
+        do {
+            _ = try await TransientGiphyMediaLoader.image(
+                for: URLRequest(url: Self.giphyURL),
+                using: Self.transientSession()
+            )
+            XCTFail("跳出 GIPHY CDN 的最终响应不应被接受")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .badServerResponse)
+        } catch {
+            XCTFail("错误类型不正确：\(error)")
+        }
+    }
+
+    private static let giphyURL = URL(
+        string: "https://media1.giphy.com/media/test/200w.gif"
+    )!
+
+    private static func transientSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TransientGiphyURLProtocol.self]
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
+    }
+
+    private static func response(for url: URL, mimeType: String) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": mimeType]
+        )!
+    }
+
     private static func url(_ index: Int) -> URL {
         URL(string: "https://example.com/thumb-\(index).png")!
     }
@@ -143,4 +257,45 @@ private actor CountingFetcher {
 
 private enum ThumbnailTestError: Error {
     case unavailable
+}
+
+private actor TransientConcurrencyTracker {
+    private var active = 0
+    private var maximumActive = 0
+    private var completed = 0
+
+    func started() {
+        active += 1
+        maximumActive = max(maximumActive, active)
+    }
+
+    func finished() {
+        active -= 1
+        completed += 1
+    }
+
+    func snapshot() -> (maximumActive: Int, completed: Int) {
+        (maximumActive, completed)
+    }
+}
+
+private final class TransientGiphyURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (URLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let (response, data) = try Self.handler?(request)
+                ?? { throw URLError(.badServerResponse) }()
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
