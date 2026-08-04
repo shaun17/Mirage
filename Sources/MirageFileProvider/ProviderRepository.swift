@@ -61,7 +61,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
     func invalidate() {}
 
-    /// “头像”首页保留原有 50 个 occurrence，并追加一个真实的“加载更多”目录。
+    /// “头像”首页固定发布 40 个 occurrence，并追加一个真实的“加载更多”目录。
     func avatarItems() async throws -> [ProviderItem] {
         try await avatarItems(page: 1)
     }
@@ -74,7 +74,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return try await avatarItems(page: reference.page)
     }
 
-    /// 回查分页目录只验证父 scope 中已经提交的入口，不生成该页的 50 个头像。
+    /// 回查分页目录只验证父 scope 中已经提交的入口，不生成该页的 40 个头像。
     func isAvatarPagePublished(_ reference: AvatarPageReference) async throws -> Bool {
         let storage = try requireStorage()
         let parentScope: ProviderEnumerationScope
@@ -89,7 +89,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
-    /// 每个可见目录生成固定 50 个确定性 DiceBear 头像，不读取混合推荐流或 Openverse。
+    /// 每个可见目录生成固定 40 个确定性 DiceBear 头像，不读取混合推荐流或 Openverse。
     private func avatarItems(page: Int) async throws -> [ProviderItem] {
         let storage = try requireStorage()
         // 一批头像可能跨越多个 20 条分段；日期必须只捕获一次，避免午夜混入两天 seed。
@@ -622,7 +622,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
     func commitScope(
         _ scope: ProviderEnumerationScope,
         items: [ProviderItem],
-        migratesLegacySearch: Bool
+        migratesLegacySearch: Bool,
+        expectedPublicationEpoch: UInt64
     ) async throws -> UInt64 {
         try Task.checkCancellation()
         let storage = try requireStorage()
@@ -645,7 +646,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
                     generationCeiling: ProviderGenerationCeiling(
                         authorityScopes: Self.rootAuthorityScopes,
                         maximumDiscoveryGeneration: generation
-                    )
+                    ),
+                    expectedPublicationEpoch: expectedPublicationEpoch
                 )
             case let .discoveryPage(reference):
                 let generation = try Self.singleDiscoveryGeneration(in: items)
@@ -655,10 +657,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
                         for: reference,
                         generation: generation
                     ),
-                    openedDiscoveryPage: reference.page
+                    openedDiscoveryPage: reference.page,
+                    expectedPublicationEpoch: expectedPublicationEpoch
                 )
             case .avatars, .avatarPage, .search, .recent, .favorites, .workingSet, .single:
-                return try await storage.commitProviderScopes([commit])
+                return try await storage.commitProviderScopes(
+                    [commit],
+                    expectedPublicationEpoch: expectedPublicationEpoch
+                )
             }
         } catch is ProviderPublicationError {
             throw ProviderError.expiredDiscoveryPage()
@@ -670,7 +676,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
         items: [ProviderItem],
         recursiveScopes: [ProviderDiscoveryScopeSnapshot],
         rootGeneration: UInt64,
-        migratesLegacySearch: Bool
+        migratesLegacySearch: Bool,
+        expectedPublicationEpoch: UInt64
     ) async throws -> UInt64 {
         try Task.checkCancellation()
         let storage = try requireStorage()
@@ -697,7 +704,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 generationCeiling: ProviderGenerationCeiling(
                     authorityScopes: Self.rootAuthorityScopes,
                     maximumDiscoveryGeneration: rootGeneration
-                )
+                ),
+                expectedPublicationEpoch: expectedPublicationEpoch
             )
         } catch is ProviderPublicationError {
             throw ProviderError.expiredDiscoveryPage()
@@ -775,6 +783,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
         let anchor = try await requireStorage().currentProviderAnchor()
         try Task.checkCancellation()
         return anchor
+    }
+
+    /// 构造发布快照前捕获文件域纪元，提交时由存储事务做原子复核。
+    func currentPublicationEpoch() async throws -> UInt64 {
+        try Task.checkCancellation()
+        let epoch = try await requireStorage().currentProviderPublicationEpoch()
+        try Task.checkCancellation()
+        return epoch
     }
 
     /// 查询 key 只用于恢复顺序，不保留无意义的空白与大小写差异。

@@ -56,7 +56,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
     func testAvatarPageIdentifiersRoundTripAndUseIsolatedScopes() throws {
         let second = try XCTUnwrap(AvatarPageReference(page: 2))
         let third = try XCTUnwrap(AvatarPageReference(page: 3))
-        XCTAssertEqual(second.itemIdentifier.rawValue, "avatar-page:v1:2")
+        XCTAssertEqual(second.itemIdentifier.rawValue, "avatar-page:v2:2")
         XCTAssertEqual(second.parentItemIdentifier, ProviderIdentifiers.avatars)
         XCTAssertEqual(third.parentItemIdentifier, second.itemIdentifier)
         XCTAssertEqual(ProviderIdentifiers.avatarPageReference(from: second.itemIdentifier), second)
@@ -64,7 +64,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         let original = RecordReference(recordID: "db:v10:style:hash", avatarPage: second)
         XCTAssertEqual(
             original.itemIdentifier.rawValue,
-            "avatar-page-item:v1:2:db:v10:style:hash"
+            "avatar-page-item:v2:2:db:v10:style:hash"
         )
         let decoded = try XCTUnwrap(
             ProviderIdentifiers.recordReference(from: original.itemIdentifier)
@@ -74,20 +74,21 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         XCTAssertEqual(decoded.avatarPage, second)
         XCTAssertNil(decoded.discoveryPage)
         XCTAssertEqual(decoded.parentItemIdentifier, second.itemIdentifier)
-        XCTAssertEqual(ProviderEnumerationScope.avatars.storageKey, "avatars:v2")
+        XCTAssertEqual(ProviderEnumerationScope.avatars.storageKey, "avatars:v3")
         XCTAssertEqual(
             ProviderEnumerationScope.avatarPage(second).storageKey,
-            "avatars:v2:2"
+            "avatars:v3:2"
         )
 
         let invalidDirectories = [
             "avatar-page:v0:2",
-            "avatar-page:v1:1",
-            "avatar-page:v1:02",
-            "avatar-page:v1:-2",
-            "avatar-page:v1:\(AvatarPageReference.maximumPage + 1)",
-            "avatar-page:v1:999999999999999999999999999999999999",
-            "avatar-page:v1:2:extra"
+            "avatar-page:v1:2",
+            "avatar-page:v2:1",
+            "avatar-page:v2:02",
+            "avatar-page:v2:-2",
+            "avatar-page:v2:\(AvatarPageReference.maximumPage + 1)",
+            "avatar-page:v2:999999999999999999999999999999999999",
+            "avatar-page:v2:2:extra"
         ]
         for rawValue in invalidDirectories {
             XCTAssertNil(
@@ -100,10 +101,11 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
 
         let invalidItems = [
             "avatar-page-item:v0:2:record",
-            "avatar-page-item:v1:1:record",
-            "avatar-page-item:v1:02:record",
-            "avatar-page-item:v1:2:",
-            "avatar-page-item:v1:999999999999999999999999:record"
+            "avatar-page-item:v1:2:record",
+            "avatar-page-item:v2:1:record",
+            "avatar-page-item:v2:02:record",
+            "avatar-page-item:v2:2:",
+            "avatar-page-item:v2:999999999999999999999999:record"
         ]
         for rawValue in invalidItems {
             XCTAssertNil(
@@ -115,45 +117,45 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         }
     }
 
-    /// 头像首页和递归页都固定 50 张，并在末尾发布唯一“加载更多”目录。
+    /// 头像首页和递归页都固定 40 张，并在末尾发布唯一“加载更多”目录。
     func testAvatarTreePublishesRecursiveLoadMoreDirectories() throws {
         let first = ProviderAvatarBatch(
             page: 1,
-            records: Self.records(prefix: "avatar-first", count: 50),
+            records: Self.records(prefix: "avatar-first", count: 40),
             hasMore: true
         )
         let firstItems = try ProviderAvatarTreePlanner.items(for: first)
-        XCTAssertEqual(firstItems.count, 51)
+        XCTAssertEqual(firstItems.count, 41)
         XCTAssertTrue(firstItems.dropLast().allSatisfy {
             $0.parentItemIdentifier == ProviderIdentifiers.avatars
                 && $0.itemIdentifier.rawValue.hasPrefix("avatar:")
         })
         let secondDirectory = try XCTUnwrap(firstItems.last)
         XCTAssertEqual(secondDirectory.filename, "加载更多")
-        XCTAssertEqual(secondDirectory.itemIdentifier.rawValue, "avatar-page:v1:2")
+        XCTAssertEqual(secondDirectory.itemIdentifier.rawValue, "avatar-page:v2:2")
         XCTAssertEqual(secondDirectory.parentItemIdentifier, ProviderIdentifiers.avatars)
 
         let second = ProviderAvatarBatch(
             page: 2,
-            records: Self.records(prefix: "avatar-second", count: 50),
+            records: Self.records(prefix: "avatar-second", count: 40),
             hasMore: true
         )
         let secondItems = try ProviderAvatarTreePlanner.items(for: second)
-        XCTAssertEqual(secondItems.count, 51)
+        XCTAssertEqual(secondItems.count, 41)
         XCTAssertTrue(secondItems.dropLast().allSatisfy {
             $0.parentItemIdentifier == secondDirectory.itemIdentifier
-                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v1:2:")
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v2:2:")
         })
         let thirdDirectory = try XCTUnwrap(secondItems.last)
         XCTAssertEqual(thirdDirectory.filename, ProviderAvatarTreePlanner.continuationFolderName)
-        XCTAssertEqual(thirdDirectory.itemIdentifier.rawValue, "avatar-page:v1:3")
+        XCTAssertEqual(thirdDirectory.itemIdentifier.rawValue, "avatar-page:v2:3")
         XCTAssertEqual(thirdDirectory.parentItemIdentifier, secondDirectory.itemIdentifier)
 
-        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 1), 0..<50)
-        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 2), 50..<100)
+        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 1), 0..<40)
+        XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 2), 40..<80)
         XCTAssertEqual(
             try ProviderAvatarTreePlanner.recordRange(for: AvatarPageReference.maximumPage),
-            199_950..<200_000
+            199_960..<200_000
         )
         XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: 0))
         XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: Int.max))
@@ -161,12 +163,12 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
             try ProviderAvatarTreePlanner.items(
                 for: ProviderAvatarBatch(
                     page: 1,
-                    records: Self.records(prefix: "too-many", count: 51),
+                    records: Self.records(prefix: "too-many", count: 41),
                     hasMore: false
                 )
             )
         ) { error in
-            XCTAssertEqual(error as? ProviderAvatarTreeError, .tooManyRecords(51))
+            XCTAssertEqual(error as? ProviderAvatarTreeError, .tooManyRecords(41))
         }
         XCTAssertThrowsError(
             try ProviderAvatarTreePlanner.continuationItem(

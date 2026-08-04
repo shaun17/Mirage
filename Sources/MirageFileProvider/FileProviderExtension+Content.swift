@@ -167,6 +167,7 @@ extension FileProviderExtension {
         identifier == .rootContainer || identifier == ProviderIdentifiers.avatars
             || identifier == ProviderIdentifiers.recent
             || identifier == ProviderIdentifiers.favorites || identifier == ProviderIdentifiers.searchBacking
+            || ProviderIdentifiers.avatarPageReference(from: identifier) != nil
             || ProviderIdentifiers.discoveryPageReference(from: identifier) != nil
     }
 

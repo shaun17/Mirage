@@ -447,6 +447,107 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(changes.updatedIdentifiers, ["discover:b", "discover:c"])
     }
 
+    /// 重建系统文件域时只清空 provider 发布索引，用户内容缓存与推荐快照必须保留。
+    func testResetProviderPublicationStateExpiresOldDomainWithoutClearingContent() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let oldPublicationEpoch = try await storage.currentProviderPublicationEpoch()
+        let recentRecord = Self.record(1, title: "保留的最近图片")
+        try await storage.writeRecent(recentRecord)
+        let discoverySnapshot = try await storage.commitDiscoveryFeed(
+            records: [Self.record(2, title: "保留的推荐图片")],
+            refreshedAt: Date(timeIntervalSince1970: 1_000),
+            source: .network,
+            catalogKey: DiscoveryRecommendation.catalogKey,
+            queryKey: DiscoveryRecommendation.query
+        )
+        let pageDirectory = ProviderStoredItemState(
+            identifier: "discover-page:v3:2",
+            fingerprint: "generation:\(discoverySnapshot.generation)",
+            discoveryGeneration: discoverySnapshot.generation
+        )
+        let pageImage = ProviderStoredItemState(
+            identifier: "discover-page-item:v3:2:test",
+            fingerprint: "v1",
+            discoveryGeneration: discoverySnapshot.generation
+        )
+        let oldAnchor = try await storage.commitProviderScopes(
+            [
+                ProviderStoredScopeCommit(scope: "root", items: [pageDirectory]),
+                ProviderStoredScopeCommit(scope: "discovery:v3:2", items: [pageImage])
+            ],
+            openedDiscoveryPage: 2
+        )
+
+        let resetAnchor = try await storage.resetProviderPublicationState()
+        let resetPublicationEpoch = try await storage.currentProviderPublicationEpoch()
+        let rootScopeAfterReset = try await storage.providerScopeSnapshot("root")
+        let pageScopeAfterReset = try await storage.providerScopeSnapshot("discovery:v3:2")
+        let openedPageAfterReset = try await storage.maximumOpenedProviderDiscoveryPage()
+        XCTAssertGreaterThan(resetAnchor, oldAnchor)
+        XCTAssertGreaterThan(resetPublicationEpoch, oldPublicationEpoch)
+        XCTAssertNil(rootScopeAfterReset)
+        XCTAssertNil(pageScopeAfterReset)
+        XCTAssertNil(openedPageAfterReset)
+        do {
+            _ = try await storage.providerChanges(in: "root", after: oldAnchor)
+            XCTFail("旧文件域的 provider anchor 必须明确过期")
+        } catch let error as ProviderChangeStorageError {
+            XCTAssertEqual(error, .anchorExpired)
+        }
+
+        let retainedRecent = try await storage.readRecent(limit: 10)
+        let retainedDiscoverySnapshot = try await storage.readDiscoveryFeedSnapshot()
+        let repeatedResetAnchor = try await storage.resetProviderPublicationState()
+        let repeatedResetEpoch = try await storage.currentProviderPublicationEpoch()
+        XCTAssertEqual(retainedRecent.map(\.id), [recentRecord.id])
+        XCTAssertEqual(retainedDiscoverySnapshot, discoverySnapshot)
+        XCTAssertGreaterThan(repeatedResetAnchor, resetAnchor)
+        XCTAssertGreaterThan(repeatedResetEpoch, resetPublicationEpoch)
+    }
+
+    /// 即使 scope 仍为空，域重建前捕获的纪元也不能回填 root 或 working-set。
+    func testProviderPublicationEpochRejectsLateRootAndWorkingSetCommitsAfterReset() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        _ = try await storage.resetProviderPublicationState()
+        let staleEpoch = try await storage.currentProviderPublicationEpoch()
+        _ = try await storage.resetProviderPublicationState()
+        let currentEpoch = try await storage.currentProviderPublicationEpoch()
+        XCTAssertGreaterThan(currentEpoch, staleEpoch)
+
+        let lateCommits = [
+            ProviderStoredScopeCommit(
+                scope: "root",
+                items: [ProviderStoredItemState(identifier: "late-root", fingerprint: "v1")]
+            ),
+            ProviderStoredScopeCommit(
+                scope: "working-set",
+                items: [ProviderStoredItemState(identifier: "late-working", fingerprint: "v1")]
+            )
+        ]
+        do {
+            _ = try await storage.commitProviderScopes(
+                lateCommits,
+                expectedPublicationEpoch: staleEpoch
+            )
+            XCTFail("域重建前开始的发布任务不应回填已清空 scope")
+        } catch let error as ProviderPublicationError {
+            XCTAssertEqual(error, .stalePublicationEpoch)
+        }
+        let rejectedRoot = try await storage.providerScopeSnapshot("root")
+        let rejectedWorkingSet = try await storage.providerScopeSnapshot("working-set")
+        XCTAssertNil(rejectedRoot)
+        XCTAssertNil(rejectedWorkingSet)
+
+        _ = try await storage.commitProviderScopes(
+            lateCommits,
+            expectedPublicationEpoch: currentEpoch
+        )
+        let committedRoot = try await storage.providerScopeSnapshot("root")
+        let committedWorkingSet = try await storage.providerScopeSnapshot("working-set")
+        XCTAssertEqual(committedRoot?.map(\.identifier), ["late-root"])
+        XCTAssertEqual(committedWorkingSet?.map(\.identifier), ["late-working"])
+    }
+
     /// scope 成员查询只能命中已提交快照中的稳定 ID。
     func testProviderScopeContainsOnlyCommittedMembers() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
@@ -754,7 +855,7 @@ final class AppGroupStorageTests: XCTestCase {
             try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))
                 as? [String: Any]
         )
-        XCTAssertEqual(recoveredObject["schemaVersion"] as? Int, 3)
+        XCTAssertEqual(recoveredObject["schemaVersion"] as? Int, 4)
         let containsLegacyDirectory = try await storage.providerScope(
             "root",
             contains: "discover-page:v2:2"
@@ -772,19 +873,45 @@ final class AppGroupStorageTests: XCTestCase {
         }
     }
 
-    /// 已写出的 schema v3 文件可能尚无 opened-depth 字段；新增可选状态必须原位兼容而非误判损坏。
-    func testProviderSchema3WithoutOpenedDepthRemainsReadable() async throws {
+    /// 旧扩展写回的 schema v3 即使结构完整也必须开启新纪元并清空，不能绕过域重建屏障。
+    func testProviderSchema3WriterOutputAlwaysRecoversIntoNewPublicationEpoch() async throws {
         let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
         let schema3Data = Data(
-            "{\"schemaVersion\":3,\"generation\":77,\"minimumValidAnchor\":0,\"scopes\":{}}".utf8
+            "{\"schemaVersion\":3,\"generation\":77,\"minimumValidAnchor\":0,\"maximumOpenedDiscoveryPage\":null,\"scopes\":{\"root\":{\"items\":[{\"identifier\":\"legacy-root\",\"fingerprint\":\"v1\"}],\"history\":[],\"minimumValidAnchor\":0,\"hasCommittedSnapshot\":true}}}".utf8
         )
         try schema3Data.write(to: stateURL, options: .atomic)
 
         let storage = try AppGroupStorage(baseURL: temporaryURL)
         let anchor = try await storage.currentProviderAnchor()
+        let epoch = try await storage.currentProviderPublicationEpoch()
         let openedPage = try await storage.maximumOpenedProviderDiscoveryPage()
-        XCTAssertEqual(anchor, 77)
+        let recoveredScope = try await storage.providerScopeSnapshot("root")
+        let recoveredObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))
+                as? [String: Any]
+        )
+        XCTAssertGreaterThan(anchor, 77)
+        XCTAssertEqual(epoch, anchor)
         XCTAssertNil(openedPage)
+        XCTAssertNil(recoveredScope)
+        XCTAssertEqual(recoveredObject["schemaVersion"] as? Int, 4)
+        XCTAssertEqual((recoveredObject["publicationEpoch"] as? NSNumber)?.uint64Value, epoch)
+
+        // 模拟仍存活的旧扩展在 v4 恢复后再次覆盖 schema3；下一次读取必须再次恢复新纪元。
+        let legacyRewriteGeneration = anchor + 1
+        let repeatedSchema3Data = Data(
+            "{\"schemaVersion\":3,\"generation\":\(legacyRewriteGeneration),\"minimumValidAnchor\":0,\"maximumOpenedDiscoveryPage\":null,\"scopes\":{\"working-set\":{\"items\":[{\"identifier\":\"legacy-working\",\"fingerprint\":\"v1\"}],\"history\":[],\"minimumValidAnchor\":0,\"hasCommittedSnapshot\":true}}}".utf8
+        )
+        try repeatedSchema3Data.write(to: stateURL, options: .atomic)
+
+        let restartedStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let repeatedAnchor = try await restartedStorage.currentProviderAnchor()
+        let repeatedEpoch = try await restartedStorage.currentProviderPublicationEpoch()
+        let repeatedScope = try await restartedStorage.providerScopeSnapshot("working-set")
+        XCTAssertGreaterThan(repeatedAnchor, legacyRewriteGeneration)
+        XCTAssertGreaterThan(repeatedEpoch, epoch)
+        XCTAssertEqual(repeatedEpoch, repeatedAnchor)
+        XCTAssertNil(repeatedScope)
     }
 
     /// 已发布递归 scope 却没有 opened-depth 时无法重建完整前缀，必须使旧锚点过期。

@@ -120,9 +120,9 @@ enum ProviderAvatarTreeError: Error, Equatable, Sendable {
     case pageOverflow(Int)
 }
 
-/// 把 DiceBear 的绝对 offset 投影为每层 50 张及一个真实“加载更多”目录。
+/// 把 DiceBear 的绝对 offset 投影为每层 40 张及一个真实“加载更多”目录。
 enum ProviderAvatarTreePlanner {
-    static let batchSize = 50
+    static let batchSize = 40
     static let continuationFolderName = "加载更多"
 
     /// 首页保留既有 avatar ID；续页使用带逻辑页的位置 ID，确保回查时父级不丢失。
@@ -163,7 +163,7 @@ enum ProviderAvatarTreePlanner {
             directory: reference.itemIdentifier,
             parent: reference.parentItemIdentifier,
             name: continuationFolderName,
-            metadataVersionToken: "avatar-pagination-v1"
+            metadataVersionToken: "avatar-pagination-v2"
         )
     }
 

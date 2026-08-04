@@ -45,6 +45,10 @@ struct MirageDomainManager: Sendable {
                     repaired = true
                 }
 
+                let resetAnchor = try await resetProviderPublicationState()
+                Self.logger.notice(
+                    "已为新文件域重置发布索引，新锚点：\(resetAnchor, privacy: .public)"
+                )
                 Self.logger.notice(
                     "安装 Mirage 文件域：\(domainIdentifier.rawValue, privacy: .public)"
                 )
@@ -68,7 +72,7 @@ struct MirageDomainManager: Sendable {
         throw CocoaError(.fileWriteFileExists)
     }
 
-    /// 旧域已经缓存了过时目录结构；只删除系统占位符，App Group 资料库保持不变。
+    /// 旧域已经缓存了过时目录结构；只删除系统占位符，App Group 内容资料库保持不变。
     private func removeOutdatedDomains(
         from domains: [NSFileProviderDomain],
         desiredIdentifier: NSFileProviderDomainIdentifier
@@ -159,7 +163,7 @@ struct MirageDomainManager: Sendable {
         }
         _ = try await manager.getUserVisibleURL(for: .rootContainer)
         // 只发系统支持的 working set signal；每个推荐目录都是固定批次，
-        // 后续 50 张仅在用户显式打开“更多图片”目录时发布。
+        // 后续 40 张仅在用户显式打开“更多图片”目录时发布。
         try await manager.signalEnumerator(for: .workingSet)
         return .ready
     }
@@ -239,6 +243,12 @@ struct MirageDomainManager: Sendable {
     /// 等待系统完成域安装，避免界面提前显示成功。
     private func add(_ domain: NSFileProviderDomain) async throws {
         try await NSFileProviderManager.add(domain)
+    }
+
+    /// 新系统域不能复用旧域的 scope、差异历史和已打开深度，否则会立即重建历史占位树。
+    private func resetProviderPublicationState() async throws -> UInt64 {
+        let storage = try AppGroupStorage()
+        return try await storage.resetProviderPublicationState()
     }
 
     /// 等待系统完成单个域卸载，并连同本地副本一起清除。

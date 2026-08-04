@@ -178,8 +178,9 @@ public struct ProviderGenerationCeiling: Equatable, Sendable {
     }
 }
 
-/// 发布快照在联网或跨 actor 等待期间已经失去祖先授权。
+/// 发布快照在联网或跨 actor 等待期间已经失去文件域纪元或祖先授权。
 public enum ProviderPublicationError: Error, Equatable, Sendable {
+    case stalePublicationEpoch
     case staleLineage
     case invalidOpenedDiscoveryPage
 }
@@ -278,8 +279,8 @@ public actor AppGroupStorage {
     private let lockDirectoryURL: URL
     private var snapshotRevision: UInt64 = 0
     private static let providerHistoryLimit = 64
-    // v3 将 Finder 推荐发布迁移为递归逻辑页，旧 scope 必须开启新锚点纪元。
-    private static let providerSchemaVersion = 3
+    // v4 引入发布纪元，域重建后拒绝仍在异步构造中的旧发布任务回填已清空 scope。
+    private static let providerSchemaVersion = 4
     private static let providerDiscoveryScopePrefix = "discovery:v3:"
     private static let favoritesSchemaVersion = 1
     private static let searchBackingSchemaVersion = 1
@@ -621,7 +622,8 @@ public actor AppGroupStorage {
     public func commitProviderScope(
         _ scope: String,
         items: [ProviderStoredItemState],
-        initialDeletedIdentifiers: [String] = []
+        initialDeletedIdentifiers: [String] = [],
+        expectedPublicationEpoch: UInt64? = nil
     ) throws -> UInt64 {
         try commitProviderScopes(
             [
@@ -630,7 +632,8 @@ public actor AppGroupStorage {
                     items: items,
                     initialDeletedIdentifiers: initialDeletedIdentifiers
                 )
-            ]
+            ],
+            expectedPublicationEpoch: expectedPublicationEpoch
         )
     }
 
@@ -642,10 +645,15 @@ public actor AppGroupStorage {
         _ commits: [ProviderStoredScopeCommit],
         requiring requirements: [ProviderPublicationRequirement] = [],
         generationCeiling: ProviderGenerationCeiling? = nil,
-        openedDiscoveryPage: Int? = nil
+        openedDiscoveryPage: Int? = nil,
+        expectedPublicationEpoch: UInt64? = nil
     ) throws -> UInt64 {
         try withExclusiveFileLock(named: "provider-publication") {
             var state = try readProviderStateUnlocked()
+            if let expectedPublicationEpoch,
+               expectedPublicationEpoch != state.publicationEpoch {
+                throw ProviderPublicationError.stalePublicationEpoch
+            }
             try validateProviderPublicationRequirements(requirements, in: state)
             try validateProviderGenerationCeiling(generationCeiling, in: state)
             if let openedDiscoveryPage {
@@ -708,6 +716,39 @@ public actor AppGroupStorage {
     public func currentProviderAnchor() throws -> UInt64 {
         try withExclusiveFileLock(named: "provider-publication") {
             try readProviderStateUnlocked().generation
+        }
+    }
+
+    /// 捕获当前文件域的发布纪元；异步构造完成后必须在提交事务中复核同一值。
+    public func currentProviderPublicationEpoch() throws -> UInt64 {
+        try withExclusiveFileLock(named: "provider-publication") {
+            try readProviderStateUnlocked().publicationEpoch
+        }
+    }
+
+    /// 系统文件域不存在或即将重建时丢弃仅对旧域有效的发布索引。
+    ///
+    /// 图片缓存、推荐快照、收藏和最近使用均存放在其他文件中，不受本操作影响。
+    /// 清空后的最小有效锚点等于新 generation，确保旧域持有的锚点不能跨域复用。
+    @discardableResult
+    public func resetProviderPublicationState() throws -> UInt64 {
+        try withExclusiveFileLock(named: "provider-publication") {
+            let state = try readProviderStateUnlocked()
+            guard state.generation < UInt64.max else {
+                throw ProviderChangeStorageError.anchorExhausted
+            }
+            let resetAnchor = state.generation + 1
+            try writeProviderStateUnlocked(
+                ProviderPersistentState(
+                    schemaVersion: Self.providerSchemaVersion,
+                    publicationEpoch: resetAnchor,
+                    generation: resetAnchor,
+                    minimumValidAnchor: resetAnchor,
+                    maximumOpenedDiscoveryPage: nil,
+                    scopes: [:]
+                )
+            )
+            return resetAnchor
         }
     }
 
@@ -1386,6 +1427,7 @@ public actor AppGroupStorage {
         guard fileManager.fileExists(atPath: providerStateURL.path) else {
             return ProviderPersistentState(
                 schemaVersion: Self.providerSchemaVersion,
+                publicationEpoch: 1,
                 generation: 1,
                 minimumValidAnchor: 0,
                 maximumOpenedDiscoveryPage: nil,
@@ -1411,6 +1453,10 @@ public actor AppGroupStorage {
     private func validateProviderState(_ state: ProviderPersistentState) throws {
         guard state.schemaVersion == Self.providerSchemaVersion else {
             throw StorageSnapshotValidationError.unsupportedSchema
+        }
+        guard state.publicationEpoch > 0,
+              state.publicationEpoch <= state.generation else {
+            throw StorageSnapshotValidationError.invalidProviderState
         }
         guard state.minimumValidAnchor <= state.generation else {
             throw StorageSnapshotValidationError.invalidProviderState
@@ -1446,7 +1492,7 @@ public actor AppGroupStorage {
             guard !generations.isEmpty,
                   generations.count == scope.items.count,
                   Set(generations).count == 1 else {
-                // 早期 schema v3 已写出的递归 scope 没有 lineage，无法安全推导所属 generation。
+                // 当前 schema 的递归 scope 若没有 lineage，无法安全推导所属 generation。
                 // 让既有恢复流程提升 anchor 并清空 scope，系统随后执行完整重枚举。
                 throw StorageSnapshotValidationError.invalidProviderState
             }
@@ -1471,6 +1517,7 @@ public actor AppGroupStorage {
         let recoveredAnchor = providerRecoveryAnchor(from: data)
         let recovered = ProviderPersistentState(
             schemaVersion: Self.providerSchemaVersion,
+            publicationEpoch: recoveredAnchor,
             generation: recoveredAnchor,
             minimumValidAnchor: recoveredAnchor,
             maximumOpenedDiscoveryPage: nil,
@@ -1622,6 +1669,8 @@ private struct DiscoveryGenerationState: Codable {
 /// 所有 scope 共享一个单调 generation，每个 scope 独立保留差异历史。
 private struct ProviderPersistentState: Codable {
     var schemaVersion: Int
+    /// 文件域发布边界；只在重建或恢复时推进，普通 scope 提交保持不变。
+    var publicationEpoch: UInt64
     var generation: UInt64
     var minimumValidAnchor: UInt64
     /// 历史上完成首次枚举的最深递归页；换代时仍需重建这些系统已知目录。

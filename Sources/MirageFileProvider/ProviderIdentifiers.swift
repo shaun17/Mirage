@@ -8,8 +8,8 @@ enum ProviderIdentifiers {
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
-    static let avatarPagePrefix = "avatar-page:v1:"
-    private static let avatarPageItemPrefix = "avatar-page-item:v1:"
+    static let avatarPagePrefix = "avatar-page:v2:"
+    private static let avatarPageItemPrefix = "avatar-page-item:v2:"
     static let discoveryPagePrefix = "discover-page:v3:"
     private static let discoveryPageItemPrefix = "discover-page-item:v3:"
 
@@ -35,7 +35,7 @@ enum ProviderIdentifiers {
         )
     }
 
-    /// 只接受 canonical v1 头像续页 ID；首页和越界页都不公开为子目录。
+    /// 只接受 canonical v2 头像续页 ID；首页和越界页都不公开为子目录。
     static func avatarPageReference(
         from identifier: NSFileProviderItemIdentifier
     ) -> AvatarPageReference? {
@@ -121,8 +121,8 @@ enum ProviderView: String, CaseIterable, Sendable {
 
 /// 递归头像目录的稳定逻辑位置；第 1 批直接位于“头像”，不公开分页目录 ID。
 struct AvatarPageReference: Hashable, Sendable {
-    /// 每层 50 张，最多公开 20 万个确定性头像，避免恶意构造无限深目录。
-    static let maximumPage = 4_000
+    /// 每层 40 张，最多公开 20 万个确定性头像，避免恶意构造无限深目录。
+    static let maximumPage = 5_000
 
     let page: Int
 

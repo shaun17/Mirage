@@ -105,6 +105,9 @@ struct ProviderCatalog: Sendable {
 
     /// 构造当前快照并提交 occurrence 版本，供全量枚举和变更枚举共用同一边界。
     func preparedItems(for scope: ProviderEnumerationScope) async throws -> [ProviderItem] {
+        // 必须先于任何异步构造或联网捕获；域重建后，迟到结果只能失败而不能回填旧树。
+        let publicationEpoch = try await repository.currentPublicationEpoch()
+        try Task.checkCancellation()
         if case .workingSet = scope {
             let snapshot = try await workingSetSnapshot()
             try Task.checkCancellation()
@@ -112,7 +115,8 @@ struct ProviderCatalog: Sendable {
                 items: snapshot.items,
                 recursiveScopes: snapshot.recursiveScopes,
                 rootGeneration: snapshot.rootGeneration,
-                migratesLegacySearch: scope.migratesLegacySearch
+                migratesLegacySearch: scope.migratesLegacySearch,
+                expectedPublicationEpoch: publicationEpoch
             )
             try Task.checkCancellation()
             return snapshot.items
@@ -123,7 +127,8 @@ struct ProviderCatalog: Sendable {
         _ = try await repository.commitScope(
             scope,
             items: current,
-            migratesLegacySearch: scope.migratesLegacySearch
+            migratesLegacySearch: scope.migratesLegacySearch,
+            expectedPublicationEpoch: publicationEpoch
         )
         try Task.checkCancellation()
         switch scope {
@@ -244,8 +249,8 @@ extension ProviderEnumerationScope {
         switch self {
         case .root: return "root"
         case let .discoveryPage(reference): return "discovery:v3:\(reference.page)"
-        case .avatars: return "avatars:v2"
-        case let .avatarPage(reference): return "avatars:v2:\(reference.page)"
+        case .avatars: return "avatars:v3"
+        case let .avatarPage(reference): return "avatars:v3:\(reference.page)"
         case .search: return "search"
         case .recent: return "recent"
         case .favorites: return "favorites"
