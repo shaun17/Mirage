@@ -19,6 +19,7 @@ final class SearchModel: ObservableObject {
     @Published private(set) var state: SearchState = .idle
     @Published private(set) var results: [RemoteImageRecord] = []
     @Published private(set) var paginationState: SearchPaginationState = .unavailable
+    @Published private(set) var sourceIssues: [PhotoSourceIssue] = []
     @Published private(set) var accessibilityEvent: SearchAccessibilityEvent?
 
     private static let pageSize = DiscoveryRecommendation.pageSize
@@ -31,7 +32,7 @@ final class SearchModel: ObservableObject {
     private var loadMoreTask: Task<Void, Never>?
     private var loadMoreTaskID: UUID?
     private var activeRequest: SearchRequest?
-    private var nextPage: Int?
+    private var nextCursor: ImageSearchCursor?
     private var sessionID = UUID()
     private var resultIDs = Set<String>()
     private var isActive = false
@@ -71,6 +72,11 @@ final class SearchModel: ObservableObject {
 
     /// 网络恢复或限流结束后，从第一页重新执行当前条件。
     func retrySearch() {
+        scheduleSearch()
+    }
+
+    /// 数据源开关或凭据变化后丢弃旧游标，防止一次结果混入两套配置。
+    func sourceConfigurationDidChange() {
         scheduleSearch()
     }
 
@@ -129,7 +135,7 @@ final class SearchModel: ObservableObject {
         loadMoreTask = nil
         loadMoreTaskID = nil
         activeRequest = nil
-        nextPage = nil
+        nextCursor = nil
 
         criteriaChangeRevision &+= 1
         let revision = criteriaChangeRevision
@@ -150,6 +156,7 @@ final class SearchModel: ObservableObject {
         activeRequest = nil
         results = []
         resultIDs = []
+        sourceIssues = []
         resetPagination()
 
         guard let request = pendingRequest() else {
@@ -175,7 +182,8 @@ final class SearchModel: ObservableObject {
                 self.results = records
                 self.resultIDs = Set(records.map(\.id))
                 self.activeRequest = loaded.request
-                self.nextPage = page.nextPage
+                self.nextCursor = page.nextCursor
+                self.sourceIssues = page.issues
                 let paginationState = Self.paginationState(
                     after: page,
                     hasVisibleRecords: !records.isEmpty
@@ -196,6 +204,9 @@ final class SearchModel: ObservableObject {
             } catch let error as OpenverseError {
                 guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
                 self?.commitInitialFailure(SearchState(openverseError: error))
+            } catch let error as PhotoSearchError {
+                guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
+                self?.commitInitialFailure(SearchState(photoSearchError: error))
             } catch {
                 guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
                 self?.commitInitialFailure(.failed(error.localizedDescription))
@@ -206,7 +217,7 @@ final class SearchModel: ObservableObject {
     /// 启动唯一的下一页任务，避免网格重复出现底部卡片时并发请求同一页。
     private func startLoadingNextPage() {
         guard isActive, state == .results || state == .empty else { return }
-        guard loadMoreTask == nil, let request = activeRequest, let page = nextPage else { return }
+        guard loadMoreTask == nil, let request = activeRequest, let cursor = nextCursor else { return }
         let activeSessionID = sessionID
         let taskID = UUID()
         loadMoreTaskID = taskID
@@ -215,7 +226,7 @@ final class SearchModel: ObservableObject {
             guard let self else { return }
             await self.performLoadNextPage(
                 request: request,
-                startingAt: page,
+                startingAt: cursor,
                 sessionID: activeSessionID,
                 taskID: taskID
             )
@@ -225,7 +236,7 @@ final class SearchModel: ObservableObject {
     /// 追加下一批唯一记录；若一页经安全过滤后为空，自动推进到后续服务端页。
     private func performLoadNextPage(
         request: SearchRequest,
-        startingAt page: Int,
+        startingAt cursor: ImageSearchCursor,
         sessionID: UUID,
         taskID: UUID
     ) async {
@@ -234,25 +245,26 @@ final class SearchModel: ObservableObject {
                 loadMoreTask = nil
                 loadMoreTaskID = nil
                 if self.sessionID != sessionID, paginationState == .loading {
-                    paginationState = nextPage == nil ? .exhausted : .ready
+                    paginationState = nextCursor == nil ? .exhausted : .ready
                 }
             }
         }
         do {
-            var requestedPage = page
+            var requestedCursor = cursor
             for _ in 0..<Self.maximumPagesPerLoad {
-                let loaded = try await loadPage(for: request, page: requestedPage)
+                let loaded = try await loadPage(for: request, cursor: requestedCursor)
                 let response = loaded.page
                 try Task.checkCancellation()
                 guard self.sessionID == sessionID, activeRequest == request else { return }
 
                 let additions = Self.unique(response.records, excluding: resultIDs)
-                nextPage = response.nextPage
+                nextCursor = response.nextCursor
+                sourceIssues = response.issues
                 if !additions.isEmpty {
                     resultIDs.formUnion(additions.map(\.id))
                     results.append(contentsOf: additions)
                     state = .results
-                    paginationState = response.nextPage == nil ? .exhausted : .ready
+                    paginationState = response.nextCursor == nil ? .exhausted : .ready
                     announceLoaded(
                         additions.count,
                         total: results.count,
@@ -260,22 +272,27 @@ final class SearchModel: ObservableObject {
                     )
                     return
                 }
-                guard let followingPage = response.nextPage, followingPage > requestedPage else {
+                guard let followingCursor = response.nextCursor,
+                      followingCursor.page > requestedCursor.page else {
                     paginationState = .exhausted
-                    announce("已加载全部结果")
+                    announceIncludingSourceIssues("已加载全部结果")
                     return
                 }
-                requestedPage = followingPage
+                requestedCursor = followingCursor
             }
             let message = "连续三页没有新的可用图片，可以继续查找。"
             paginationState = .needsContinuation(message)
-            announce(message)
+            announceIncludingSourceIssues(message)
         } catch is CancellationError {
             return
         } catch DiscoveryFeedError.snapshotExpired {
             guard sessionID == self.sessionID, case .recommendations = request else { return }
             restartExpiredRecommendationSession()
         } catch let error as OpenverseError {
+            guard self.sessionID == sessionID else { return }
+            paginationState = .failed(error.localizedDescription)
+            announce(error.localizedDescription)
+        } catch let error as PhotoSearchError {
             guard self.sessionID == sessionID else { return }
             paginationState = .failed(error.localizedDescription)
             announce(error.localizedDescription)
@@ -288,37 +305,40 @@ final class SearchModel: ObservableObject {
 
     /// 初页被安全校验全部过滤时最多连续检查三页，避免单次触发无限请求。
     private func firstVisiblePage(for request: SearchRequest) async throws -> SearchLoadResult {
-        var requestedPage = 1
+        var requestedCursor: ImageSearchCursor?
         var latest = SearchLoadResult(
             page: ImageSearchPage(records: [], nextPage: nil),
             request: request
         )
         for _ in 0..<Self.maximumPagesPerLoad {
-            let loaded = try await loadPage(for: latest.request, page: requestedPage)
+            let loaded = try await loadPage(for: latest.request, cursor: requestedCursor)
             try Task.checkCancellation()
             latest = loaded
-            guard loaded.page.records.isEmpty, let followingPage = loaded.page.nextPage,
-                  followingPage > requestedPage else { return loaded }
-            requestedPage = followingPage
+            guard loaded.page.records.isEmpty, let followingCursor = loaded.page.nextCursor,
+                  followingCursor.page > (requestedCursor?.page ?? 0) else { return loaded }
+            requestedCursor = followingCursor
         }
         return latest
     }
 
     /// 空查询读取共享推荐 generation；普通关键词继续使用统一图片搜索服务。
-    private func loadPage(for request: SearchRequest, page: Int) async throws -> SearchLoadResult {
+    private func loadPage(
+        for request: SearchRequest,
+        cursor: ImageSearchCursor?
+    ) async throws -> SearchLoadResult {
         switch request {
         case let .recommendations(generation):
             guard let recommendationFeed else {
                 let fallback = try await service.search(
                     DiscoveryRecommendation.query,
-                    page: page,
+                    cursor: cursor,
                     pageSize: Self.pageSize
                 )
                 return SearchLoadResult(page: fallback, request: .query(DiscoveryRecommendation.query))
             }
             let result = try await recommendationFeed.page(
                 generation: generation,
-                page: page,
+                page: cursor?.page ?? 1,
                 pageSize: Self.pageSize
             )
             return SearchLoadResult(
@@ -326,7 +346,7 @@ final class SearchModel: ObservableObject {
                 request: .recommendations(result.generation)
             )
         case let .query(rawQuery):
-            let page = try await service.search(rawQuery, page: page, pageSize: Self.pageSize)
+            let page = try await service.search(rawQuery, cursor: cursor, pageSize: Self.pageSize)
             return SearchLoadResult(page: page, request: request)
         }
     }
@@ -354,7 +374,7 @@ final class SearchModel: ObservableObject {
     private func resetPagination() {
         loadMoreTask = nil
         loadMoreTaskID = nil
-        nextPage = nil
+        nextCursor = nil
         paginationState = .unavailable
     }
 
@@ -384,9 +404,9 @@ final class SearchModel: ObservableObject {
     private func announceEmptyResult(for paginationState: SearchPaginationState) {
         switch paginationState {
         case let .needsContinuation(message):
-            announce(message)
+            announceIncludingSourceIssues(message)
         case .exhausted:
-            announce("没有更多可用结果")
+            announceIncludingSourceIssues("没有更多可用结果")
         case .unavailable, .ready, .loading, .failed:
             break
         }
@@ -396,7 +416,17 @@ final class SearchModel: ObservableObject {
     private func announceLoaded(_ count: Int, total: Int, exhausted: Bool) {
         guard count > 0 else { return }
         let suffix = exhausted ? "；已加载全部结果" : ""
-        announce("已加载 \(count) 张图片，共 \(total) 张\(suffix)")
+        announceIncludingSourceIssues("已加载 \(count) 张图片，共 \(total) 张\(suffix)")
+    }
+
+    /// 聚合搜索仍有可用结果时，把局部来源故障合并进同一次 VoiceOver 公告。
+    private func announceIncludingSourceIssues(_ message: String) {
+        guard !sourceIssues.isEmpty else {
+            announce(message)
+            return
+        }
+        let issueSummary = sourceIssues.map(\.message).joined(separator: "；")
+        announce("\(message)；部分数据源不可用：\(issueSummary)")
     }
 
     /// 使用唯一事件标识发布，即使相同错误再次发生也能重新播报。
@@ -427,6 +457,7 @@ final class SearchModel: ObservableObject {
         var seen = existingIDs
         return records.filter { seen.insert($0.id).inserted }
     }
+
 }
 
 /// 搜索会话要么绑定普通查询文字，要么绑定共享推荐快照的 generation。

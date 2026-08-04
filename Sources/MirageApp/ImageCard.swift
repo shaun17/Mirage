@@ -24,7 +24,7 @@ struct ImageCard: View {
                     Text(record.title)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
-                    Text("\(sourceName) · \(record.license.displayName)")
+                    Text("\(record.source.displayName) · \(record.license.displayName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -64,10 +64,5 @@ struct ImageCard: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    /// 将内部来源枚举转换成用户可识别的服务名称。
-    private var sourceName: String {
-        record.source == .openverse ? "Openverse" : "DiceBear"
     }
 }

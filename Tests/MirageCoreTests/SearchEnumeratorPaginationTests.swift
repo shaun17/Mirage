@@ -5,6 +5,18 @@ import XCTest
 
 @available(macOS 26.0, *)
 final class SearchEnumeratorPaginationTests: XCTestCase {
+    /// 系统允许更大页面时 Finder 固定请求 40；App 的 20 张限制由独立服务实例负责。
+    func testInitialFinderCursorUsesFortyResultPage() throws {
+        let cursor = try SearchPagePlanner.cursor(
+            startingAt: nil,
+            request: SearchRequestStub(query: "图片:cat", desiredNumberOfResults: 80),
+            observer: SearchObserverStub(maximumResults: 80),
+            configurationKey: "sources:1:openverse,pexels"
+        )
+
+        XCTAssertEqual(cursor.pageSize, 40)
+    }
+
     /// 单个中文字符是有效系统查询，必须返回一页结果并写入搜索 backing。
     func testSingleChineseCharacterReturnsResults() async {
         let store = SearchStoreSpy()
@@ -89,6 +101,11 @@ final class SearchEnumeratorPaginationTests: XCTestCase {
         XCTAssertEqual(cursor.page, 2)
         XCTAssertEqual(cursor.pageSize, 1)
         XCTAssertEqual(cursor.delivered, 1)
+        XCTAssertEqual(cursor.searchCursor?.page, 2)
+        XCTAssertEqual(
+            cursor.searchCursor?.photoCursor?.states.first?.cursor?.rawValue,
+            "2"
+        )
 
         let secondFinished = expectation(description: "第二页完成")
         let secondObserver = SearchObserverStub(maximumResults: 20, completion: secondFinished)
@@ -138,14 +155,16 @@ final class SearchEnumeratorPaginationTests: XCTestCase {
             page: 2,
             pageSize: 20,
             delivered: 20,
-            query: "cat"
+            query: "cat",
+            configurationKey: "sources:1:openverse"
         )
         let crossQueryPage = NSFileProviderPage(rawValue: try current.encoded())
         XCTAssertThrowsError(
             try SearchPagePlanner.cursor(
                 startingAt: crossQueryPage,
                 request: SearchRequestStub(query: "dog", desiredNumberOfResults: 20),
-                observer: observer
+                observer: observer,
+                configurationKey: "sources:1:openverse"
             )
         ) { self.assertPageExpired($0) }
 
@@ -154,6 +173,7 @@ final class SearchEnumeratorPaginationTests: XCTestCase {
             pageSize: 20,
             delivered: 20,
             query: "cat",
+            configurationKey: "sources:1:openverse",
             issuedAt: Date().addingTimeInterval(-SearchPaginationCursor.maximumAge - 1)
         )
         let expiredPage = NSFileProviderPage(rawValue: try expired.encoded())
@@ -161,9 +181,95 @@ final class SearchEnumeratorPaginationTests: XCTestCase {
             try SearchPagePlanner.cursor(
                 startingAt: expiredPage,
                 request: SearchRequestStub(query: "cat", desiredNumberOfResults: 20),
-                observer: observer
+                observer: observer,
+                configurationKey: "sources:1:openverse"
             )
         ) { self.assertPageExpired($0) }
+    }
+
+    /// 数据源配置变化后，旧令牌必须在访问缓存和网络前过期。
+    func testConfigurationChangeExpiresTokenBeforeSearch() async throws {
+        let photos = RevisionedPhotoSearcher()
+        let service = ImageSearchService(
+            photos: photos,
+            diceBear: DiceBearClient(styles: [.pixelArt]),
+            automaticAvatarCount: 0
+        )
+        let request = SearchRequestStub(query: "图片:cat", desiredNumberOfResults: 20)
+        let enumerator = SearchEnumerator(
+            request: request,
+            service: service,
+            repository: SearchStoreSpy(),
+            cache: ProviderSearchCache(),
+            manager: nil
+        )
+
+        let firstFinished = expectation(description: "取得旧配置页令牌")
+        let firstObserver = SearchObserverStub(maximumResults: 20, completion: firstFinished)
+        enumerator.enumerateSearchResults(for: firstObserver, startingAt: nil)
+        await fulfillment(of: [firstFinished], timeout: 2)
+        let oldPage = try XCTUnwrap(firstObserver.snapshot().nextPage)
+        let callsBeforeChange = await photos.recordedCallCount()
+        XCTAssertEqual(callsBeforeChange, 1)
+
+        await photos.setRevision(2)
+        let secondFinished = expectation(description: "旧配置页令牌被拒绝")
+        let secondObserver = SearchObserverStub(maximumResults: 20, completion: secondFinished)
+        enumerator.enumerateSearchResults(for: secondObserver, startingAt: oldPage)
+        await fulfillment(of: [secondFinished], timeout: 2)
+
+        let second = secondObserver.snapshot()
+        XCTAssertEqual(second.resultCount, 0)
+        assertPageExpired(second.error)
+        let callsAfterChange = await photos.recordedCallCount()
+        XCTAssertEqual(callsAfterChange, 1)
+    }
+
+    /// 缓存同时绑定完整来源游标和配置，同一逻辑页也不能跨批次复用。
+    func testSearchCacheSeparatesConfigurationAndSourceCursor() async {
+        let cache = ProviderSearchCache()
+        let result = ImageSearchPage(records: [], nextCursor: nil)
+        let firstCursor = makeImageSearchCursor(sourcePage: "2")
+        let otherCursor = makeImageSearchCursor(sourcePage: "3")
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        await cache.store(
+            result,
+            for: "cat",
+            cursor: firstCursor,
+            page: 2,
+            pageSize: 20,
+            configurationKey: "sources:1:openverse",
+            now: now
+        )
+        let exact = await cache.page(
+            for: "CAT",
+            cursor: firstCursor,
+            page: 2,
+            pageSize: 20,
+            configurationKey: "sources:1:openverse",
+            now: now
+        )
+        let differentCursor = await cache.page(
+            for: "cat",
+            cursor: otherCursor,
+            page: 2,
+            pageSize: 20,
+            configurationKey: "sources:1:openverse",
+            now: now
+        )
+        let differentConfiguration = await cache.page(
+            for: "cat",
+            cursor: firstCursor,
+            page: 2,
+            pageSize: 20,
+            configurationKey: "sources:2:openverse",
+            now: now
+        )
+
+        XCTAssertNotNil(exact)
+        XCTAssertNil(differentCursor)
+        XCTAssertNil(differentConfiguration)
     }
 
     /// 统一断言 File Provider 使用专用 pageExpired 错误，而不是普通网络失败。
@@ -284,6 +390,63 @@ private actor FiniteOpenverse: OpenverseSearching {
             nextPage: page < 3 ? page + 1 : nil
         )
     }
+}
+
+/// 让测试可以在两次系统枚举之间切换数据源配置，并观察旧令牌是否触发网络请求。
+private actor RevisionedPhotoSearcher: PhotoSearching {
+    private var revision: UInt64 = 1
+    private var callCount = 0
+
+    func configurationKey() async -> String {
+        "sources:\(revision):openverse"
+    }
+
+    func search(
+        query: String,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int
+    ) async throws -> PhotoSearchPage {
+        callCount += 1
+        return try await searcher().search(query: query, cursor: cursor, pageSize: pageSize)
+    }
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> PhotoSearchPage {
+        callCount += 1
+        return try await searcher().search(query: query, page: page, pageSize: pageSize)
+    }
+
+    func setRevision(_ value: UInt64) {
+        revision = value
+    }
+
+    func recordedCallCount() -> Int {
+        callCount
+    }
+
+    private func searcher() -> AggregatedPhotoSearcher {
+        AggregatedPhotoSearcher(
+            sources: [OpenversePhotoSource(client: FiniteOpenverse())],
+            configurationRevision: revision
+        )
+    }
+}
+
+/// 构造同一逻辑页、不同 provider 位置的缓存键输入。
+private func makeImageSearchCursor(sourcePage: String) -> ImageSearchCursor {
+    ImageSearchCursor(
+        page: 2,
+        photoCursor: PhotoSearchCursor(
+            configurationRevision: 1,
+            states: [
+                PhotoSourceCursorState(
+                    sourceID: .openverse,
+                    cursor: PhotoSourceCursor(rawValue: sourcePage),
+                    pageSize: 20,
+                    exhausted: false
+                )
+            ]
+        )
+    )
 }
 
 /// 为 File Provider 测试构造稳定、安全且每页不重复的远程记录。

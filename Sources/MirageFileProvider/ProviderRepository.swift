@@ -8,6 +8,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let manager: NSFileProviderManager?
     private let discoveryFeed: (any DiscoveryFeedProviding)?
     private let diceBear: any DiceBearProviding
+    private let sourcePreferences: (any PhotoSourcePreferencesReading)?
 
     /// Finder 的头像分类与 Mirage App 默认头像使用同一固定查询；分段大小受 DiceBear 单次 20 条限制。
     private static let avatarChunks = [(offset: 0, count: 20), (offset: 20, count: 20), (offset: 40, count: 10)]
@@ -16,20 +17,29 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
         manager: NSFileProviderManager?,
-        openverse: any OpenverseSearching = OpenverseClient(),
+        environment: PhotoSearchEnvironment = .production(),
         diceBear: any DiceBearProviding = DiceBearClient()
     ) {
         let storage = try? AppGroupStorage()
+        let service = environment.imageSearchService(
+            for: .fileProvider,
+            purpose: .recommendation,
+            diceBear: diceBear
+        )
         self.storage = storage
         self.manager = manager
         self.diceBear = diceBear
+        self.sourcePreferences = environment.preferences
         self.discoveryFeed = storage.map {
             DiscoveryFeedRepository(
                 storage: $0,
-                service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+                service: service,
                 diceBear: diceBear,
                 // 一层最多补 3 个底层页；单页 1.5 秒使 Finder 枚举总等待仍控制在数秒内。
-                networkTimeout: .milliseconds(1_500)
+                networkTimeout: .milliseconds(1_500),
+                catalogKey: { [environment] in
+                    await environment.recommendationCatalogKey(for: .fileProvider)
+                }
             )
         }
     }
@@ -39,12 +49,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
         manager: NSFileProviderManager?,
         storage: AppGroupStorage,
         discoveryFeed: any DiscoveryFeedProviding,
-        diceBear: any DiceBearProviding = DiceBearClient()
+        diceBear: any DiceBearProviding = DiceBearClient(),
+        sourcePreferences: (any PhotoSourcePreferencesReading)? = nil
     ) {
         self.storage = storage
         self.manager = manager
         self.discoveryFeed = discoveryFeed
         self.diceBear = diceBear
+        self.sourcePreferences = sourcePreferences
     }
 
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
@@ -118,7 +130,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return items
     }
 
-    /// 根目录固定公开推荐流的首个 50 张批次；底层仍按 Mirage 的 20 张共享页读取。
+    /// 根目录固定公开推荐流的首个 40 张批次；底层仍按 Mirage 的 20 张共享页读取。
     func discoveryRootBatch() async throws -> ProviderDiscoveryBatch {
         try await resolveDiscoveryBatch(page: 1, generation: nil)
     }
@@ -357,9 +369,10 @@ actor ProviderRepository: ProviderSearchResultStoring {
     ) async throws {
         try Task.checkCancellation()
         let storage = try requireStorage()
+        let allowedRecords = await allowedFileProviderRecords(records)
         try await storage.commitSearchBacking(
             queryKey: Self.normalizedQuery(queryKey),
-            records: records,
+            records: allowedRecords,
             appending: appending
         )
         try Task.checkCancellation()
@@ -385,13 +398,12 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
             let record = try await storage.readDiscoveryRecord(id: reference.recordID)
             try Task.checkCancellation()
-            return record.map {
-                ProviderOccurrence(
-                    reference: reference,
-                    record: $0,
-                    discoveryGeneration: generation
-                )
-            }
+            guard let record, await isAllowedInFileProvider(record) else { return nil }
+            return ProviderOccurrence(
+                reference: reference,
+                record: record,
+                discoveryGeneration: generation
+            )
         }
         let occurrence: ProviderOccurrence?
         switch reference.view {
@@ -428,7 +440,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
         }
         try Task.checkCancellation()
-        return occurrence
+        guard let occurrence else { return nil }
+        return await isAllowedInFileProvider(occurrence.record) ? occurrence : nil
     }
 
     /// 每次从持久化搜索快照恢复，确保其他扩展进程的最新原子提交不会被内存缓存遮蔽。
@@ -436,7 +449,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         let records = try await requireStorage().readSearchBackingRecords()
         try Task.checkCancellation()
-        return records.map { ProviderItem(record: $0, view: .search) }
+        let allowed = await allowedFileProviderRecords(records)
+        return allowed.map { ProviderItem(record: $0, view: .search) }
     }
 
     /// 最近使用条目保持 Core 中的访问时间倒序。
@@ -444,9 +458,19 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         let records = try await requireStorage().readRecent()
         try Task.checkCancellation()
-        return records.map {
-            ProviderItem(record: $0.image, view: .recent, lastUsedDate: $0.accessedAt)
+        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        var items: [ProviderItem] = []
+        for record in records {
+            guard Self.isAllowed(record.image, enabledSourceIDs: enabledSourceIDs) else { continue }
+            items.append(
+                ProviderItem(
+                    record: record.image,
+                    view: .recent,
+                    lastUsedDate: record.accessedAt
+                )
+            )
         }
+        return items
     }
 
     /// 收藏顺序和内容都来自 favorites 内嵌快照，不再回退到可被其他视图改写的全局 items。
@@ -454,7 +478,34 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         let records = try await requireStorage().readFavoriteRecords()
         try Task.checkCancellation()
-        return records.map { ProviderItem(record: $0, view: .favorite) }
+        let allowed = await allowedFileProviderRecords(records)
+        return allowed.map { ProviderItem(record: $0, view: .favorite) }
+    }
+
+    /// 测试注入未提供设置时保持历史语义；生产环境严格隐藏未获 File Provider 授权的来源。
+    private func isAllowedInFileProvider(_ record: RemoteImageRecord) async -> Bool {
+        Self.isAllowed(record, enabledSourceIDs: await enabledFileProviderSourceIDs())
+    }
+
+    private func allowedFileProviderRecords(
+        _ records: [RemoteImageRecord]
+    ) async -> [RemoteImageRecord] {
+        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        return records.filter { Self.isAllowed($0, enabledSourceIDs: enabledSourceIDs) }
+    }
+
+    private func enabledFileProviderSourceIDs() async -> Set<PhotoSourceID>? {
+        guard let sourcePreferences else { return nil }
+        let snapshot = await sourcePreferences.snapshot()
+        return Set(snapshot.sourceIDs(for: .fileProvider))
+    }
+
+    private static func isAllowed(
+        _ record: RemoteImageRecord,
+        enabledSourceIDs: Set<PhotoSourceID>?
+    ) -> Bool {
+        guard let sourceID = record.source.photoSourceID else { return record.source == .diceBear }
+        return enabledSourceIDs?.contains(sourceID) ?? true
     }
 
     /// 成功物化图片后记录最近使用，底层元数据继续保留供其他 occurrence 和在途请求使用。

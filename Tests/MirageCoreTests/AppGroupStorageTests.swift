@@ -119,6 +119,20 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(Set(snapshot.favorites.map(\.id)), snapshot.favoriteIDs)
     }
 
+    /// 受限来源的遗留收藏使用幂等删除；重复点击不能像 toggle 一样把记录重新加入。
+    func testRemoveFavoriteIsIdempotent() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(1)
+        _ = try await storage.toggleFavorite(favorite)
+
+        let firstRemoval = try await storage.removeFavorite(id: favorite.id)
+        let repeatedRemoval = try await storage.removeFavorite(id: favorite.id)
+
+        XCTAssertFalse(firstRemoval.favoriteIDs.contains(favorite.id))
+        XCTAssertFalse(repeatedRemoval.favoriteIDs.contains(favorite.id))
+        XCTAssertTrue(repeatedRemoval.favorites.isEmpty)
+    }
+
     /// 资料库快照只按收藏 ID 读取，损坏但未收藏的搜索缓存不能拖垮整个刷新。
     func testLibrarySnapshotIgnoresUnrelatedCorruptItem() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)

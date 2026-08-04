@@ -13,10 +13,16 @@ public enum DiscoveryFeedSource: String, Codable, Equatable, Sendable {
 public struct DiscoveryRemoteCursor: Codable, Equatable, Sendable {
     public let queryIndex: Int
     public let remotePage: Int
+    public let imageCursor: ImageSearchCursor?
 
-    public init(queryIndex: Int, remotePage: Int) {
+    public init(
+        queryIndex: Int,
+        remotePage: Int,
+        imageCursor: ImageSearchCursor? = nil
+    ) {
         self.queryIndex = queryIndex
         self.remotePage = remotePage
+        self.imageCursor = imageCursor
     }
 }
 
@@ -89,7 +95,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// 共享推荐流的 20 张底层页快照；File Provider 会在同代次上聚合成固定 50 张目录。
+/// 共享推荐流的 20 张底层页快照；File Provider 会在同代次上聚合成固定 40 张目录。
 public struct DiscoveryPageSnapshot: Codable, Equatable, Sendable {
     public let generation: UInt64
     public let page: Int
@@ -800,6 +806,26 @@ public actor AppGroupStorage {
                 recordsByID[item.id] = item
                 try writeItem(item)
             }
+            let snapshot = FavoriteSnapshot(
+                schemaVersion: Self.favoritesSchemaVersion,
+                recordIDs: ids,
+                records: ids.compactMap { recordsByID[$0] }
+            )
+            try writeFavoriteSnapshotUnlocked(snapshot)
+            return try makeLibrarySnapshot(favorites: snapshot, recentLimit: recentLimit)
+        }
+    }
+
+    /// 幂等移除指定收藏；受限来源的旧记录即使收到重复操作也绝不会被重新加入。
+    public func removeFavorite(
+        id: String,
+        recentLimit: Int = 100
+    ) throws -> LibrarySnapshot {
+        try withExclusiveFileLock(named: "favorites") {
+            let current = try readFavoriteSnapshotUnlocked()
+            let ids = current.recordIDs.filter { $0 != id }
+            var recordsByID = Self.recordsByID(current.records)
+            recordsByID.removeValue(forKey: id)
             let snapshot = FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
                 recordIDs: ids,

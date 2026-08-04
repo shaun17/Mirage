@@ -17,7 +17,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     let repository: ProviderRepository
     let catalog: ProviderCatalog
     let tasks = ProviderTaskBag()
-    let searchService = ImageSearchService()
+    let searchService: ImageSearchService
     let searchCache = ProviderSearchCache()
 
     /// 每个系统域建立独立扩展实例，并保存对应 manager。
@@ -25,7 +25,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         self.domain = domain
         let manager = NSFileProviderManager(for: domain)
         self.manager = manager
-        let repository = ProviderRepository(manager: manager)
+        let environment = PhotoSearchEnvironment.production()
+        self.searchService = environment.imageSearchService(for: .fileProvider)
+        let repository = ProviderRepository(manager: manager, environment: environment)
         self.repository = repository
         catalog = ProviderCatalog(repository: repository)
         super.init()

@@ -47,6 +47,7 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
         tasks.insert(relay, id: taskID)
         let task = Task { [request, service, repository, cache, manager, relay, tasks] in
             defer { tasks.remove(id: taskID) }
+            let configurationKey = await service.configurationKey()
             do {
                 try Task.checkCancellation()
                 let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,39 +66,46 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
                     })
                     return
                 }
-                let cursor = try SearchPagePlanner.cursor(startingAt: page, request: request, observer: observer)
+                let cursor = try SearchPagePlanner.cursor(
+                    startingAt: page,
+                    request: request,
+                    observer: observer,
+                    configurationKey: configurationKey
+                )
                 let pageResult: ImageSearchPage
                 if let cached = await cache.page(
                     for: query,
+                    cursor: cursor.searchCursor,
                     page: cursor.page,
-                    pageSize: cursor.pageSize
+                    pageSize: cursor.pageSize,
+                    configurationKey: configurationKey
                 ) {
                     try Task.checkCancellation()
                     pageResult = cached
                 } else {
-                    if let remaining = await cache.remainingRateLimit() {
-                        try Task.checkCancellation()
-                        throw ProviderError.serverUnreachable(
-                            "搜索请求正在退避，请在约 \(Int(ceil(remaining))) 秒后重试。"
-                        )
-                    }
                     try Task.checkCancellation()
                     if cursor.delivered == 0 {
                         try await Task.sleep(for: .milliseconds(400))
                     }
                     pageResult = try await service.search(
                         query,
-                        page: cursor.page,
+                        cursor: cursor.searchCursor,
                         pageSize: cursor.pageSize
                     )
                     try Task.checkCancellation()
                     await cache.store(
                         pageResult,
                         for: query,
+                        cursor: cursor.searchCursor,
                         page: cursor.page,
-                        pageSize: cursor.pageSize
+                        pageSize: cursor.pageSize,
+                        configurationKey: configurationKey
                     )
                     try Task.checkCancellation()
+                }
+                // 搜索期间设置若发生变化，当前结果与令牌不再属于同一配置批次。
+                guard await service.configurationKey() == configurationKey else {
+                    throw ProviderError.invalidSearchPage()
                 }
                 try Task.checkCancellation()
                 let visibleRecords = Array(pageResult.records.prefix(cursor.pageSize))
@@ -138,10 +146,14 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
                     observer.finishEnumeratingWithError(ProviderError.cancelled())
                 })
             } catch let error as OpenverseError {
-                if case let .rateLimited(retryAfter) = error {
-                    await cache.recordRateLimit(retryAfter: retryAfter)
-                }
                 Self.logger.error("搜索服务错误：\(error.localizedDescription, privacy: .public)")
+                relay.finish({
+                    observer.finishEnumeratingWithError(Self.searchError(error))
+                }, ifCancelled: {
+                    observer.finishEnumeratingWithError(ProviderError.cancelled())
+                })
+            } catch let error as PhotoSearchError {
+                Self.logger.error("聚合搜索服务错误：\(error.localizedDescription, privacy: .public)")
                 relay.finish({
                     observer.finishEnumeratingWithError(Self.searchError(error))
                 }, ifCancelled: {
@@ -196,6 +208,26 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
             return ProviderError.serverUnreachable("搜索服务返回 HTTP \(statusCode)。")
         case let .decoding(message):
             return ProviderError.serverUnreachable("搜索结果无法解析：\(message)")
+        }
+    }
+
+    /// 游标或配置变化应要求系统重启分页；来源故障则保留可重试的服务错误语义。
+    private static func searchError(_ error: PhotoSearchError) -> Error {
+        switch error {
+        case .invalidCursor, .configurationChanged:
+            return ProviderError.invalidSearchPage()
+        case .noEnabledSources:
+            return ProviderError.serverUnreachable("没有启用可用于 Finder 的图片数据源。")
+        case let .allSourcesFailed(issues):
+            if let rateLimit = issues.first(where: { $0.kind == .rateLimited }) {
+                let suffix = rateLimit.retryAt.map {
+                    "，约 \(Int(ceil(max($0.timeIntervalSinceNow, 1)))) 秒后可重试"
+                } ?? ""
+                return ProviderError.serverUnreachable("搜索请求过于频繁\(suffix)。")
+            }
+            return ProviderError.serverUnreachable(
+                issues.first?.message ?? "图片数据源暂时不可用。"
+            )
         }
     }
 }

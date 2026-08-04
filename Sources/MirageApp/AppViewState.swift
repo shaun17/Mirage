@@ -68,6 +68,27 @@ enum SearchState: Equatable {
             self = .failed(openverseError.localizedDescription)
         }
     }
+
+    /// 聚合搜索只有在所有启用来源均失败时进入整页失败，并保留最具体的故障类型。
+    init(photoSearchError: PhotoSearchError) {
+        guard case let .allSourcesFailed(issues) = photoSearchError,
+              !issues.isEmpty else {
+            self = .failed(photoSearchError.localizedDescription)
+            return
+        }
+        let issue = issues.first { $0.kind == .rateLimited }
+            ?? issues.first { $0.kind == .network }
+            ?? issues.first!
+        let message = issue.message
+        switch issue.kind {
+        case .rateLimited:
+            self = .rateLimited(message)
+        case .network:
+            self = .network(message)
+        case .missingCredential, .invalidCredential, .invalidResponse, .decoding, .unavailable:
+            self = .failed(message)
+        }
+    }
 }
 
 /// 共享资料库状态明确区分启动准备与永久失败，避免展示实际上无法执行的收藏操作。

@@ -9,14 +9,18 @@ enum SearchPagePlanner {
     static func cursor(
         startingAt page: NSFileProviderPage?,
         request: NSFileProviderStringSearchRequest,
-        observer: any NSFileProviderSearchEnumerationObserver
+        observer: any NSFileProviderSearchEnumerationObserver,
+        configurationKey: String
     ) throws -> SearchPaginationCursor {
         if let page {
             do {
                 let cursor = try SearchPaginationCursor.decode(page.rawValue)
-                try cursor.validate(for: request.query)
+                try cursor.validate(for: request.query, configurationKey: configurationKey)
                 let observerLimit = observer.maximumNumberOfResultsPerPage
                 guard observerLimit <= 0 || cursor.pageSize <= observerLimit else {
+                    throw SearchPaginationCursorError.invalidValues
+                }
+                guard cursor.page == 1 || cursor.searchCursor != nil else {
                     throw SearchPaginationCursorError.invalidValues
                 }
                 return cursor
@@ -34,7 +38,8 @@ enum SearchPagePlanner {
             page: 1,
             pageSize: limits.min() ?? SearchPaginationCursor.maximumPageSize,
             delivered: 0,
-            query: request.query
+            query: request.query,
+            configurationKey: configurationKey
         )
     }
 
@@ -53,9 +58,9 @@ enum SearchPagePlanner {
         cursor: SearchPaginationCursor,
         delivered: Int
     ) throws -> NSFileProviderPage? {
-        guard let page = result.nextPage else { return nil }
+        guard let nextCursor = result.nextCursor else { return nil }
         do {
-            let next = try cursor.advanced(to: page, delivered: delivered)
+            let next = try cursor.advanced(to: nextCursor, delivered: delivered)
             return NSFileProviderPage(rawValue: try next.encoded())
         } catch {
             throw ProviderError.invalidSearchPage()

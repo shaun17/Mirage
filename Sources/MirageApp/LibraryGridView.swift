@@ -41,7 +41,9 @@ struct LibraryGridView: View {
                                 ImageCard(
                                     record: record,
                                     isFavorite: favoriteIDs.contains(record.id),
-                                    allowsFavoriteChanges: allowsFavoriteChanges,
+                                    allowsFavoriteChanges: allowsFavoriteChanges
+                                        && (record.source.allowsPersistentLibraryStorage
+                                            || favoriteIDs.contains(record.id)),
                                     onToggleFavorite: { onToggleFavorite(record) },
                                     onShowDetails: { onShowDetails(record) }
                                 )

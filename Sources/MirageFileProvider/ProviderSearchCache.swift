@@ -9,13 +9,25 @@ actor ProviderSearchCache {
     }
 
     private var entries: [String: Entry] = [:]
-    private var rateLimitedUntil: Date?
     private let timeToLive: TimeInterval = 10 * 60
     private let maximumEntries = 80
 
     /// 返回未过期的查询结果；过期数据会在读取时立即清理。
-    func page(for query: String, page: Int, pageSize: Int, now: Date = Date()) -> ImageSearchPage? {
-        let key = Self.key(query, page: page, pageSize: pageSize)
+    func page(
+        for query: String,
+        cursor: ImageSearchCursor?,
+        page: Int,
+        pageSize: Int,
+        configurationKey: String,
+        now: Date = Date()
+    ) -> ImageSearchPage? {
+        let key = Self.key(
+            query,
+            cursor: cursor,
+            page: page,
+            pageSize: pageSize,
+            configurationKey: configurationKey
+        )
         guard let entry = entries[key] else { return nil }
         guard entry.expiresAt > now else {
             entries[key] = nil
@@ -24,9 +36,23 @@ actor ProviderSearchCache {
         return entry.page
     }
 
-    /// 按查询、页码与页大小缓存，防止后续枚举错误复用第一页。
-    func store(_ result: ImageSearchPage, for query: String, page: Int, pageSize: Int, now: Date = Date()) {
-        entries[Self.key(query, page: page, pageSize: pageSize)] = Entry(
+    /// 完整聚合游标和配置都参与键计算，避免同一逻辑页错误复用另一批来源位置。
+    func store(
+        _ result: ImageSearchPage,
+        for query: String,
+        cursor: ImageSearchCursor?,
+        page: Int,
+        pageSize: Int,
+        configurationKey: String,
+        now: Date = Date()
+    ) {
+        entries[Self.key(
+            query,
+            cursor: cursor,
+            page: page,
+            pageSize: pageSize,
+            configurationKey: configurationKey
+        )] = Entry(
             page: result,
             expiresAt: now.addingTimeInterval(timeToLive)
         )
@@ -37,26 +63,29 @@ actor ProviderSearchCache {
         }
     }
 
-    /// 在已知退避期内阻止新请求，并返回剩余等待时间。
-    func remainingRateLimit(now: Date = Date()) -> TimeInterval? {
-        guard let rateLimitedUntil else { return nil }
-        let remaining = rateLimitedUntil.timeIntervalSince(now)
-        if remaining <= 0 {
-            self.rateLimitedUntil = nil
-            return nil
-        }
-        return remaining
-    }
-
-    /// 记录服务端退避时间；无 Retry-After 时采用保守的一分钟。
-    func recordRateLimit(retryAfter: TimeInterval?, now: Date = Date()) {
-        let delay = max(retryAfter ?? 60, 1)
-        rateLimitedUntil = now.addingTimeInterval(delay)
-    }
-
     /// 查询键忽略大小写及首尾空白，但保留中文与内容前缀语义。
-    private static func key(_ query: String, page: Int, pageSize: Int) -> String {
+    private static func key(
+        _ query: String,
+        cursor: ImageSearchCursor?,
+        page: Int,
+        pageSize: Int,
+        configurationKey: String
+    ) -> String {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return "\(normalized)|page:\(page)|size:\(pageSize)"
+        let configuration = configurationFingerprint(configurationKey)
+        let cursor = cursorFingerprint(cursor)
+        return "\(normalized)|configuration:\(configuration)|cursor:\(cursor)|page:\(page)|size:\(pageSize)"
+    }
+
+    private static func configurationFingerprint(_ configurationKey: String) -> String {
+        StableImageID.seedHash("mirage-search-cache-configuration|\(configurationKey)")
+    }
+
+    private static func cursorFingerprint(_ cursor: ImageSearchCursor?) -> String {
+        guard let cursor else { return "initial" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(cursor) else { return "invalid" }
+        return StableImageID.seedHash("mirage-search-cache-cursor|\(data.base64EncodedString())")
     }
 }

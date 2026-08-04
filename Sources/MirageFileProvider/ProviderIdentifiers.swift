@@ -79,7 +79,7 @@ enum ProviderView: String, CaseIterable, Sendable {
 
 /// 递归推荐目录的稳定逻辑位置。根页只在规划器内部表示，不对系统公开目录 ID。
 struct DiscoveryPageReference: Hashable, Sendable {
-    /// 底层最多 10,000 页、每页 20 张；File Provider 每批 50 张，因此最多公开 4,000 批。
+    /// 底层最多 10,000 页、每页 20 张；File Provider 每批 40 张，因此最多公开 5,000 批。
     static let maximumPage =
         (SearchPaginationCursor.maximumPage * DiscoveryRecommendation.pageSize)
         / ProviderDiscoveryTreePlanner.batchSize

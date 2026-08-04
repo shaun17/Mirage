@@ -4,7 +4,18 @@ import Foundation
 /// 图片来自哪个远程服务。
 public enum ImageSource: String, Codable, CaseIterable, Sendable {
     case openverse
+    case pexels
+    case pixabay
     case diceBear = "dice_bear"
+
+    public var displayName: String {
+        switch self {
+        case .openverse: return "Openverse"
+        case .pexels: return "Pexels"
+        case .pixabay: return "Pixabay"
+        case .diceBear: return "DiceBear"
+        }
+    }
 }
 
 /// 图片授权信息。`url` 指向服务方公开的许可证说明。
@@ -29,6 +40,18 @@ public struct LicenseInfo: Codable, Equatable, Hashable, Sendable {
         identifier: "pdm",
         displayName: "Public Domain Mark",
         url: URL(string: "https://creativecommons.org/publicdomain/mark/1.0/")
+    )
+
+    public static let pexels = LicenseInfo(
+        identifier: "pexels",
+        displayName: "Pexels License",
+        url: URL(string: "https://www.pexels.com/license/")
+    )
+
+    public static let pixabay = LicenseInfo(
+        identifier: "pixabay",
+        displayName: "Pixabay Content License",
+        url: URL(string: "https://pixabay.com/service/license-summary/")
     )
 }
 
@@ -81,6 +104,14 @@ public enum StableImageID {
     /// Openverse 的 UUID 在统一大小写后直接组成稳定 ID。
     public static func openverse(uuid: UUID) -> String {
         "ov:\(uuid.uuidString.lowercased())"
+    }
+
+    public static func pexels(id: Int) -> String {
+        "px:\(id)"
+    }
+
+    public static func pixabay(id: Int) -> String {
+        "pb:\(id)"
     }
 
     /// DiceBear 不暴露查询词，只把不可逆摘要放进 ID 与远程 seed。

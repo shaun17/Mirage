@@ -152,7 +152,7 @@ struct ProviderCatalog: Sendable {
         )
     }
 
-    /// 根目录一次发布固定 50 张；下一批只能通过显式“更多图片”目录打开。
+    /// 根目录一次发布固定 40 张；下一批只能通过显式“更多图片”目录打开。
     private func rootItems() async throws -> [ProviderItem] {
         let batch = try await repository.discoveryRootBatch()
         try Task.checkCancellation()
@@ -162,7 +162,7 @@ struct ProviderCatalog: Sendable {
         )
     }
 
-    /// 每个递归目录同样只发布一个固定 50 张批次及至多一个下一层目录。
+    /// 每个递归目录同样只发布一个固定 40 张批次及至多一个下一层目录。
     private func discoveryPageItems(
         _ reference: DiscoveryPageReference
     ) async throws -> [ProviderItem] {

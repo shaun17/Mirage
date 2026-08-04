@@ -88,8 +88,8 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         }
     }
 
-    /// 根目录固定展示 50 张，唯一“更多图片”目录在返回数组末尾且指向第 2 批。
-    func testRootBatchPublishesFiftyImagesThenOneContinuationDirectory() throws {
+    /// 根目录固定展示 40 张，唯一“更多图片”目录在返回数组末尾且指向第 2 批。
+    func testRootBatchPublishesFortyImagesThenOneContinuationDirectory() throws {
         let fixed = [
             ProviderItem(
                 directory: ProviderIdentifiers.recent,
@@ -100,7 +100,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         let batch = ProviderDiscoveryBatch(
             page: 1,
             generation: 7,
-            records: Self.records(count: 50),
+            records: Self.records(count: 40),
             hasMore: true
         )
 
@@ -108,7 +108,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
             for: batch,
             fixedDirectories: fixed
         )
-        XCTAssertEqual(items.filter { $0.contentType == .png }.count, 50)
+        XCTAssertEqual(items.filter { $0.contentType == .png }.count, 40)
         XCTAssertTrue(
             items.filter { $0.contentType == .png }
                 .allSatisfy { $0.parentItemIdentifier == .rootContainer }
@@ -128,19 +128,19 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         )
     }
 
-    /// 每个子目录也只投影自己的 50 张，图片挂在当前页，下一层目录挂在当前目录。
+    /// 每个子目录也只投影自己的 40 张，图片挂在当前页，下一层目录挂在当前目录。
     func testRecursiveBatchUsesPageScopedOccurrencesAndAppendsNextDirectory() throws {
         let batch = ProviderDiscoveryBatch(
             page: 2,
             generation: 11,
-            records: Self.records(prefix: "second", count: 50),
+            records: Self.records(prefix: "second", count: 40),
             hasMore: true
         )
 
         let items = try ProviderDiscoveryTreePlanner.items(for: batch)
-        XCTAssertEqual(items.count, 51)
+        XCTAssertEqual(items.count, 41)
         let images = items.filter { $0.contentType == .png }
-        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier.rawValue == "discover-page:v3:2"
                 && $0.itemIdentifier.rawValue.hasPrefix("discover-page-item:v3:2:")
@@ -153,7 +153,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         XCTAssertTrue(images.allSatisfy { $0.discoveryGeneration == 11 })
     }
 
-    /// 末批可以少于 50 张；hasMore 为 false 时不制造空的下一层目录。
+    /// 末批可以少于 40 张；hasMore 为 false 时不制造空的下一层目录。
     func testTerminalPartialBatchHasNoContinuationDirectory() throws {
         let batch = ProviderDiscoveryBatch(
             page: DiscoveryPageReference.maximumPage,
@@ -190,18 +190,18 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         )
     }
 
-    /// 50 张批次只能覆盖底层 20 万条推荐容量，边界外与超长批次必须明确失败。
+    /// 40 张批次仍覆盖底层 20 万条推荐容量，边界外与超长批次必须明确失败。
     func testRangeAndBatchValidationRejectOverflowAndInvalidSizes() throws {
-        XCTAssertEqual(DiscoveryPageReference.maximumPage, 4_000)
+        XCTAssertEqual(DiscoveryPageReference.maximumPage, 5_000)
         XCTAssertEqual(
             try ProviderDiscoveryTreePlanner.recordRange(for: 1),
-            0..<50
+            0..<40
         )
         XCTAssertEqual(
             try ProviderDiscoveryTreePlanner.recordRange(
                 for: DiscoveryPageReference.maximumPage
             ),
-            199_950..<200_000
+            199_960..<200_000
         )
         XCTAssertThrowsError(try ProviderDiscoveryTreePlanner.recordRange(for: 0))
         XCTAssertThrowsError(try ProviderDiscoveryTreePlanner.recordRange(for: Int.max))
@@ -209,11 +209,11 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         let oversized = ProviderDiscoveryBatch(
             page: 1,
             generation: 1,
-            records: Self.records(count: 51),
+            records: Self.records(count: 41),
             hasMore: false
         )
         XCTAssertThrowsError(try ProviderDiscoveryTreePlanner.items(for: oversized)) { error in
-            XCTAssertEqual(error as? ProviderDiscoveryTreeError, .tooManyRecords(51))
+            XCTAssertEqual(error as? ProviderDiscoveryTreeError, .tooManyRecords(41))
         }
 
         let impossibleContinuation = ProviderDiscoveryBatch(

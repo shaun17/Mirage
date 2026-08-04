@@ -17,9 +17,9 @@ enum ProviderDiscoveryTreeError: Error, Equatable, Sendable {
     case pageOverflow(Int)
 }
 
-/// 把冻结推荐批次投影为每层最多 50 张图片的递归 File Provider 目录。
+/// 把冻结推荐批次投影为每层最多 40 张图片的递归 File Provider 目录。
 enum ProviderDiscoveryTreePlanner {
-    static let batchSize = 50
+    static let batchSize = 40
     static let maximumPage = DiscoveryPageReference.maximumPage
     static let continuationFolderName = "更多图片"
 
@@ -79,7 +79,7 @@ enum ProviderDiscoveryTreePlanner {
         )
     }
 
-    /// 将 File Provider 的 50 张逻辑批次映射为累计推荐记录区间，并显式拒绝乘加溢出。
+    /// 将 File Provider 的 40 张逻辑批次映射为累计推荐记录区间，并显式拒绝乘加溢出。
     static func recordRange(for page: Int) throws -> Range<Int> {
         guard (1...DiscoveryPageReference.maximumPage).contains(page) else {
             throw ProviderDiscoveryTreeError.invalidPage(page)
@@ -93,7 +93,7 @@ enum ProviderDiscoveryTreePlanner {
         return lowerBound.partialValue..<upperBound.partialValue
     }
 
-    /// Repository 使用 bounds 命名读取同一稳定窗口，避免各层重复实现 50/20 映射。
+    /// Repository 使用 bounds 命名读取同一稳定窗口，避免各层重复实现 40/20 映射。
     static func recordBounds(for page: Int) throws -> Range<Int> {
         try recordRange(for: page)
     }

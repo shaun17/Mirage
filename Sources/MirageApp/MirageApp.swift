@@ -28,5 +28,9 @@ struct MirageApp: App {
                     .keyboardShortcut("3", modifiers: .command)
             }
         }
+
+        Settings {
+            PhotoSourceSettingsView(model: model.sourceSettingsModel)
+        }
     }
 }

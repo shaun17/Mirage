@@ -113,28 +113,40 @@ struct DiscoverView: View {
                 unavailable("继续输入关键词", symbol: "text.cursor", description: "输入至少一个字符开始搜索。")
             }
         case .searching:
-            ProgressView("正在搜索 CC0 / 公版内容…")
+            ProgressView("正在搜索已启用的图片数据源…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityLabel("正在搜索")
         case .results:
-            LibraryGridView(
-                title: nil,
-                records: searchModel.results,
-                favoriteIDs: model.favoriteIDs,
-                emptyTitle: "没有结果",
-                emptyDescription: "换一个关键词再试。",
-                allowsFavoriteChanges: model.libraryAvailability.allowsFavoriteChanges,
-                pagination: GridPagination(
-                    state: searchModel.paginationState,
-                    loadNextPage: searchModel.loadNextPage,
-                    continueLoading: searchModel.continueLoadingNextPage,
-                    retry: searchModel.retryLoadingNextPage
-                ),
-                onToggleFavorite: { record in Task { await model.toggleFavorite(record) } },
-                onShowDetails: onShowDetails
-            )
+            VStack(spacing: 0) {
+                if showsSourceStatusBar {
+                    sourceStatusBar
+                    Divider()
+                }
+                LibraryGridView(
+                    title: nil,
+                    records: searchModel.results,
+                    favoriteIDs: model.favoriteIDs,
+                    emptyTitle: "没有结果",
+                    emptyDescription: "换一个关键词再试。",
+                    allowsFavoriteChanges: model.libraryAvailability.allowsFavoriteChanges,
+                    pagination: GridPagination(
+                        state: searchModel.paginationState,
+                        loadNextPage: searchModel.loadNextPage,
+                        continueLoading: searchModel.continueLoadingNextPage,
+                        retry: searchModel.retryLoadingNextPage
+                    ),
+                    onToggleFavorite: { record in Task { await model.toggleFavorite(record) } },
+                    onShowDetails: onShowDetails
+                )
+            }
         case .empty:
-            emptySearchView
+            VStack(spacing: 0) {
+                if showsSourceStatusBar {
+                    sourceStatusBar
+                    Divider()
+                }
+                emptySearchView
+            }
         case .network(let message):
             errorView("网络不可用", symbol: "wifi.exclamationmark", message: message)
         case .rateLimited(let message):
@@ -193,5 +205,48 @@ struct DiscoverView: View {
             Button("重试") { searchModel.retrySearch() }
                 .keyboardShortcut(.defaultAction)
         }
+    }
+
+    private var showsSourceStatusBar: Bool {
+        !visibleSourceAttributions.isEmpty || !searchModel.sourceIssues.isEmpty
+    }
+
+    private var visibleSourceAttributions: [PhotoSourceAttribution] {
+        let visibleSourceIDs = Set(searchModel.results.compactMap(\.source.photoSourceID))
+        return PhotoSourceRegistry.descriptors.compactMap { descriptor in
+            guard visibleSourceIDs.contains(descriptor.id) else { return nil }
+            return descriptor.searchResultAttribution
+        }
+    }
+
+    /// 供应商结果始终带醒目平台链接；单源故障则作为局部提示保留其他来源的结果。
+    private var sourceStatusBar: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(visibleSourceAttributions, id: \.url) { attribution in
+                VStack(alignment: .leading, spacing: 2) {
+                    Link(attribution.text, destination: attribution.url)
+                        .font(.callout.weight(.medium))
+                    if let note = attribution.note {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if !searchModel.sourceIssues.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(searchModel.sourceIssues, id: \.sourceID) { issue in
+                        Label(issue.message, systemImage: "exclamationmark.triangle")
+                            .lineLimit(2)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bar)
     }
 }

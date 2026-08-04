@@ -111,6 +111,7 @@ targets:
       - path: Tests/MirageCoreTests
       # 这些无 UI 的生产源直接编入测试模块，锁住 App 与 File Provider 状态机而不启动宿主进程。
       - path: Sources/MirageApp/AppViewState.swift
+      - path: Sources/MirageApp/PhotoSourceSettingsModel.swift
       - path: Sources/MirageApp/SearchModel.swift
       - path: Sources/MirageApp/ThumbnailLoader.swift
       - path: Sources/MirageFileProvider/ProviderAsyncSupport.swift

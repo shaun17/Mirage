@@ -19,15 +19,15 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         }
     }
 
-    /// 根目录一次固定发布 50 张及唯一“更多图片”，而不是在同一目录动态追加。
-    func testPreparedRootPublishesFixedFiftyAndOneContinuation() async throws {
+    /// 根目录一次固定发布 40 张及唯一“更多图片”，而不是在同一目录动态追加。
+    func testPreparedRootPublishesFixedFortyAndOneContinuation() async throws {
         let context = try makeContext()
 
         let root = try await context.catalog.preparedItems(for: .root)
         let images = Self.images(in: root)
         let continuations = Self.discoveryDirectories(in: root)
 
-        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == .rootContainer })
         XCTAssertEqual(continuations.count, 1)
         XCTAssertEqual(continuations[0].filename, "更多图片")
@@ -40,7 +40,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(avatarDirectory.parentItemIdentifier, .rootContainer)
         XCTAssertFalse(root.contains { $0.itemIdentifier.rawValue.hasPrefix("avatar:") })
         let requestedPages = await context.openverse.requestedPages()
-        XCTAssertEqual(requestedPages, [1, 2, 3])
+        XCTAssertEqual(requestedPages, [1, 2])
     }
 
     /// 同一根目录反复枚举只恢复冻结缓存，成员和远端请求数都不增长。
@@ -51,9 +51,9 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let second = try await context.catalog.preparedItems(for: .root)
 
         XCTAssertEqual(first.map(\.itemIdentifier), second.map(\.itemIdentifier))
-        XCTAssertEqual(Self.images(in: second).count, 50)
+        XCTAssertEqual(Self.images(in: second).count, 40)
         let requestedPages = await context.openverse.requestedPages()
-        XCTAssertEqual(requestedPages, [1, 2, 3])
+        XCTAssertEqual(requestedPages, [1, 2])
     }
 
     /// “头像”目录按需生成 50 个稳定 DiceBear occurrence，完全不读取 Openverse 推荐流。
@@ -144,7 +144,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(directory?.filename, "更多图片")
 
         let child = try await context.catalog.preparedItems(for: .discoveryPage(second))
-        XCTAssertEqual(Self.images(in: child).count, 50)
+        XCTAssertEqual(Self.images(in: child).count, 40)
     }
 
     /// 未被根 scope 发布的第 2 层不能通过构造 ID 提前联网。
@@ -161,8 +161,8 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, [])
     }
 
-    /// 打开“更多图片”才加载下一固定 50 张，并只在该子目录发布下一层入口。
-    func testOpeningSecondPageLoadsNextFiftyAndPublishesThirdPage() async throws {
+    /// 打开“更多图片”才加载下一固定 40 张，并只在该子目录发布下一层入口。
+    func testOpeningSecondPageLoadsNextFortyAndPublishesThirdPage() async throws {
         let context = try makeContext()
         let root = try await context.catalog.preparedItems(for: .root)
         let page = try XCTUnwrap(DiscoveryPageReference(page: 2))
@@ -171,15 +171,15 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let images = Self.images(in: child)
         let continuation = try XCTUnwrap(Self.discoveryDirectories(in: child).only)
 
-        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == page.itemIdentifier })
-        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:10")
-        XCTAssertEqual(images.last?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:5:19")
+        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:3")
         XCTAssertEqual(continuation.parentItemIdentifier, page.itemIdentifier)
         XCTAssertEqual(continuation.filename, "更多图片")
         let requestedPages = await context.openverse.requestedPages()
-        XCTAssertEqual(requestedPages, [1, 2, 3, 4, 5])
+        XCTAssertEqual(requestedPages, [1, 2, 3, 4])
 
         let rootAgain = try await context.catalog.preparedItems(for: .root)
         XCTAssertEqual(root.map(\.itemIdentifier), rootAgain.map(\.itemIdentifier))
@@ -201,7 +201,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
-    /// 第 2 层发布第 3 层后，递归打开继续得到独立的 50 张固定快照。
+    /// 第 2 层发布第 3 层后，递归打开继续得到独立的 40 张固定快照。
     func testOpeningThirdPageContinuesRecursively() async throws {
         let context = try makeContext()
         _ = try await context.catalog.preparedItems(for: .root)
@@ -213,16 +213,16 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let images = Self.images(in: items)
         let continuation = try XCTUnwrap(Self.discoveryDirectories(in: items).only)
 
-        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == third.itemIdentifier })
-        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:3:provider:6:0")
-        XCTAssertEqual(images.last?.itemIdentifier.rawValue, "discover-page-item:v3:3:provider:8:9")
+        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:3:provider:5:0")
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:4")
         let requestedPages = await context.openverse.requestedPages()
-        XCTAssertEqual(requestedPages, Array(1...8))
+        XCTAssertEqual(requestedPages, Array(1...6))
     }
 
-    /// 第 4 批之后仍须发布并打开第 5 批，避免 Finder 在 4×50 张处形成伪上限。
+    /// 第 4 批之后仍须发布并打开第 5 批，避免 Finder 在 4×40 张处形成伪上限。
     func testOpeningFourthPagePublishesAndOpensFifthPage() async throws {
         let context = try makeContext()
         _ = try await context.catalog.preparedItems(for: .root)
@@ -246,21 +246,18 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let fifthImages = Self.images(in: fifthItems)
         let sixth = try XCTUnwrap(DiscoveryPageReference(page: 6))
         let sixthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fifthItems).only)
-        XCTAssertEqual(fifthImages.count, 50)
+        XCTAssertEqual(fifthImages.count, 40)
         XCTAssertEqual(
             fifthImages.first?.itemIdentifier.rawValue,
-            "discover-page-item:v3:5:provider:11:0"
+            "discover-page-item:v3:5:provider:9:0"
         )
-        XCTAssertEqual(
-            fifthImages.last?.itemIdentifier.rawValue,
-            "discover-page-item:v3:5:provider:13:9"
-        )
+        XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
         XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
         XCTAssertEqual(sixthContinuation.parentItemIdentifier, fifth.itemIdentifier)
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(maximumOpenedPage, 5)
-        XCTAssertEqual(requestedPages, Array(1...13))
+        XCTAssertEqual(requestedPages, Array(1...10))
     }
 
     /// 残缺旧状态恢复后必须能从当前根重新建立 lineage，并继续打开第 5 批。
@@ -288,7 +285,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
 
         XCTAssertEqual(fifthDirectory?.itemIdentifier, fifth.itemIdentifier)
-        XCTAssertEqual(Self.images(in: fifthItems).count, 50)
+        XCTAssertEqual(Self.images(in: fifthItems).count, 40)
         XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
         XCTAssertEqual(maximumOpenedPage, 5)
     }
@@ -315,13 +312,13 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
 
         let child = try await context.catalog.preparedItems(for: .discoveryPage(second))
         let images = Self.images(in: child)
-        XCTAssertEqual(images.count, 50)
+        XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.discoveryGeneration == publishedGeneration })
-        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:10")
-        XCTAssertEqual(images.last?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:5:19")
+        XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
         XCTAssertFalse(images.contains { $0.itemIdentifier.rawValue.contains("refreshed") })
         let requestedPages = await context.openverse.requestedPages()
-        XCTAssertEqual(requestedPages, [1, 2, 3, 4, 5])
+        XCTAssertEqual(requestedPages, [1, 2, 3, 4])
     }
 
     /// 完整历史代次被裁剪后，残留底层页 sidecar 不能造成死循环或偷偷切换到当前代次。
@@ -440,17 +437,17 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let rebuiltChildren = Self.images(in: refreshedWorkingSet).filter {
             $0.parentItemIdentifier == second.itemIdentifier
         }
-        XCTAssertEqual(rebuiltChildren.count, 50)
+        XCTAssertEqual(rebuiltChildren.count, 40)
         XCTAssertTrue(rebuiltChildren.allSatisfy {
             $0.discoveryGeneration == refreshedGeneration
         })
         XCTAssertEqual(
             rebuiltChildren.first?.itemIdentifier.rawValue,
-            "discover-page-item:v3:2:refreshed:50"
+            "discover-page-item:v3:2:refreshed:40"
         )
         XCTAssertEqual(
             rebuiltChildren.last?.itemIdentifier.rawValue,
-            "discover-page-item:v3:2:refreshed:99"
+            "discover-page-item:v3:2:refreshed:79"
         )
         XCTAssertFalse(refreshedWorkingSet.contains { $0.itemIdentifier == oldImage.itemIdentifier })
         XCTAssertTrue(refreshedWorkingSet.contains {
@@ -486,7 +483,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(maximumOpenedPageBeforeRefresh, 3)
 
         let requestsBeforeRefresh = await context.openverse.requestedPages()
-        XCTAssertEqual(requestsBeforeRefresh, Array(1...8))
+        XCTAssertEqual(requestsBeforeRefresh, Array(1...6))
         await context.openverse.useRecordPrefix("refreshed")
         let refreshedGeneration = try await context.storage.commitDiscoveryFeed(
             records: Self.records(prefix: "refreshed", page: 1),
@@ -504,30 +501,27 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let rebuiltThird = Self.images(in: refreshedWorkingSet).filter {
             $0.parentItemIdentifier == third.itemIdentifier
         }
-        XCTAssertEqual(rebuiltSecond.count, 50)
-        XCTAssertEqual(rebuiltThird.count, 50)
+        XCTAssertEqual(rebuiltSecond.count, 40)
+        XCTAssertEqual(rebuiltThird.count, 40)
         XCTAssertTrue((rebuiltSecond + rebuiltThird).allSatisfy {
             $0.discoveryGeneration == refreshedGeneration
         })
         XCTAssertEqual(
             rebuiltSecond.first?.itemIdentifier.rawValue,
-            "discover-page-item:v3:2:refreshed:3:10"
+            "discover-page-item:v3:2:refreshed:3:0"
         )
-        XCTAssertEqual(
-            rebuiltSecond.last?.itemIdentifier.rawValue,
-            "discover-page-item:v3:2:refreshed:5:19"
-        )
+        XCTAssertTrue(rebuiltSecond.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
         XCTAssertEqual(
             rebuiltThird.first?.itemIdentifier.rawValue,
-            "discover-page-item:v3:3:refreshed:6:0"
+            "discover-page-item:v3:3:refreshed:5:0"
         )
-        XCTAssertEqual(
-            rebuiltThird.last?.itemIdentifier.rawValue,
-            "discover-page-item:v3:3:refreshed:8:9"
-        )
-        XCTAssertTrue(oldChildIDs.isDisjoint(with: Set(
-            refreshedWorkingSet.map(\.itemIdentifier)
-        )))
+        XCTAssertTrue(rebuiltThird.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        // 自动推荐每页固定补入 4 个稳定头像；换代后远端照片必须替换，头像 ID 则允许复用。
+        let oldRemoteChildIDs = Set(oldChildIDs.filter { !$0.rawValue.contains(":db:") })
+        let refreshedRemoteChildIDs = Set(refreshedWorkingSet
+            .map(\.itemIdentifier)
+            .filter { !$0.rawValue.contains(":db:") })
+        XCTAssertTrue(oldRemoteChildIDs.isDisjoint(with: refreshedRemoteChildIDs))
 
         let thirdContinuation = try XCTUnwrap(
             Self.discoveryDirectories(in: refreshedWorkingSet).first {
@@ -561,8 +555,8 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let persistedSecond = try XCTUnwrap(persistedSecondSnapshot)
         let persistedThird = try XCTUnwrap(persistedThirdSnapshot)
         let persistedWorkingSet = try XCTUnwrap(persistedWorkingSetSnapshot)
-        XCTAssertEqual(persistedSecond.count, 51)
-        XCTAssertEqual(persistedThird.count, 51)
+        XCTAssertEqual(persistedSecond.count, 41)
+        XCTAssertEqual(persistedThird.count, 41)
         XCTAssertTrue((persistedSecond + persistedThird).allSatisfy {
             $0.discoveryGeneration == refreshedGeneration
         })
@@ -581,7 +575,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let requestsAfterRefresh = await context.openverse.requestedPages()
         XCTAssertEqual(
             Array(requestsAfterRefresh.dropFirst(requestsBeforeRefresh.count)),
-            Array(2...8)
+            Array(2...6)
         )
     }
 
@@ -630,7 +624,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(currentOpenedPage, 2)
     }
 
-    /// 远端在第二个 50 张窗口中结束时，只发布实际剩余图片且不制造空 continuation。
+    /// 远端在第二个 40 张窗口中结束时，只发布实际剩余图片且不制造空 continuation。
     func testRepositoryTerminalPartialBatchHasNoContinuation() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
         _ = try await storage.commitDiscoveryFeed(
@@ -646,7 +640,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let second = try XCTUnwrap(DiscoveryPageReference(page: 2))
 
         let child = try await context.catalog.preparedItems(for: .discoveryPage(second))
-        XCTAssertEqual(Self.images(in: child).count, 23)
+        XCTAssertEqual(Self.images(in: child).count, 33)
         XCTAssertTrue(Self.discoveryDirectories(in: child).isEmpty)
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, [])
@@ -671,7 +665,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertNil(rejected)
     }
 
-    /// 旧完整快照仍按底层 20 张边界迁移；Provider 的 50 张只是无损聚合层。
+    /// 旧完整快照仍按底层 20 张边界迁移；Provider 的 40 张只是无损聚合层。
     func testLegacyGenerationMigratesToExactUnderlyingPageSnapshots() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
         let records = Self.records(page: 1) + Self.records(page: 2)

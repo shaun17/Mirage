@@ -226,6 +226,24 @@ final class SearchModelTests: XCTestCase {
         XCTAssertTrue(model.accessibilityEvent?.message.contains("网络不可用") == true)
     }
 
+    /// 聚合搜索局部失败仍显示可用结果，并把来源故障并入同一次 VoiceOver 公告。
+    func testPartialSourceFailurePublishesAccessibilityEvent() async {
+        let model = SearchModel(
+            service: ImageSearchService(photos: PartialIssuePhotoSearcher())
+        )
+        model.filter = .photos
+        model.query = "图片:cat"
+        model.setActive(true)
+
+        let loaded = await waitUntil { model.results.count == 2 }
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(model.sourceIssues.map(\.sourceID), [.pexels])
+        XCTAssertEqual(
+            model.accessibilityEvent?.message,
+            "已加载 2 张图片，共 2 张；已加载全部结果；部分数据源不可用：Pexels 测试不可用"
+        )
+    }
+
     /// 单个中文字符是完整关键词，防抖结束后必须进入搜索服务并显示结果。
     func testSingleChineseCharacterStartsSearch() async {
         let openverse = OpenverseCallCounter()
@@ -436,6 +454,34 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(finalCalls.last?.page, 2)
     }
 
+    /// 聚合错误按可操作性选择状态，不能让排在前面的凭据问题遮住限流或网络故障。
+    func testAggregatedFailurePrioritizesRateLimitThenNetwork() {
+        let credential = PhotoSourceIssue(
+            sourceID: .pexels,
+            kind: .missingCredential,
+            message: "missing"
+        )
+        let network = PhotoSourceIssue(
+            sourceID: .openverse,
+            kind: .network,
+            message: "network"
+        )
+        let rateLimit = PhotoSourceIssue(
+            sourceID: .pexels,
+            kind: .rateLimited,
+            message: "limited"
+        )
+
+        XCTAssertEqual(
+            SearchState(photoSearchError: .allSourcesFailed([credential, network])),
+            .network("network")
+        )
+        XCTAssertEqual(
+            SearchState(photoSearchError: .allSourcesFailed([credential, network, rateLimit])),
+            .rateLimited("limited")
+        )
+    }
+
     /// 在限定时间内轮询主线程状态，使异步防抖与 actor 响应测试保持确定性。
     private func waitUntil(
         timeout: Duration = .seconds(2),
@@ -532,6 +578,28 @@ private actor FailingOpenverse: OpenverseSearching {
     func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
         throw OpenverseError.network("离线测试")
     }
+}
+
+private struct PartialIssuePhotoSearcher: PhotoSearching {
+    func search(query: String, cursor: PhotoSearchCursor?, pageSize: Int) async throws -> PhotoSearchPage {
+        PhotoSearchPage(
+            records: makeModelRecords(page: 1, count: 2),
+            nextCursor: nil,
+            issues: [
+                PhotoSourceIssue(
+                    sourceID: .pexels,
+                    kind: .unavailable,
+                    message: "Pexels 测试不可用"
+                )
+            ]
+        )
+    }
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> PhotoSearchPage {
+        try await search(query: query, cursor: nil, pageSize: pageSize)
+    }
+
+    func configurationKey() async -> String { "partial-issue" }
 }
 
 private actor BlockingSecondPageOpenverse: OpenverseSearching {

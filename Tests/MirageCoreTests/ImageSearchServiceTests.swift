@@ -53,26 +53,138 @@ final class ImageSearchServiceTests: XCTestCase {
         ])
     }
 
+    /// 全局 Finder 上限提高到 40 后，默认 App 服务仍必须把一次滚动限制为 20。
+    func testAppDefaultRemainsTwentyWhileFileProviderCanRequestForty() async throws {
+        let appOpenverse = OpenverseSpy()
+        let app = ImageSearchService(openverse: appOpenverse)
+        let appPage = try await app.search("图片:cat", page: 1, pageSize: 40)
+        XCTAssertEqual(appPage.records.count, 20)
+        let appCalls = await appOpenverse.recordedCalls()
+        XCTAssertEqual(appCalls, [OpenverseCall(page: 1, pageSize: 20)])
+
+        let finderOpenverse = OpenverseSpy()
+        let finder = ImageSearchService(
+            openverse: finderOpenverse,
+            maximumPageSize: DiscoveryRecommendation.fileProviderPageSize
+        )
+        let finderPage = try await finder.search("图片:cat", page: 1, pageSize: 40)
+        XCTAssertEqual(finderPage.records.count, 40)
+        let finderCalls = await finderOpenverse.recordedCalls()
+        XCTAssertEqual(finderCalls, [OpenverseCall(page: 1, pageSize: 40)])
+    }
+
     /// File Provider 页令牌必须完整恢复页码、固定页大小和已交付数量。
     func testSearchPaginationCursorRoundTripAndValidation() throws {
         let issuedAt = Date(timeIntervalSince1970: 1_000)
+        let searchCursor = ImageSearchCursor(
+            page: 3,
+            photoCursor: PhotoSearchCursor(
+                configurationRevision: 7,
+                states: [
+                    PhotoSourceCursorState(
+                        sourceID: .openverse,
+                        cursor: PhotoSourceCursor(rawValue: "3"),
+                        pageSize: 10,
+                        exhausted: false
+                    ),
+                    PhotoSourceCursorState(
+                        sourceID: .pexels,
+                        cursor: PhotoSourceCursor(rawValue: "4"),
+                        pageSize: 10,
+                        exhausted: false
+                    )
+                ]
+            )
+        )
         let cursor = try SearchPaginationCursor(
             page: 3,
             pageSize: 20,
             delivered: 40,
             query: "cat",
+            configurationKey: "sources:7:openverse,pexels",
+            searchCursor: searchCursor,
             issuedAt: issuedAt
         )
         XCTAssertEqual(try SearchPaginationCursor.decode(cursor.encoded()), cursor)
-        XCTAssertNoThrow(try cursor.validate(for: "CAT", now: issuedAt.addingTimeInterval(599)))
+        XCTAssertNoThrow(
+            try cursor.validate(
+                for: "CAT",
+                configurationKey: "sources:7:openverse,pexels",
+                now: issuedAt.addingTimeInterval(599)
+            )
+        )
+        XCTAssertThrowsError(
+            try cursor.validate(
+                for: "cat",
+                configurationKey: "sources:8:openverse",
+                now: issuedAt
+            )
+        )
         XCTAssertThrowsError(try cursor.validate(for: "dog", now: issuedAt))
         XCTAssertThrowsError(try cursor.validate(for: "cat", now: issuedAt.addingTimeInterval(601)))
         XCTAssertThrowsError(try SearchPaginationCursor(page: 0, pageSize: 20, delivered: 0, query: "cat"))
-        XCTAssertThrowsError(try SearchPaginationCursor(page: 1, pageSize: 21, delivered: 0, query: "cat"))
+        XCTAssertNoThrow(try SearchPaginationCursor(page: 1, pageSize: 40, delivered: 0, query: "cat"))
+        XCTAssertThrowsError(try SearchPaginationCursor(page: 1, pageSize: 41, delivered: 0, query: "cat"))
         XCTAssertThrowsError(try SearchPaginationCursor(page: .max, pageSize: 20, delivered: 0, query: "cat"))
         XCTAssertThrowsError(try SearchPaginationCursor(page: 1, pageSize: 20, delivered: .max, query: "cat"))
         XCTAssertThrowsError(try cursor.deliveredCount(adding: .max))
         XCTAssertThrowsError(try cursor.advanced(to: 3, delivered: 40))
+
+        let oversizedSourceQuota = ImageSearchCursor(
+            page: 2,
+            photoCursor: PhotoSearchCursor(
+                configurationRevision: 7,
+                states: [
+                    PhotoSourceCursorState(
+                        sourceID: .openverse,
+                        cursor: PhotoSourceCursor(rawValue: "2"),
+                        pageSize: 20,
+                        exhausted: false
+                    ),
+                    PhotoSourceCursorState(
+                        sourceID: .pexels,
+                        cursor: PhotoSourceCursor(rawValue: "2"),
+                        pageSize: 20,
+                        exhausted: false
+                    )
+                ]
+            )
+        )
+        XCTAssertThrowsError(
+            try SearchPaginationCursor(
+                page: 2,
+                pageSize: 20,
+                delivered: 20,
+                query: "cat",
+                configurationKey: "sources:7:openverse,pexels",
+                searchCursor: oversizedSourceQuota
+            )
+        )
+
+        let overflowingSourceQuota = ImageSearchCursor(
+            page: 2,
+            photoCursor: PhotoSearchCursor(
+                configurationRevision: 7,
+                states: [
+                    PhotoSourceCursorState(
+                        sourceID: .openverse,
+                        cursor: PhotoSourceCursor(rawValue: "2"),
+                        pageSize: .max,
+                        exhausted: false
+                    )
+                ]
+            )
+        )
+        XCTAssertThrowsError(
+            try SearchPaginationCursor(
+                page: 2,
+                pageSize: 20,
+                delivered: 20,
+                query: "cat",
+                configurationKey: "sources:7:openverse",
+                searchCursor: overflowingSourceQuota
+            )
+        )
     }
 
     /// 极端页码必须在任何乘法前失败，不能让头像偏移计算造成运行时崩溃。

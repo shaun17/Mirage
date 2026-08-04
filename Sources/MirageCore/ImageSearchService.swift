@@ -1,94 +1,190 @@
 import Foundation
 
-/// 一次统一搜索的结果页；下一页由服务端页数或本地头像偏移决定。
-public struct ImageSearchPage: Sendable {
-    public let records: [RemoteImageRecord]
-    public let nextPage: Int?
+/// App 与 Finder 共用的统一游标；照片内部位置不再被压缩成单个页码。
+public struct ImageSearchCursor: Codable, Equatable, Sendable {
+    public let page: Int
+    public let photoCursor: PhotoSearchCursor?
 
-    public init(records: [RemoteImageRecord], nextPage: Int?) {
-        self.records = records
-        self.nextPage = nextPage
+    public init(page: Int, photoCursor: PhotoSearchCursor?) {
+        self.page = page
+        self.photoCursor = photoCursor
     }
 }
 
-/// 根据显式前缀决定图片搜索来源，并维护默认结果的来源顺序。
+public struct ImageSearchPage: Sendable {
+    public let records: [RemoteImageRecord]
+    public let nextCursor: ImageSearchCursor?
+    public let issues: [PhotoSourceIssue]
+
+    public var nextPage: Int? { nextCursor?.page }
+
+    public init(
+        records: [RemoteImageRecord],
+        nextCursor: ImageSearchCursor?,
+        issues: [PhotoSourceIssue] = []
+    ) {
+        self.records = records
+        self.nextCursor = nextCursor
+        self.issues = issues
+    }
+
+    /// 兼容现有测试替身和单源客户端；生产续页使用 nextCursor 保存每源位置。
+    public init(records: [RemoteImageRecord], nextPage: Int?, issues: [PhotoSourceIssue] = []) {
+        self.init(
+            records: records,
+            nextCursor: nextPage.map { ImageSearchCursor(page: $0, photoCursor: nil) },
+            issues: issues
+        )
+    }
+}
+
+/// 解析内容范围并组合聚合照片与本地头像；具体照片来源由 PhotoSearching 决定。
 public struct ImageSearchService: Sendable {
-    private let openverse: any OpenverseSearching
+    private let photos: any PhotoSearching
     private let diceBear: any DiceBearProviding
     private let automaticAvatarCount: Int
+    private let maximumPageSize: Int
+
+    public init(
+        photos: any PhotoSearching,
+        diceBear: any DiceBearProviding = DiceBearClient(),
+        automaticAvatarCount: Int = 4,
+        maximumPageSize: Int = DiscoveryRecommendation.pageSize
+    ) {
+        self.photos = photos
+        self.diceBear = diceBear
+        self.automaticAvatarCount = min(max(automaticAvatarCount, 0), 20)
+        self.maximumPageSize = min(
+            max(maximumPageSize, 1),
+            SearchPaginationCursor.maximumPageSize
+        )
+    }
 
     public init(
         openverse: any OpenverseSearching = OpenverseClient(),
         diceBear: any DiceBearProviding = DiceBearClient(),
-        automaticAvatarCount: Int = 4
+        automaticAvatarCount: Int = 4,
+        maximumPageSize: Int = DiscoveryRecommendation.pageSize
     ) {
-        self.openverse = openverse
-        self.diceBear = diceBear
-        self.automaticAvatarCount = min(max(automaticAvatarCount, 0), 20)
+        self.init(
+            photos: AggregatedPhotoSearcher(
+                sources: [OpenversePhotoSource(client: openverse)],
+                configurationRevision: 0
+            ),
+            diceBear: diceBear,
+            automaticAvatarCount: automaticAvatarCount,
+            maximumPageSize: maximumPageSize
+        )
     }
 
-    /// 每页严格最多返回 pageSize 条；无前缀时照片在前、头像在后。
+    public func configurationKey() async -> String {
+        await photos.configurationKey()
+    }
+
+    public func search(
+        _ rawQuery: String,
+        cursor: ImageSearchCursor?,
+        pageSize: Int = 20
+    ) async throws -> ImageSearchPage {
+        let page = cursor?.page ?? 1
+        return try await search(rawQuery, page: page, photoCursor: cursor?.photoCursor, pageSize: pageSize)
+    }
+
+    /// 旧页码入口继续服务测试和历史快照；返回值仍携带完整的新游标。
     public func search(_ rawQuery: String, page: Int = 1, pageSize: Int = 20) async throws -> ImageSearchPage {
+        try await search(rawQuery, page: page, photoCursor: nil, pageSize: pageSize, usesLegacyPage: true)
+    }
+
+    private func search(
+        _ rawQuery: String,
+        page: Int,
+        photoCursor: PhotoSearchCursor?,
+        pageSize: Int,
+        usesLegacyPage: Bool = false
+    ) async throws -> ImageSearchPage {
         let query = SearchQueryParser.parse(rawQuery)
-        guard !query.text.isEmpty else { return ImageSearchPage(records: [], nextPage: nil) }
+        guard !query.text.isEmpty else { return ImageSearchPage(records: [], nextCursor: nil) }
         guard (1...SearchPaginationCursor.maximumPage).contains(page) else {
             throw SearchPaginationCursorError.invalidValues
         }
-        let safePageSize = min(max(pageSize, 1), SearchPaginationCursor.maximumPageSize)
+        let safePageSize = min(max(pageSize, 1), maximumPageSize)
         let avatarOffset = try Self.avatarOffset(page: page, pageSize: safePageSize)
 
         switch query.scope {
         case .photo:
-            let response = try await openverse.search(query: query.text, page: page, pageSize: safePageSize)
-            return Self.normalized(response, after: page, pageSize: safePageSize)
-        case .avatar:
-            let records = await diceBear.avatars(
+            let result = try await photoPage(
                 query: query.text,
-                offset: avatarOffset,
-                count: safePageSize
+                page: page,
+                cursor: photoCursor,
+                pageSize: safePageSize,
+                usesLegacyPage: usesLegacyPage
             )
-            let nextPage = records.isEmpty || page == SearchPaginationCursor.maximumPage ? nil : page + 1
-            return ImageSearchPage(records: records, nextPage: nextPage)
+            return Self.imagePage(from: result, currentPage: page, pageSize: safePageSize)
+        case .avatar:
+            let records = await diceBear.avatars(query: query.text, offset: avatarOffset, count: safePageSize)
+            let next = records.isEmpty || page == SearchPaginationCursor.maximumPage
+                ? nil
+                : ImageSearchCursor(page: page + 1, photoCursor: nil)
+            return ImageSearchPage(records: records, nextCursor: next)
         case .automatic:
-            // 自动模式按约20%头像配额缩放，小页优先保留真实照片且默认20条仍为16+4。
             let avatarCount = min(automaticAvatarCount, safePageSize / 5)
             let photoCount = safePageSize - avatarCount
-            let photoPage = try await openverse.search(query: query.text, page: page, pageSize: photoCount)
-            // 本地安全过滤可能减少照片数量，使用本页独立头像区间补足20条且不跨页重复。
+            let result = try await photoPage(
+                query: query.text,
+                page: page,
+                cursor: photoCursor,
+                pageSize: photoCount,
+                usesLegacyPage: usesLegacyPage
+            )
             let avatars = await diceBear.avatars(
                 query: query.text,
                 offset: avatarOffset,
-                count: safePageSize - photoPage.records.count
+                count: safePageSize - result.records.count
             )
+            let next = result.nextCursor.flatMap {
+                page < SearchPaginationCursor.maximumPage
+                    ? ImageSearchCursor(page: page + 1, photoCursor: $0)
+                    : nil
+            }
             return ImageSearchPage(
-                records: Array((photoPage.records + avatars).prefix(safePageSize)),
-                nextPage: Self.validNextPage(photoPage.nextPage, after: page)
+                records: Array((result.records + avatars).prefix(safePageSize)),
+                nextCursor: next,
+                issues: result.issues
             )
         }
     }
 
-    /// 用显式溢出检查计算头像绝对偏移，不能让外部页码触发整数陷阱。
+    private func photoPage(
+        query: String,
+        page: Int,
+        cursor: PhotoSearchCursor?,
+        pageSize: Int,
+        usesLegacyPage: Bool
+    ) async throws -> PhotoSearchPage {
+        if usesLegacyPage { return try await photos.search(query: query, page: page, pageSize: pageSize) }
+        return try await photos.search(query: query, cursor: cursor, pageSize: pageSize)
+    }
+
+    private static func imagePage(
+        from result: PhotoSearchPage,
+        currentPage: Int,
+        pageSize: Int
+    ) -> ImageSearchPage {
+        let next = result.nextCursor.flatMap {
+            currentPage < SearchPaginationCursor.maximumPage
+                ? ImageSearchCursor(page: currentPage + 1, photoCursor: $0)
+                : nil
+        }
+        return ImageSearchPage(
+            records: Array(result.records.prefix(pageSize)),
+            nextCursor: next,
+            issues: result.issues
+        )
+    }
+
     private static func avatarOffset(page: Int, pageSize: Int) throws -> Int {
         let result = (page - 1).multipliedReportingOverflow(by: pageSize)
         guard !result.overflow else { throw SearchPaginationCursorError.invalidValues }
         return result.partialValue
-    }
-
-    /// 统一截断异常数据源的超量记录，并只接受严格向前的有限续页。
-    private static func normalized(
-        _ response: ImageSearchPage,
-        after page: Int,
-        pageSize: Int
-    ) -> ImageSearchPage {
-        ImageSearchPage(
-            records: Array(response.records.prefix(pageSize)),
-            nextPage: validNextPage(response.nextPage, after: page)
-        )
-    }
-
-    /// 数据源返回当前页、倒退页或超过安全上限时视为已经结束。
-    private static func validNextPage(_ candidate: Int?, after page: Int) -> Int? {
-        guard let candidate, candidate > page, candidate <= SearchPaginationCursor.maximumPage else { return nil }
-        return candidate
     }
 }

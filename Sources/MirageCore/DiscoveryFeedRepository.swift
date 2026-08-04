@@ -52,6 +52,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private let diceBear: any DiceBearProviding
     private let networkTimeout: Duration
     private let now: @Sendable () -> Date
+    private let catalogKey: @Sendable () async -> String
     private let snapshotMutationNotifier: DiscoveryFeedSnapshotMutationNotifier?
     private var inFlightPages: [DiscoveryFeedRequestKey: Task<DiscoveryFeedPage, Error>] = [:]
 
@@ -61,6 +62,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         diceBear: any DiceBearProviding = DiceBearClient(),
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
+        catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
         snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
         snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) {
@@ -69,6 +71,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         self.diceBear = diceBear
         self.networkTimeout = networkTimeout
         self.now = now
+        self.catalogKey = catalogKey
         self.snapshotMutationNotifier = snapshotDidChange.map {
             DiscoveryFeedSnapshotMutationNotifier(
                 signal: $0,
@@ -83,6 +86,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         diceBear: any DiceBearProviding = DiceBearClient(),
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
+        catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
         snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
         snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) throws {
@@ -91,6 +95,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         self.diceBear = diceBear
         self.networkTimeout = networkTimeout
         self.now = now
+        self.catalogKey = catalogKey
         self.snapshotMutationNotifier = snapshotDidChange.map {
             DiscoveryFeedSnapshotMutationNotifier(
                 signal: $0,
@@ -105,10 +110,12 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         page requestedPage: Int,
         pageSize: Int
     ) async throws -> DiscoveryFeedPage {
+        let expectedCatalogKey = await catalogKey()
         let key = DiscoveryFeedRequestKey(
             generation: requestedGeneration,
             page: requestedPage,
-            pageSize: pageSize
+            pageSize: pageSize,
+            catalogKey: expectedCatalogKey
         )
         if let existing = inFlightPages[key] {
             let result = try await existing.value
@@ -119,7 +126,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             try await resolvePage(
                 generation: requestedGeneration,
                 page: requestedPage,
-                pageSize: pageSize
+                pageSize: pageSize,
+                catalogKey: expectedCatalogKey
             )
         }
         inFlightPages[key] = task
@@ -138,7 +146,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private func resolvePage(
         generation requestedGeneration: UInt64?,
         page requestedPage: Int,
-        pageSize: Int
+        pageSize: Int,
+        catalogKey expectedCatalogKey: String
     ) async throws -> DiscoveryFeedPage {
         try Self.validate(page: requestedPage, pageSize: pageSize)
         let snapshot: DiscoveryFeedSnapshot
@@ -149,10 +158,17 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             ) else {
                 throw DiscoveryFeedError.snapshotExpired
             }
-            snapshot = try Self.validated(frozen, pageSize: pageSize)
+            snapshot = try Self.validated(
+                frozen,
+                pageSize: pageSize,
+                catalogKey: expectedCatalogKey
+            )
             initialMutation = false
         } else {
-            let current = try await currentSnapshot(pageSize: pageSize)
+            let current = try await currentSnapshot(
+                pageSize: pageSize,
+                catalogKey: expectedCatalogKey
+            )
             snapshot = current.snapshot
             initialMutation = current.didMutate
         }
@@ -203,11 +219,17 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
 
     /// 新鲜且版本匹配的当前快照直接复用，否则同步创建新的第一页 generation。
     private func currentSnapshot(
-        pageSize: Int
+        pageSize: Int,
+        catalogKey expectedCatalogKey: String
     ) async throws -> (snapshot: DiscoveryFeedSnapshot, didMutate: Bool) {
         let observed = try await storage.readDiscoveryFeedSnapshot()
         if let observed,
-           Self.isReusable(observed, now: now(), pageSize: pageSize) {
+           Self.isReusable(
+               observed,
+               now: now(),
+               pageSize: pageSize,
+               catalogKey: expectedCatalogKey
+           ) {
             return (observed, false)
         }
 
@@ -223,7 +245,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             records: loaded.records,
             refreshedAt: now(),
             source: loaded.source,
-            catalogKey: DiscoveryRecommendation.catalogKey,
+            catalogKey: expectedCatalogKey,
             queryKey: DiscoveryRecommendation.query,
             pageSize: pageSize,
             nextPage: Self.logicalNextPage(after: 1, hasMore: loaded.nextCursor != nil),
@@ -236,7 +258,12 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         case let .superseded(current):
             // 跨进程竞速输家必须直接采用胜者首页，不能把自己的迟到网络结果再次提交。
             guard let current,
-                  Self.isReusable(current, now: now(), pageSize: pageSize) else {
+                  Self.isReusable(
+                      current,
+                      now: now(),
+                      pageSize: pageSize,
+                      catalogKey: expectedCatalogKey
+                  ) else {
                 throw DiscoveryFeedError.snapshotExpired
             }
             return (current, false)
@@ -265,7 +292,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             let response = try await Self.searchWithTimeout(
                 service: service,
                 query: catalog[cursor.queryIndex],
-                page: cursor.remotePage,
+                cursor: cursor,
                 pageSize: pageSize,
                 timeout: networkTimeout
             )
@@ -280,7 +307,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
                 records: records,
                 nextCursor: Self.advancedCursor(
                     after: cursor,
-                    remoteHasMore: response.nextPage != nil,
+                    nextImageCursor: response.nextCursor,
                     catalogCount: catalog.count
                 ),
                 source: .network
@@ -301,13 +328,14 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     /// 当前关键词还有远端续页就前进一页，否则切到下一关键词的第一页；目录耗尽即整条流耗尽。
     private static func advancedCursor(
         after cursor: DiscoveryRemoteCursor,
-        remoteHasMore: Bool,
+        nextImageCursor: ImageSearchCursor?,
         catalogCount: Int
     ) -> DiscoveryRemoteCursor? {
-        if remoteHasMore {
+        if let nextImageCursor {
             return DiscoveryRemoteCursor(
                 queryIndex: cursor.queryIndex,
-                remotePage: cursor.remotePage + 1
+                remotePage: nextImageCursor.page,
+                imageCursor: nextImageCursor
             )
         }
         let nextIndex = cursor.queryIndex + 1
@@ -381,10 +409,11 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private static func isReusable(
         _ snapshot: DiscoveryFeedSnapshot,
         now: Date,
-        pageSize: Int
+        pageSize: Int,
+        catalogKey expectedCatalogKey: String
     ) -> Bool {
         let age = now.timeIntervalSince(snapshot.refreshedAt)
-        return snapshot.catalogKey == DiscoveryRecommendation.catalogKey
+        return snapshot.catalogKey == expectedCatalogKey
             && snapshot.queryKey == DiscoveryRecommendation.query
             && snapshot.pageSize == pageSize
             && !snapshot.records.isEmpty
@@ -395,9 +424,10 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     /// 冻结续页不再检查 TTL，但必须属于当前推荐 schema 与固定页大小。
     private static func validated(
         _ snapshot: DiscoveryFeedSnapshot,
-        pageSize: Int
+        pageSize: Int,
+        catalogKey expectedCatalogKey: String
     ) throws -> DiscoveryFeedSnapshot {
-        guard snapshot.catalogKey == DiscoveryRecommendation.catalogKey,
+        guard snapshot.catalogKey == expectedCatalogKey,
               snapshot.queryKey == DiscoveryRecommendation.query,
               snapshot.pageSize == pageSize else {
             throw DiscoveryFeedError.snapshotExpired
@@ -430,17 +460,20 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private static func searchWithTimeout(
         service: ImageSearchService,
         query: String,
-        page: Int,
+        cursor: DiscoveryRemoteCursor,
         pageSize: Int,
         timeout: Duration
     ) async throws -> ImageSearchPage {
         try await withThrowingTaskGroup(of: ImageSearchPage.self) { group in
             group.addTask {
-                try await service.search(
-                    query,
-                    page: page,
-                    pageSize: pageSize
-                )
+                if let imageCursor = cursor.imageCursor {
+                    return try await service.search(query, cursor: imageCursor, pageSize: pageSize)
+                }
+                if cursor.remotePage == 1 {
+                    return try await service.search(query, cursor: nil, pageSize: pageSize)
+                }
+                // 兼容 v5 及更早只保存远端页码的快照；新快照始终走完整游标。
+                return try await service.search(query, page: cursor.remotePage, pageSize: pageSize)
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
@@ -460,6 +493,7 @@ private struct DiscoveryFeedRequestKey: Hashable, Sendable {
     let generation: UInt64?
     let page: Int
     let pageSize: Int
+    let catalogKey: String
 }
 
 /// 仓库内部保留本页来源与下一次远端抓取位置；游标为空表示整个关键词目录耗尽。

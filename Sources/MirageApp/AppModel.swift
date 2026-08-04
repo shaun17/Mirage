@@ -12,12 +12,27 @@ final class AppModel: ObservableObject {
     @Published private(set) var providerState: ProviderState = .checking
     @Published var libraryNotice: String?
 
-    let searchModel = SearchModel(waitsForRecommendationFeed: true)
+    let searchModel: SearchModel
+    lazy var sourceSettingsModel = PhotoSourceSettingsModel(
+        environment: photoEnvironment,
+        configurationDidChange: { [weak self] sourceID in
+            await self?.photoSourceConfigurationDidChange(sourceID: sourceID)
+        }
+    )
+    private let photoEnvironment: PhotoSearchEnvironment
     private let domainManager = MirageDomainManager()
     private var storage: AppGroupStorage?
     private var startupTask: Task<Void, Never>?
     private var providerCheckTask: Task<Void, Never>?
     private var latestLibraryRevision: UInt64 = 0
+
+    init(photoEnvironment: PhotoSearchEnvironment = .production()) {
+        self.photoEnvironment = photoEnvironment
+        self.searchModel = SearchModel(
+            service: photoEnvironment.imageSearchService(for: .app),
+            waitsForRecommendationFeed: true
+        )
+    }
 
     /// 同一时刻的窗口启动调用共享一个任务；后续激活仍可重新检查系统扩展状态。
     func start() async {
@@ -57,6 +72,11 @@ final class AppModel: ObservableObject {
 
     /// 收藏写入共享存储后刷新收藏目录与工作集，使打开的文件面板及时更新。
     func toggleFavorite(_ record: RemoteImageRecord) async {
+        let isRemovingExistingFavorite = favoriteIDs.contains(record.id)
+        guard record.source.allowsPersistentLibraryStorage || isRemovingExistingFavorite else {
+            libraryNotice = "\(record.source.displayName) 当前仅支持临时搜索预览，请从来源页打开并下载图片。"
+            return
+        }
         guard let storage else {
             switch libraryAvailability {
             case .preparing, .ready:
@@ -67,7 +87,12 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            let snapshot = try await storage.toggleFavorite(record)
+            let snapshot: LibrarySnapshot
+            if record.source.allowsPersistentLibraryStorage {
+                snapshot = try await storage.toggleFavorite(record)
+            } else {
+                snapshot = try await storage.removeFavorite(id: record.id)
+            }
             applyLibrarySnapshot(snapshot)
             do {
                 try await domainManager.signalFavoritesChanged()
@@ -101,6 +126,13 @@ final class AppModel: ObservableObject {
             searchModel.configureRecommendationFeed(
                 DiscoveryFeedRepository(
                     storage: sharedStorage,
+                    service: photoEnvironment.imageSearchService(
+                        for: .app,
+                        purpose: .recommendation
+                    ),
+                    catalogKey: { [photoEnvironment] in
+                        await photoEnvironment.recommendationCatalogKey(for: .app)
+                    },
                     snapshotDidChange: { [domainManager] in
                         try await domainManager.signalDiscoveryChanged()
                     }
@@ -141,6 +173,19 @@ final class AppModel: ObservableObject {
             }
         } catch {
             providerState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// 设置保存后重启主 App 搜索；只有 Finder 支持的来源才通知扩展刷新。
+    private func photoSourceConfigurationDidChange(sourceID: PhotoSourceID) async {
+        searchModel.sourceConfigurationDidChange()
+        guard PhotoSourceRegistry.descriptor(for: sourceID)?.supports(.fileProvider) == true else {
+            return
+        }
+        do {
+            try await domainManager.signalDiscoveryChanged()
+        } catch {
+            libraryNotice = "图片数据源设置已保存，但文件面板暂未刷新：\(error.localizedDescription)"
         }
     }
 

@@ -15,14 +15,17 @@ public enum DiscoveryRecommendation {
     /// 单关键词场景（内容筛选与无共享存储时的网络兜底）仍使用目录首词。
     public static let query = queries[0]
 
-    /// v5 收紧照片质量与内容安全并扩展头像目录；旧快照可能含不适内容，读取时整代作废。
-    public static let catalogKey = "mirage-recommendations-v5"
+    /// v7 的来源游标冻结上游批次大小与本地 offset；旧页码游标不能跨批次策略续读。
+    public static let catalogKey = "mirage-recommendations-v7"
 
     /// 网络失败时只把内部稳定种子交给 DiceBear，不发送到远端搜索服务。
     public static let fallbackSeed = "mirage-recommendations-fallback-v2"
 
-    /// App 每次追加 20 张；File Provider 在同一冻结代次上聚合为每层 50 张。
+    /// App 与共享推荐快照仍按 20 张追加；Finder 在同一代次上聚合并交付 40 张。
     public static let pageSize = 20
+
+    /// Finder 字符串搜索与推荐目录的消费者页上限；不改变 App 的 20 张滚动步长。
+    public static let fileProviderPageSize = 40
 
     /// 新的首次读取最多每小时刷新一次；App 的同一轮滚动始终冻结在原 generation。
     public static let refreshInterval: TimeInterval = 60 * 60

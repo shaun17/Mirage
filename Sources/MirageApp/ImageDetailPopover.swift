@@ -28,7 +28,7 @@ struct ImageDetailPopover: View {
                 .font(.headline)
                 .lineLimit(2)
 
-            LabeledContent("来源", value: sourceName)
+            LabeledContent("来源", value: record.source.displayName)
             authorRow
             linkRow(title: "来源页", url: record.sourcePageURL)
             linkRow(title: "许可", url: record.license.url, label: record.license.displayName)
@@ -64,10 +64,5 @@ struct ImageDetailPopover: View {
         } else {
             LabeledContent(title, value: label ?? "未提供")
         }
-    }
-
-    /// 使用服务品牌名表达来源，避免向用户暴露内部枚举值。
-    private var sourceName: String {
-        record.source == .openverse ? "Openverse" : "DiceBear"
     }
 }
