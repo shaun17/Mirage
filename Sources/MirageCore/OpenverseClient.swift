@@ -26,7 +26,9 @@ extension OpenverseError: LocalizedError {
 
 /// 无需账号的 Openverse 图片搜索客户端。
 public struct OpenverseClient: OpenverseSearching, Sendable {
-    public static let defaultEndpoint = URL(string: "https://api.openverse.org/v1/images")!
+    public static let defaultEndpoint = URL(string: "https://api.openverse.org/v1/images/")!
+    /// 当前客户端不携带 OAuth token；Openverse 匿名请求的单页上限为 20。
+    static let maximumAnonymousPageSize = 20
 
     private let session: URLSession
     private let endpoint: URL
@@ -40,7 +42,7 @@ public struct OpenverseClient: OpenverseSearching, Sendable {
     public func search(query: String, page: Int = 1, pageSize: Int = 20) async throws -> ImageSearchPage {
         try Task.checkCancellation()
         let safePage = max(page, 1)
-        let safePageSize = min(max(pageSize, 1), 50)
+        let safePageSize = min(max(pageSize, 1), Self.maximumAnonymousPageSize)
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "q", value: query),

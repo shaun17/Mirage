@@ -956,7 +956,10 @@ private actor ProviderPagedOpenverse: OpenverseSearching {
     func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
         pages.append(page)
         return ImageSearchPage(
-            records: ProviderRepositoryPageSnapshotTests.records(prefix: recordPrefix, page: page),
+            records: Array(
+                ProviderRepositoryPageSnapshotTests.records(prefix: recordPrefix, page: page)
+                    .prefix(pageSize)
+            ),
             nextPage: page + 1
         )
     }

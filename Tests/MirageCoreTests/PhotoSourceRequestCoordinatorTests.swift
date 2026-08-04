@@ -59,6 +59,138 @@ final class PhotoSourceRequestCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls, [BatchSourceCall(cursor: nil, pageSize: 40)])
     }
 
+    /// Openverse 的 40 条逻辑批次由两个匿名 20 条请求组成；两个 App 页复用该批次，续批从远端第 3 页开始。
+    func testOpenverseFortyRecordBatchUsesTwentyRecordUpstreamPages() async throws {
+        let policy = PhotoSourceRequestPolicies.policy(for: .openverse)
+        XCTAssertEqual(PhotoSourceRequestPolicies.catalogVersion, 3)
+        XCTAssertEqual(policy.version, 2)
+        XCTAssertEqual(policy.preferredBatchSize, 40)
+        XCTAssertEqual(policy.maximumBatchSize, 40)
+        let client = TwentyRecordOpenverse()
+        let source = CoordinatedPhotoSource(
+            source: OpenversePhotoSource(client: client),
+            policy: policy,
+            coordinator: PhotoSourceRequestCoordinator(),
+            configurationPartition: "anonymous"
+        )
+
+        let first = try await source.search(query: "nature", cursor: nil, pageSize: 20)
+        let callsAfterFirstPage = await client.recordedCalls()
+        let firstCursor = try XCTUnwrap(first.nextCursor)
+        let second = try await source.search(query: "nature", cursor: firstCursor, pageSize: 20)
+        let firstBatchIDs = first.records.map(\.id) + second.records.map(\.id)
+
+        XCTAssertEqual(callsAfterFirstPage, [
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20)
+        ])
+        XCTAssertEqual(first.records.map(\.id), (0..<20).map { "openverse-\($0)" })
+        XCTAssertEqual(second.records.map(\.id), (20..<40).map { "openverse-\($0)" })
+        XCTAssertEqual(Set(firstBatchIDs).count, 40)
+        let callsAfterSecondPage = await client.recordedCalls()
+        XCTAssertEqual(callsAfterSecondPage, [
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20)
+        ])
+
+        let secondCursor = try XCTUnwrap(second.nextCursor)
+        let third = try await source.search(query: "nature", cursor: secondCursor, pageSize: 20)
+
+        XCTAssertEqual(third.records.map(\.id), (40..<60).map { "openverse-\($0)" })
+        let allCalls = await client.recordedCalls()
+        XCTAssertEqual(allCalls, [
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20),
+            OpenverseBatchCall(page: 3, pageSize: 20),
+            OpenverseBatchCall(page: 4, pageSize: 20)
+        ])
+    }
+
+    /// 非 20 倍数的逻辑页用页内偏移续读，不能丢掉第二个远端页尚未交付的记录。
+    func testOpenverseCursorPreservesPartialAnonymousPage() async throws {
+        let client = TwentyRecordOpenverse()
+        let source = OpenversePhotoSource(client: client)
+
+        let first = try await source.search(query: "nature", cursor: nil, pageSize: 25)
+        XCTAssertEqual(first.records.map(\.id), (0..<25).map { "openverse-\($0)" })
+        XCTAssertEqual(first.nextCursor?.rawValue, "ov1:2:5")
+
+        let second = try await source.search(
+            query: "nature",
+            cursor: try XCTUnwrap(first.nextCursor),
+            pageSize: 25
+        )
+        XCTAssertEqual(second.records.map(\.id), (25..<50).map { "openverse-\($0)" })
+        XCTAssertEqual(second.nextCursor?.rawValue, "ov1:3:10")
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20),
+            OpenverseBatchCall(page: 3, pageSize: 20)
+        ])
+    }
+
+    /// 远端提前耗尽时返回已有记录并终止，不能为了凑 40 条继续请求不存在的页面。
+    func testOpenverseShortFinalPageHasNoContinuation() async throws {
+        let client = TwentyRecordOpenverse(lastPage: 1)
+        let source = OpenversePhotoSource(client: client)
+
+        let page = try await source.search(query: "nature", cursor: nil, pageSize: 40)
+
+        XCTAssertEqual(page.records.map(\.id), (0..<20).map { "openverse-\($0)" })
+        XCTAssertNil(page.nextCursor)
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [OpenverseBatchCall(page: 1, pageSize: 20)])
+    }
+
+    /// 第二个匿名页失败时不能缓存第一个页的半成品；解除退避后的重试必须从第一页重新组批。
+    func testOpenverseSecondChunkFailureDoesNotCachePartialBatch() async throws {
+        let client = FailOnceSecondPageOpenverse()
+        let policy = PhotoSourceRequestPolicy(
+            version: 2,
+            preferredBatchSize: 40,
+            maximumBatchSize: 40,
+            metadataTimeToLive: 60 * 60,
+            transientBackoffMaximum: 0
+        )
+        let source = CoordinatedPhotoSource(
+            source: OpenversePhotoSource(client: client),
+            policy: policy,
+            coordinator: PhotoSourceRequestCoordinator(),
+            configurationPartition: "anonymous-fail-once"
+        )
+
+        do {
+            _ = try await source.search(query: "nature", cursor: nil, pageSize: 20)
+            XCTFail("第二个 Openverse 匿名页失败时整个逻辑批次都应失败")
+        } catch {
+            XCTAssertEqual(error as? URLError, URLError(.networkConnectionLost))
+        }
+
+        let recovered = try await source.search(query: "nature", cursor: nil, pageSize: 20)
+        XCTAssertEqual(recovered.records.map(\.id), (0..<20).map { "openverse-\($0)" })
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20),
+            OpenverseBatchCall(page: 1, pageSize: 20),
+            OpenverseBatchCall(page: 2, pageSize: 20)
+        ])
+    }
+
+    /// 相邻远端页偶发重复 ID 时逻辑批次必须去重，并按已消费远端页继续前进。
+    func testOpenverseLogicalBatchDeduplicatesAcrossAnonymousPages() async throws {
+        let client = OverlappingOpenverse()
+        let source = OpenversePhotoSource(client: client)
+
+        let page = try await source.search(query: "nature", cursor: nil, pageSize: 40)
+
+        XCTAssertEqual(page.records.count, 39)
+        XCTAssertEqual(Set(page.records.map(\.id)).count, 39)
+        XCTAssertEqual(page.nextCursor?.rawValue, "ov1:3:0")
+    }
+
     func testPixabayConnectionTestReusesPersistentTwentyFourHourCache() async throws {
         let root = Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -701,6 +833,94 @@ final class PhotoSourceRequestCoordinatorTests: XCTestCase {
 private struct BatchSourceCall: Equatable, Sendable {
     let cursor: String?
     let pageSize: Int
+}
+
+private struct OpenverseBatchCall: Equatable, Sendable {
+    let page: Int
+    let pageSize: Int
+}
+
+/// 模拟匿名 Openverse 的 20 条硬上限，并按远端页码生成全局连续的稳定记录。
+private actor TwentyRecordOpenverse: OpenverseSearching {
+    private let lastPage: Int?
+    private var calls: [OpenverseBatchCall] = []
+
+    init(lastPage: Int? = nil) {
+        self.lastPage = lastPage
+    }
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        calls.append(OpenverseBatchCall(page: page, pageSize: pageSize))
+        let deliveredCount = min(pageSize, 20)
+        let start = (page - 1) * 20
+        let records = (start..<(start + deliveredCount)).map { index in
+            let url = URL(string: "https://example.com/openverse/\(index).jpg")!
+            return RemoteImageRecord(
+                id: "openverse-\(index)",
+                title: "Openverse \(index)",
+                source: .openverse,
+                imageURL: url,
+                thumbnailURL: url,
+                license: .cc0
+            )
+        }
+        let nextPage = page == lastPage ? nil : page + 1
+        return ImageSearchPage(records: records, nextPage: nextPage)
+    }
+
+    func recordedCalls() -> [OpenverseBatchCall] { calls }
+}
+
+private actor FailOnceSecondPageOpenverse: OpenverseSearching {
+    private var hasFailed = false
+    private var calls: [OpenverseBatchCall] = []
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        calls.append(OpenverseBatchCall(page: page, pageSize: pageSize))
+        if page == 2, !hasFailed {
+            hasFailed = true
+            throw URLError(.networkConnectionLost)
+        }
+        return ImageSearchPage(
+            records: makeOpenverseRecords(page: page, pageSize: pageSize),
+            nextPage: page + 1
+        )
+    }
+
+    func recordedCalls() -> [OpenverseBatchCall] { calls }
+}
+
+private actor OverlappingOpenverse: OpenverseSearching {
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        let start = page == 1 ? 0 : 19
+        let records = (start..<(start + pageSize)).map { index in
+            let url = URL(string: "https://example.com/openverse/\(index).jpg")!
+            return RemoteImageRecord(
+                id: "openverse-\(index)",
+                title: "Openverse \(index)",
+                source: .openverse,
+                imageURL: url,
+                thumbnailURL: url,
+                license: .cc0
+            )
+        }
+        return ImageSearchPage(records: records, nextPage: page + 1)
+    }
+}
+
+private func makeOpenverseRecords(page: Int, pageSize: Int) -> [RemoteImageRecord] {
+    let start = (page - 1) * 20
+    return (start..<(start + min(pageSize, 20))).map { index in
+        let url = URL(string: "https://example.com/openverse/\(index).jpg")!
+        return RemoteImageRecord(
+            id: "openverse-\(index)",
+            title: "Openverse \(index)",
+            source: .openverse,
+            imageURL: url,
+            thumbnailURL: url,
+            license: .cc0
+        )
+    }
 }
 
 private actor BatchPhotoSource: PhotoSourceSearching {

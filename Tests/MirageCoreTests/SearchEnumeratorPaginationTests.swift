@@ -104,7 +104,7 @@ final class SearchEnumeratorPaginationTests: XCTestCase {
         XCTAssertEqual(cursor.searchCursor?.page, 2)
         XCTAssertEqual(
             cursor.searchCursor?.photoCursor?.states.first?.cursor?.rawValue,
-            "2"
+            "ov1:2:0"
         )
 
         let secondFinished = expectation(description: "第二页完成")

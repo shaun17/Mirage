@@ -74,15 +74,16 @@ public struct PhotoSourceRequestPolicy: Equatable, Sendable {
 
 public enum PhotoSourceRequestPolicies {
     /// 修改任何会改变上游分页边界的策略时必须推进，令旧 Finder token 明确失效。
-    public static let catalogVersion: UInt16 = 2
+    public static let catalogVersion: UInt16 = 3
 
     public static func policy(for sourceID: PhotoSourceID) -> PhotoSourceRequestPolicy {
         switch sourceID {
         case .openverse:
             return PhotoSourceRequestPolicy(
-                version: 1,
+                // 逻辑批次仍为 40；OpenversePhotoSource 在内部拆成两个匿名 20 条请求。
+                version: 2,
                 preferredBatchSize: 40,
-                maximumBatchSize: 50,
+                maximumBatchSize: 40,
                 metadataTimeToLive: 60 * 60
             )
         case .metMuseum:

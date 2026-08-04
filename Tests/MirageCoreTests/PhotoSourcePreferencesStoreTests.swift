@@ -228,6 +228,9 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         let defaultAppKey = await environment.recommendationCatalogKey(for: .app)
         let defaultFinderKey = await environment.recommendationCatalogKey(for: .fileProvider)
         XCTAssertEqual(defaultAppKey, defaultFinderKey)
+        XCTAssertTrue(defaultAppKey.hasSuffix(
+            ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
+        ))
 
         _ = try await store.setEnabled(true, sourceID: .pexels, surface: .app)
         let configuredAppKey = await environment.recommendationCatalogKey(for: .app)

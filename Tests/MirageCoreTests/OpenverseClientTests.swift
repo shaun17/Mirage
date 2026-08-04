@@ -3,6 +3,14 @@ import XCTest
 @testable import MirageCore
 
 final class OpenverseClientTests: XCTestCase {
+    /// 使用 Openverse 官方规范路径，避免每次搜索先经历一次 301 重定向。
+    func testDefaultEndpointUsesCanonicalTrailingSlash() {
+        XCTAssertEqual(
+            OpenverseClient.defaultEndpoint.absoluteString,
+            "https://api.openverse.org/v1/images/"
+        )
+    }
+
     /// 每个测试后清理全局拦截器，避免测试间互相污染。
     override func tearDown() {
         TestURLProtocol.handler = nil
@@ -34,6 +42,26 @@ final class OpenverseClientTests: XCTestCase {
         XCTAssertEqual(page.records.first?.mimeType, "image/png")
         XCTAssertEqual(page.records.first?.sourcePageURL?.absoluteString, "https://openverse.example/a")
         XCTAssertEqual(page.nextPage, 3)
+    }
+
+    /// 匿名 Openverse 的单次上游请求最多 20 条；更大的内部批次不能原样泄漏到 HTTP。
+    func testAnonymousRequestCapsPageSizeAtTwenty() async throws {
+        TestURLProtocol.handler = { request in
+            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            let items = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(items["page"], "3")
+            XCTAssertEqual(items["page_size"], "20")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (
+                response,
+                Data(#"{"page":3,"page_count":3,"page_size":20,"result_count":60,"results":[]}"#.utf8)
+            )
+        }
+
+        let page = try await makeClient().search(query: "cat", page: 3, pageSize: 40)
+
+        XCTAssertEqual(page.records, [])
+        XCTAssertNil(page.nextPage)
     }
 
     /// 过滤器必须识别英文、中文和标签中的不适主题，同时避免子串误伤普通标题。

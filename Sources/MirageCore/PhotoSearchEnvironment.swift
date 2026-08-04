@@ -99,8 +99,9 @@ public struct PhotoSearchEnvironment: Sendable {
             }
             .map(\.rawValue)
             .joined(separator: ",")
-        // App 与 Finder 的有效来源相同时继续共享同一 generation；只有来源集合真正分叉才隔离。
+        // App 与 Finder 仅在有效来源及请求策略都相同时共享同一 generation。
         return "\(DiscoveryRecommendation.catalogKey):photo-sources:\(snapshot.revision):\(sourceIDs)"
+            + ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
     }
 
     /// 设置页用供应商最小合法批次验证凭据，并复用 App 与 Finder 共用的缓存和预算层。

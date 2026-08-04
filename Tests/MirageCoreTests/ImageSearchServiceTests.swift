@@ -135,7 +135,7 @@ final class ImageSearchServiceTests: XCTestCase {
         XCTAssertEqual(page.records.map(\.source), [.nasa, .diceBear])
     }
 
-    /// 全局 Finder 上限提高到 40 后，默认 App 服务仍必须把一次滚动限制为 20。
+    /// Finder 逻辑页保持 40，但匿名 Openverse 必须拆成两个 20 条上游请求。
     func testAppDefaultRemainsTwentyWhileFileProviderCanRequestForty() async throws {
         let appOpenverse = OpenverseSpy()
         let app = ImageSearchService(openverse: appOpenverse)
@@ -149,10 +149,20 @@ final class ImageSearchServiceTests: XCTestCase {
             openverse: finderOpenverse,
             maximumPageSize: DiscoveryRecommendation.fileProviderPageSize
         )
-        let finderPage = try await finder.search("图片:cat", page: 1, pageSize: 40)
-        XCTAssertEqual(finderPage.records.count, 40)
+        let finderFirst = try await finder.search("图片:cat", page: 1, pageSize: 40)
+        let finderSecond = try await finder.search("图片:cat", page: 2, pageSize: 40)
+        XCTAssertEqual(finderFirst.records.count, 40)
+        XCTAssertEqual(finderSecond.records.count, 40)
+        XCTAssertTrue(Set(finderFirst.records.map(\.id)).isDisjoint(
+            with: Set(finderSecond.records.map(\.id))
+        ))
         let finderCalls = await finderOpenverse.recordedCalls()
-        XCTAssertEqual(finderCalls, [OpenverseCall(page: 1, pageSize: 40)])
+        XCTAssertEqual(finderCalls, [
+            OpenverseCall(page: 1, pageSize: 20),
+            OpenverseCall(page: 2, pageSize: 20),
+            OpenverseCall(page: 3, pageSize: 20),
+            OpenverseCall(page: 4, pageSize: 20)
+        ])
     }
 
     /// File Provider 页令牌必须完整恢复页码、固定页大小和已交付数量。
