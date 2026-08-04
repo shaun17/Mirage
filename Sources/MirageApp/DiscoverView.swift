@@ -118,8 +118,8 @@ struct DiscoverView: View {
                 .accessibilityLabel("正在搜索")
         case .results:
             VStack(spacing: 0) {
-                if showsSourceStatusBar {
-                    sourceStatusBar
+                if showsSourceIssueBar {
+                    sourceIssueBar
                     Divider()
                 }
                 LibraryGridView(
@@ -141,8 +141,8 @@ struct DiscoverView: View {
             }
         case .empty:
             VStack(spacing: 0) {
-                if showsSourceStatusBar {
-                    sourceStatusBar
+                if showsSourceIssueBar {
+                    sourceIssueBar
                     Divider()
                 }
                 emptySearchView
@@ -207,43 +207,20 @@ struct DiscoverView: View {
         }
     }
 
-    private var showsSourceStatusBar: Bool {
-        !visibleSourceAttributions.isEmpty || !searchModel.sourceIssues.isEmpty
+    private var showsSourceIssueBar: Bool {
+        !searchModel.sourceIssues.isEmpty
     }
 
-    private var visibleSourceAttributions: [PhotoSourceAttribution] {
-        let visibleSourceIDs = Set(searchModel.results.compactMap(\.source.photoSourceID))
-        return PhotoSourceRegistry.descriptors.compactMap { descriptor in
-            guard visibleSourceIDs.contains(descriptor.id) else { return nil }
-            return descriptor.searchResultAttribution
-        }
-    }
-
-    /// 供应商结果始终带醒目平台链接；单源故障则作为局部提示保留其他来源的结果。
-    private var sourceStatusBar: some View {
+    /// 顶部只展示会影响当前结果的局部故障；供应商与许可信息保留在图片卡片和详情中。
+    private var sourceIssueBar: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(visibleSourceAttributions, id: \.url) { attribution in
-                VStack(alignment: .leading, spacing: 2) {
-                    Link(attribution.text, destination: attribution.url)
-                        .font(.callout.weight(.medium))
-                    if let note = attribution.note {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            if !searchModel.sourceIssues.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(searchModel.sourceIssues, id: \.sourceID) { issue in
-                        Label(issue.message, systemImage: "exclamationmark.triangle")
-                            .lineLimit(2)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.orange)
+            ForEach(searchModel.sourceIssues, id: \.sourceID) { issue in
+                Label(issue.message, systemImage: "exclamationmark.triangle")
+                    .lineLimit(2)
             }
         }
+        .font(.caption)
+        .foregroundStyle(.orange)
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
