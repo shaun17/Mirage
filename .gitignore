@@ -15,3 +15,13 @@ DerivedData/
 # Swift Package Manager 的本机状态
 .build/
 .swiftpm/
+
+# Local configuration and signing credentials
+/Config/Local.xcconfig
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.mobileprovision
+*.provisionprofile
