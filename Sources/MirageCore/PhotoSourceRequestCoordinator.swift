@@ -340,6 +340,10 @@ actor PhotoSourceRequestCoordinator {
                     )
                 } catch PhotoSourceBatchStoreError.leaseLost {
                     continue
+                } catch is CancellationError {
+                    // 取消不会写入共享退避；立即释放租约，避免 App/Finder 等待自然过期。
+                    try? await store.releaseBatchLease(for: key, owner: owner)
+                    throw CancellationError()
                 } catch {
                     throw error
                 }

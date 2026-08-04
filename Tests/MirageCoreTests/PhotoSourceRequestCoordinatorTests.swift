@@ -411,6 +411,57 @@ final class PhotoSourceRequestCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.count, 1)
     }
 
+    /// owner 在取得持久租约后取消时应立即释放，另一 coordinator 不必等待 15 秒租约自然过期。
+    func testCancellingLeaseOwnerAllowsAnotherCoordinatorToTakeOverImmediately() async throws {
+        let root = Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let upstream = CancellationLeasePhotoSource()
+        let policy = PhotoSourceRequestPolicies.policy(for: .openverse)
+        let app = CoordinatedPhotoSource(
+            source: upstream,
+            policy: policy,
+            coordinator: PhotoSourceRequestCoordinator(
+                store: try PhotoSourceBatchStore(baseURL: root)
+            ),
+            configurationPartition: "anonymous:cancelled-owner"
+        )
+        let finder = CoordinatedPhotoSource(
+            source: upstream,
+            policy: policy,
+            coordinator: PhotoSourceRequestCoordinator(
+                store: try PhotoSourceBatchStore(baseURL: root)
+            ),
+            configurationPartition: "anonymous:cancelled-owner"
+        )
+
+        let owner = Task {
+            try await app.search(query: "city", cursor: nil, pageSize: 20)
+        }
+        let ownerStarted = await upstream.waitForCalls(1)
+        XCTAssertTrue(ownerStarted)
+        owner.cancel()
+        do {
+            _ = try await owner.value
+            XCTFail("被取消的 owner 不应返回结果")
+        } catch is CancellationError {
+            // expected
+        }
+
+        let successor = Task {
+            try await finder.search(query: "city", cursor: nil, pageSize: 20)
+        }
+        guard await upstream.waitForCalls(2) else {
+            successor.cancel()
+            _ = try? await successor.value
+            return XCTFail("另一 coordinator 应在取消后立即取得已释放的租约")
+        }
+
+        let page = try await successor.value
+        XCTAssertEqual(page.records.count, 20)
+        let callCount = await upstream.callCount()
+        XCTAssertEqual(callCount, 2)
+    }
+
     /// 游标绑定查询和凭据分区；错配或旧页码都必须在访问网络前被拒绝。
     func testMismatchedAndLegacyCursorsAreRejectedBeforeNetwork() async throws {
         let upstream = BatchPhotoSource(sourceID: .pexels, delay: .zero)
@@ -971,6 +1022,42 @@ private actor BatchPhotoSource: PhotoSourceSearching {
         case .giphy: return (.giphy, .giphy)
         }
     }
+}
+
+private actor CancellationLeasePhotoSource: PhotoSourceSearching {
+    nonisolated let sourceID = PhotoSourceID.openverse
+    private var calls = 0
+
+    func search(query: String, cursor: PhotoSourceCursor?, pageSize: Int) async throws -> PhotoSourcePage {
+        calls += 1
+        if calls == 1 {
+            try await Task.sleep(for: .seconds(30))
+        }
+        let records = (0..<pageSize).map { index in
+            let url = URL(string: "https://example.com/openverse/cancel-\(index).jpg")!
+            return RemoteImageRecord(
+                id: "openverse-cancel-\(index)",
+                title: "Openverse Cancel \(index)",
+                source: .openverse,
+                imageURL: url,
+                thumbnailURL: url,
+                license: .cc0
+            )
+        }
+        return PhotoSourcePage(records: records, nextCursor: nil)
+    }
+
+    func waitForCalls(_ expected: Int) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while clock.now < deadline {
+            if calls >= expected { return true }
+            await Task.yield()
+        }
+        return calls >= expected
+    }
+
+    func callCount() -> Int { calls }
 }
 
 private actor RateLimitedPhotoSource: PhotoSourceSearching {
