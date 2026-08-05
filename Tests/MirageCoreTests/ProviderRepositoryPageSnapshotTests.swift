@@ -68,7 +68,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(images.map(\.itemIdentifier)).count, 40)
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier == ProviderIdentifiers.avatars
-                && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v10:")
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v12:")
         })
         let continuation = try XCTUnwrap(directories.only)
         XCTAssertEqual(continuation.filename, "加载更多")
@@ -118,6 +118,41 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertNil(forged)
     }
 
+    /// 生产头像目录在 Finder 中必须同时接受三家来源，并能按统一生成日恢复持久缓存。
+    func testAvatarFolderPublishesAndRestoresAllProductionProviders() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let avatars = AvatarCatalogClient(now: { Self.avatarSeedDate1 })
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: avatars
+        )
+        let catalog = ProviderCatalog(repository: repository)
+
+        let first = try await catalog.preparedItems(for: .avatars)
+        let imageItems = Self.images(in: first)
+        var sources = Set<ImageSource>()
+        for item in imageItems {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            if let source = occurrence?.record.source { sources.insert(source) }
+        }
+
+        XCTAssertEqual(imageItems.count, 40)
+        XCTAssertEqual(sources, [.diceBear, .gravatar, .robohash])
+        XCTAssertTrue(imageItems.allSatisfy { $0.itemIdentifier.rawValue.hasPrefix("avatar:") })
+
+        let restoredRepository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: AvatarCatalogClient(now: { Self.avatarSeedDate1Later })
+        )
+        let restored = try await ProviderCatalog(repository: restoredRepository)
+            .preparedItems(for: .avatars)
+        XCTAssertEqual(first.map(\.itemIdentifier), restored.map(\.itemIdentifier))
+    }
+
     /// 打开头像第 2 层只生成 offsets 40...79，并发布指向第 3 层的稳定入口。
     func testOpeningSecondAvatarPageLoadsNextFortyAndPublishesThirdPage() async throws {
         let context = try makeContext()
@@ -154,7 +189,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         ))
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier == second.itemIdentifier
-                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v2:2:db:v10:")
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v2:2:db:v12:")
         })
         let continuation = try XCTUnwrap(page.last)
         XCTAssertEqual(continuation.filename, "加载更多")
@@ -288,7 +323,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == page.itemIdentifier })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:3")
         XCTAssertEqual(continuation.parentItemIdentifier, page.itemIdentifier)
         XCTAssertEqual(continuation.filename, "更多图片")
@@ -330,7 +365,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == third.itemIdentifier })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:3:provider:5:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:4")
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, Array(1...6))
@@ -365,7 +400,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             fifthImages.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:5:provider:9:0"
         )
-        XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
         XCTAssertEqual(sixthContinuation.parentItemIdentifier, fifth.itemIdentifier)
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
@@ -429,7 +464,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.discoveryGeneration == publishedGeneration })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         XCTAssertFalse(images.contains { $0.itemIdentifier.rawValue.contains("refreshed") })
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, [1, 2, 3, 4])
@@ -624,12 +659,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             rebuiltSecond.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:2:refreshed:3:0"
         )
-        XCTAssertTrue(rebuiltSecond.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(rebuiltSecond.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         XCTAssertEqual(
             rebuiltThird.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:3:refreshed:5:0"
         )
-        XCTAssertTrue(rebuiltThird.last?.itemIdentifier.rawValue.contains(":db:v10:") == true)
+        XCTAssertTrue(rebuiltThird.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
         // 自动推荐每页固定补入 4 个稳定头像；换代后远端照片必须替换，头像 ID 则允许复用。
         let oldRemoteChildIDs = Set(oldChildIDs.filter { !$0.rawValue.contains(":db:") })
         let refreshedRemoteChildIDs = Set(refreshedWorkingSet
@@ -977,6 +1012,17 @@ private struct ProviderDiceBearRequest: Equatable, Sendable {
     let query: String
     let offset: Int
     let count: Int
+}
+
+private struct ProviderEmptyDiscoveryFeed: DiscoveryFeedProviding {
+    func page(generation: UInt64?, page: Int, pageSize: Int) async throws -> DiscoveryFeedPage {
+        DiscoveryFeedPage(
+            generation: generation ?? 1,
+            records: [],
+            nextPage: nil,
+            didMutateSnapshot: false
+        )
+    }
 }
 
 private actor ProviderRecordingDiceBear: DiceBearProviding {

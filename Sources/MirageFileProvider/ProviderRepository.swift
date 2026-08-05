@@ -7,17 +7,17 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let storage: AppGroupStorage?
     private let manager: NSFileProviderManager?
     private let discoveryFeed: (any DiscoveryFeedProviding)?
-    private let diceBear: any DiceBearProviding
+    private let avatarProvider: any AvatarProviding
     private let sourcePreferences: (any PhotoSourcePreferencesReading)?
 
-    /// Finder 头像分页按绝对 offset 生成；每次调用仍受 DiceBear 单次 20 条限制。
+    /// Finder 头像分页按绝对 offset 生成；每次调用仍受头像协议单次 20 条限制。
     private static let avatarChunkSize = 20
 
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
         manager: NSFileProviderManager?,
         environment: PhotoSearchEnvironment = .production(),
-        diceBear: any DiceBearProviding = DiceBearClient()
+        diceBear: any AvatarProviding = AvatarCatalogClient()
     ) {
         let storage = try? AppGroupStorage()
         let service = environment.imageSearchService(
@@ -27,7 +27,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
         self.storage = storage
         self.manager = manager
-        self.diceBear = diceBear
+        self.avatarProvider = diceBear
         self.sourcePreferences = environment.preferences
         self.discoveryFeed = storage.map {
             DiscoveryFeedRepository(
@@ -48,13 +48,13 @@ actor ProviderRepository: ProviderSearchResultStoring {
         manager: NSFileProviderManager?,
         storage: AppGroupStorage,
         discoveryFeed: any DiscoveryFeedProviding,
-        diceBear: any DiceBearProviding = DiceBearClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
         sourcePreferences: (any PhotoSourcePreferencesReading)? = nil
     ) {
         self.storage = storage
         self.manager = manager
         self.discoveryFeed = discoveryFeed
-        self.diceBear = diceBear
+        self.avatarProvider = diceBear
         self.sourcePreferences = sourcePreferences
     }
 
@@ -89,11 +89,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
-    /// 每个可见目录生成固定 40 个确定性 DiceBear 头像，不读取混合推荐流或 Openverse。
+    /// 每个可见目录生成固定 40 个确定性头像，不读取混合推荐流或照片来源。
     private func avatarItems(page: Int) async throws -> [ProviderItem] {
         let storage = try requireStorage()
         // 一批头像可能跨越多个 20 条分段；日期必须只捕获一次，避免午夜混入两天 seed。
-        let generationDay = await diceBear.currentGenerationDay()
+        let generationDay = await avatarProvider.currentGenerationDay()
         if let cached = try await cachedAvatarItems(
             in: storage,
             page: page,
@@ -110,14 +110,15 @@ actor ProviderRepository: ProviderSearchResultStoring {
         while offset < range.upperBound {
             try Task.checkCancellation()
             let count = min(Self.avatarChunkSize, range.upperBound - offset)
-            let generated = await diceBear.avatars(
+            let generated = await avatarProvider.avatars(
                 query: DiscoveryRecommendation.query,
                 offset: offset,
                 count: count,
                 generationDay: generationDay
             )
             for record in generated
-                where record.source == .diceBear && seen.insert(record.id).inserted {
+                where Self.isCurrentAvatarRecord(record, generationDay: generationDay)
+                    && seen.insert(record.id).inserted {
                 records.append(record)
             }
             offset += count
@@ -143,7 +144,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private func cachedAvatarItems(
         in storage: AppGroupStorage,
         page: Int,
-        generationDay: DiceBearGenerationDay
+        generationDay: AvatarGenerationDay
     ) async throws -> [ProviderItem]? {
         let scope: ProviderEnumerationScope
         let expectedPage: AvatarPageReference?
@@ -199,8 +200,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 // fileExists 与实际读取之间若被清理，按普通 cache miss 自愈。
                 return nil
             }
-            guard record.source == .diceBear,
-                  StableImageID.diceBearGenerationDay(from: record.id) == generationDay else {
+            guard Self.isCurrentAvatarRecord(record, generationDay: generationDay) else {
                 return nil
             }
             let item: ProviderItem
@@ -484,7 +484,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 ProviderEnumerationScope.avatarPage(avatarPage).storageKey,
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
-               record.source == .diceBear else {
+               Self.isCurrentAvatarRecord(record) else {
                 return nil
             }
             try Task.checkCancellation()
@@ -518,7 +518,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 ProviderEnumerationScope.avatars.storageKey,
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
-               record.source == .diceBear else {
+               Self.isCurrentAvatarRecord(record) else {
                 return nil
             }
             occurrence = ProviderOccurrence(reference: reference, record: record)
@@ -606,8 +606,21 @@ actor ProviderRepository: ProviderSearchResultStoring {
         _ record: RemoteImageRecord,
         enabledSourceIDs: Set<PhotoSourceID>?
     ) -> Bool {
-        guard let sourceID = record.source.photoSourceID else { return record.source == .diceBear }
+        guard let sourceID = record.source.photoSourceID else { return record.source.isAvatarSource }
         return enabledSourceIDs?.contains(sourceID) ?? true
+    }
+
+    /// 头像树只接受当前命名空间，且记录来源必须与 ID 前缀一致。
+    private static func isCurrentAvatarRecord(
+        _ record: RemoteImageRecord,
+        generationDay expectedGenerationDay: AvatarGenerationDay? = nil
+    ) -> Bool {
+        guard record.source.isAvatarSource,
+              StableImageID.avatarSource(from: record.id) == record.source,
+              let generationDay = StableImageID.avatarGenerationDay(from: record.id) else {
+            return false
+        }
+        return expectedGenerationDay.map { $0 == generationDay } ?? true
     }
 
     /// 成功物化图片后记录最近使用，底层元数据继续保留供其他 occurrence 和在途请求使用。

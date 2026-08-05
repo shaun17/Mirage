@@ -66,7 +66,7 @@ final class QueryAndIdentifierTests: XCTestCase {
         let records = await DiceBearClient(styles: [.pixelArt], now: { Self.fixedNow })
             .avatars(query: "Private Name", count: 2)
         XCTAssertEqual(records.count, 2)
-        XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v10:pixel-art:") })
+        XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v12:pixel-art:") })
         XCTAssertTrue(records.allSatisfy { $0.imageURL.path == "/10.x/pixel-art/png" })
         XCTAssertTrue(records.allSatisfy { !$0.imageURL.absoluteString.localizedCaseInsensitiveContains("Private") })
         XCTAssertTrue(records.allSatisfy { $0.width == 256 && $0.height == 256 })
@@ -83,12 +83,17 @@ final class QueryAndIdentifierTests: XCTestCase {
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(
             record.id,
-            "db:v10:pixel-art:2026-08-02:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
+            "db:v12:pixel-art:2026-08-02:6c3ac86e5af04d9503e81d9448f126ae66f1b3cd3a732cde427eb7af2b32f285"
         )
         XCTAssertEqual(StableImageID.diceBearGenerationDay(from: record.id)?.identifier, "2026-08-02")
         XCTAssertNil(
             StableImageID.diceBearGenerationDay(
                 from: "db:v10:pixel-art:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
+            )
+        )
+        XCTAssertNil(
+            StableImageID.diceBearGenerationDay(
+                from: "db:v11:pixel-art:2026-08-02:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
             )
         )
     }
@@ -148,8 +153,16 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertEqual(DiceBearStyle.allCases.count, 37)
     }
 
-    /// 默认客户端按摘要稳定随机，并应在足够大的确定性样本中覆盖全部官方风格。
-    func testDiceBearDefaultClientStablyUsesAllStyles() async {
+    /// Mirage 生产目录只允许用户选定的五种人物头像风格。
+    func testDiceBearMirageCatalogContainsOnlySelectedStyles() {
+        XCTAssertEqual(
+            DiceBearStyle.mirageCatalog.map(\.rawValue),
+            ["notionists-neutral", "lorelei", "croodles", "adventurer", "micah"]
+        )
+    }
+
+    /// 默认客户端按摘要稳定随机，并应在足够大的确定性样本中覆盖 Mirage 精简目录。
+    func testDiceBearDefaultClientStablyUsesOnlyMirageCatalogStyles() async {
         let client = DiceBearClient(now: { Self.fixedNow })
         let first = await client.avatars(query: " cat ", offset: 0, count: 20)
         let repeated = await client.avatars(query: "CAT", offset: 0, count: 20)
@@ -162,7 +175,7 @@ final class QueryAndIdentifierTests: XCTestCase {
                 $0.imageURL.deletingLastPathComponent().lastPathComponent
             })
         }
-        XCTAssertEqual(observedStyles, Set(DiceBearStyle.allCases.map(\.rawValue)))
+        XCTAssertEqual(observedStyles, Set(DiceBearStyle.mirageCatalog.map(\.rawValue)))
     }
 
     /// 调整候选目录顺序不能改变同一查询的稳定随机结果。

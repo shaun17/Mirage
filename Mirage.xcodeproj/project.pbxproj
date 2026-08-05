@@ -95,6 +95,10 @@
 		C00B6AAD171DB181BBBC8360 /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
 		C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */; };
 		C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */; };
+		669FA174B3F6BF2BCD112A64 /* AvatarCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */; };
+		E2A61F399BDA52C7ABF9624E /* GravatarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */; };
+		D0C74D78B7CED30B668042B9 /* RobohashClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2906D240D1389820AF2EB118 /* RobohashClient.swift */; };
+		4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */; };
 		C4E64B0F4968CAAA1551C856 /* ProviderDiscoveryTreePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98561077AE0D1A0D4B1C484 /* ProviderDiscoveryTreePlannerTests.swift */; };
 		C7E7A302CB037338DE9CF5B3 /* PhotoSourcePreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D1E3A33B8070DCB2EA93A3 /* PhotoSourcePreferencesStore.swift */; };
 		C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
@@ -252,6 +256,10 @@
 		92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepositoryPageSnapshotTests.swift; sourceTree = "<group>"; };
 		948E8761E82C9C91131B7E14 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearClient.swift; sourceTree = "<group>"; };
+		8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarCatalogClient.swift; sourceTree = "<group>"; };
+		149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GravatarClient.swift; sourceTree = "<group>"; };
+		2906D240D1389820AF2EB118 /* RobohashClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobohashClient.swift; sourceTree = "<group>"; };
+		F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarProviderTests.swift; sourceTree = "<group>"; };
 		979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailWindowLayoutStateTests.swift; sourceTree = "<group>"; };
 		9E7DF5AD60A0A51B3A50FE58 /* SearchEnumeratorPaginationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchEnumeratorPaginationTests.swift; sourceTree = "<group>"; };
 		A5032B6A2667C9906D3A2948 /* ProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderItem.swift; sourceTree = "<group>"; };
@@ -325,6 +333,7 @@
 				789CB076C501B5489F6CCB14 /* AggregatedPhotoSearcherConcurrencyTests.swift */,
 				52B5496B1780C4B8FCDAF312 /* AggregatedPhotoSearcherTests.swift */,
 				68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */,
+				F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */,
 				445083B2456F60A1FB7ECA53 /* ConfiguredPhotoSearcherTests.swift */,
 				979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */,
 				735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */,
@@ -383,6 +392,7 @@
 			children = (
 				FC8EF4A1F4F7B78844ECAC45 /* AggregatedPhotoSearcher.swift */,
 				EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */,
+				8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */,
 				9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */,
 				1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */,
 				84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */,
@@ -390,6 +400,7 @@
 				072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */,
 				C1A4F7890E2D4C10A8B9F015 /* GiphyCatalogClient.swift */,
 				C1A4F7890E2D4C10A8B9F011 /* GiphyEmojiClient.swift */,
+				149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */,
 				712852E84B8494D2634B17A9 /* ImageSearchService.swift */,
 				D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */,
 				5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */,
@@ -408,6 +419,7 @@
 				7D9B5F67E7FD1D98C6DB1333 /* PhotoSourceRequestPolicy.swift */,
 				0827DC89AD583FFC552FFC9E /* PixabayClient.swift */,
 				D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */,
+				2906D240D1389820AF2EB118 /* RobohashClient.swift */,
 				0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */,
 				B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */,
 			);
@@ -719,6 +731,7 @@
 			files = (
 				D3366C6F186C2652E7ACD2CC /* AggregatedPhotoSearcher.swift in Sources */,
 				552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */,
+				669FA174B3F6BF2BCD112A64 /* AvatarCatalogClient.swift in Sources */,
 				C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */,
 				3255F9CAD35B8A4106F839F2 /* DiceBearStyle.swift in Sources */,
 				99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */,
@@ -726,6 +739,7 @@
 				5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */,
 				C1A4F7890E2D4C10A8B9F016 /* GiphyCatalogClient.swift in Sources */,
 				C1A4F7890E2D4C10A8B9F012 /* GiphyEmojiClient.swift in Sources */,
+				E2A61F399BDA52C7ABF9624E /* GravatarClient.swift in Sources */,
 				371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */,
 				AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */,
 				4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */,
@@ -744,6 +758,7 @@
 				25F113DAF0298D779B665D72 /* PhotoSourceRequestPolicy.swift in Sources */,
 				E439ADFB7420ADC3278E6650 /* PixabayClient.swift in Sources */,
 				A044C48E7A09C0FD50AF12B2 /* RemoteImageRecord.swift in Sources */,
+				D0C74D78B7CED30B668042B9 /* RobohashClient.swift in Sources */,
 				EF9C34C91E5E4A88CA41E68E /* SearchPaginationCursor.swift in Sources */,
 				548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */,
 			);
@@ -767,6 +782,7 @@
 				549AAB47F800C0AF7025674A /* AggregatedPhotoSearcherConcurrencyTests.swift in Sources */,
 				F166E6A23AC9D0EE0B262A3C /* AggregatedPhotoSearcherTests.swift in Sources */,
 				B0C8CAB8A4875F0079440D60 /* AppGroupStorageTests.swift in Sources */,
+				4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */,
 				77560B755F59DC94AE0E17BC /* AppViewState.swift in Sources */,
 				87BA4968F8E3F713309B5588 /* ConfiguredPhotoSearcherTests.swift in Sources */,
 				2B126922A34AF6562188BDDD /* DetailWindowLayoutStateTests.swift in Sources */,

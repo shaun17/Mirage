@@ -212,7 +212,7 @@ public enum PhotoSourceRegistry {
 }
 
 public extension ImageSource {
-    /// DiceBear 不是远程照片 provider；其余图片来源可映射到用户可选的数据源。
+    /// 头像生成服务不是远程照片 provider；其余图片来源可映射到用户可选的数据源。
     var photoSourceID: PhotoSourceID? {
         switch self {
         case .openverse: return .openverse
@@ -221,7 +221,7 @@ public extension ImageSource {
         case .pexels: return .pexels
         case .pixabay: return .pixabay
         case .giphy: return .giphy
-        case .diceBear: return nil
+        case .diceBear, .gravatar, .robohash: return nil
         }
     }
 

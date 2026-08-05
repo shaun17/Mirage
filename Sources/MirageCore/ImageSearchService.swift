@@ -51,20 +51,20 @@ public struct ImageSearchPage: Sendable {
 public struct ImageSearchService: Sendable {
     private let photos: any PhotoSearching
     private let giphy: (any PhotoSourceSearching)?
-    private let diceBear: any DiceBearProviding
+    private let avatarProvider: any AvatarProviding
     private let automaticAvatarCount: Int
     private let maximumPageSize: Int
 
     public init(
         photos: any PhotoSearching,
         giphy: (any PhotoSourceSearching)? = nil,
-        diceBear: any DiceBearProviding = DiceBearClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
         automaticAvatarCount: Int = 4,
         maximumPageSize: Int = DiscoveryRecommendation.pageSize
     ) {
         self.photos = photos
         self.giphy = giphy
-        self.diceBear = diceBear
+        self.avatarProvider = diceBear
         self.automaticAvatarCount = min(max(automaticAvatarCount, 0), 20)
         self.maximumPageSize = min(
             max(maximumPageSize, 1),
@@ -75,7 +75,7 @@ public struct ImageSearchService: Sendable {
     public init(
         openverse: any OpenverseSearching = OpenverseClient(),
         giphy: (any PhotoSourceSearching)? = nil,
-        diceBear: any DiceBearProviding = DiceBearClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
         automaticAvatarCount: Int = 4,
         maximumPageSize: Int = DiscoveryRecommendation.pageSize
     ) {
@@ -206,7 +206,11 @@ public struct ImageSearchService: Sendable {
             )
             return Self.imagePage(from: result, currentPage: page, pageSize: safePageSize)
         case .avatar:
-            let records = await diceBear.avatars(query: query.text, offset: avatarOffset, count: safePageSize)
+            let records = await avatarProvider.avatars(
+                query: query.text,
+                offset: avatarOffset,
+                count: safePageSize
+            )
             let next = records.isEmpty || page == SearchPaginationCursor.maximumPage
                 ? nil
                 : ImageSearchCursor(page: page + 1, photoCursor: nil)
@@ -222,7 +226,7 @@ public struct ImageSearchService: Sendable {
                 usesLegacyPage: usesLegacyPage,
                 onPartialResults: onPartialResults
             )
-            let avatars = await diceBear.avatars(
+            let avatars = await avatarProvider.avatars(
                 query: query.text,
                 offset: avatarOffset,
                 count: safePageSize - result.records.count

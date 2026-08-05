@@ -10,6 +10,8 @@ public enum ImageSource: String, Codable, CaseIterable, Sendable {
     case pixabay
     case giphy
     case diceBear = "dice_bear"
+    case gravatar
+    case robohash
 
     public var displayName: String {
         switch self {
@@ -20,6 +22,15 @@ public enum ImageSource: String, Codable, CaseIterable, Sendable {
         case .pixabay: return "Pixabay"
         case .giphy: return "GIPHY"
         case .diceBear: return "DiceBear"
+        case .gravatar: return "Gravatar"
+        case .robohash: return "Robohash"
+        }
+    }
+
+    public var isAvatarSource: Bool {
+        switch self {
+        case .diceBear, .gravatar, .robohash: return true
+        case .openverse, .metMuseum, .nasa, .pexels, .pixabay, .giphy: return false
         }
     }
 }
@@ -70,6 +81,12 @@ public struct LicenseInfo: Codable, Equatable, Hashable, Sendable {
         identifier: "giphy-api",
         displayName: "GIPHY API Terms",
         url: URL(string: "https://support.giphy.com/hc/en-us/articles/360028134111-GIPHY-API-Terms-of-Service")
+    )
+
+    public static let gravatarUsage = LicenseInfo(
+        identifier: "gravatar-usage",
+        displayName: "Gravatar Usage Guidelines",
+        url: URL(string: "https://docs.gravatar.com/pricing/")
     )
 }
 
@@ -151,27 +168,68 @@ public enum StableImageID {
         "db:v10:\(style):\(seedHash(seedMaterial))"
     }
 
-    /// 每日头像在不可逆摘要之外保留 UTC 生成日，供持久缓存准确判断是否跨日。
+    /// 每日头像在不可逆摘要之外保留 UTC 生成日；v12 使旧的单供应商缓存立即失效。
     public static func dailyDiceBear(
         style: String,
-        generationDay: DiceBearGenerationDay,
+        generationDay: AvatarGenerationDay,
         seedMaterial: String
     ) -> String {
-        "db:v10:\(style):\(generationDay.identifier):\(seedHash(seedMaterial))"
+        "db:v12:\(style):\(generationDay.identifier):\(seedHash(seedMaterial))"
     }
 
-    /// 只从 Mirage 每日 DiceBear ID 恢复日期；旧 ID 或损坏摘要不会被误判为当天缓存。
-    public static func diceBearGenerationDay(from identifier: String) -> DiceBearGenerationDay? {
+    public static func dailyGravatar(
+        style: String,
+        generationDay: AvatarGenerationDay,
+        seedMaterial: String
+    ) -> String {
+        "gravatar:v1:\(style):\(generationDay.identifier):\(seedHash(seedMaterial))"
+    }
+
+    public static func dailyRobohash(
+        set: String,
+        generationDay: AvatarGenerationDay,
+        seedMaterial: String
+    ) -> String {
+        "robohash:v1:\(set):\(generationDay.identifier):\(seedHash(seedMaterial))"
+    }
+
+    /// 从当前头像供应商 ID 恢复日期；旧版本或损坏摘要不会被误判为当天缓存。
+    public static func avatarGenerationDay(from identifier: String) -> AvatarGenerationDay? {
+        avatarIdentifierComponents(from: identifier)?.generationDay
+    }
+
+    /// 从当前头像 ID 恢复来源，用于拒绝来源字段与命名空间不一致的损坏缓存。
+    public static func avatarSource(from identifier: String) -> ImageSource? {
+        avatarIdentifierComponents(from: identifier)?.source
+    }
+
+    private static func avatarIdentifierComponents(
+        from identifier: String
+    ) -> (source: ImageSource, generationDay: AvatarGenerationDay)? {
         let fields = identifier.split(separator: ":", omittingEmptySubsequences: false)
         guard fields.count == 5,
-              fields[0] == "db",
-              fields[1] == "v10",
               !fields[2].isEmpty,
               fields[4].count == 64,
               fields[4].allSatisfy(\.isHexDigit) else {
             return nil
         }
-        return DiceBearGenerationDay(identifier: String(fields[3]))
+        let namespace = (String(fields[0]), String(fields[1]))
+        let source: ImageSource
+        switch namespace {
+        case ("db", "v12"): source = .diceBear
+        case ("gravatar", "v1"): source = .gravatar
+        case ("robohash", "v1"): source = .robohash
+        default: return nil
+        }
+        guard let generationDay = AvatarGenerationDay(identifier: String(fields[3])) else { return nil }
+        return (source, generationDay)
+    }
+
+    /// 兼容旧调用方，但只接受当前 DiceBear 命名空间。
+    public static func diceBearGenerationDay(from identifier: String) -> AvatarGenerationDay? {
+        guard let components = avatarIdentifierComponents(from: identifier),
+              components.source == .diceBear else { return nil }
+        return components.generationDay
     }
 
     /// 生成固定长度 SHA-256 小写十六进制摘要。

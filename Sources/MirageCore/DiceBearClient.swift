@@ -1,7 +1,7 @@
 import Foundation
 
-/// DiceBear 生成批次所属的 UTC 公历日；标识可直接参与稳定 seed 计算。
-public struct DiceBearGenerationDay: Hashable, Sendable {
+/// 头像生成批次所属的 UTC 公历日；标识可直接参与稳定 seed 计算。
+public struct AvatarGenerationDay: Hashable, Sendable {
     public let identifier: String
 
     public init(date: Date) {
@@ -39,20 +39,26 @@ public struct DiceBearGenerationDay: Hashable, Sendable {
     }
 }
 
-public protocol DiceBearProviding: Sendable {
+/// 保留旧名称供现有注入点和外部调用平滑迁移。
+public typealias DiceBearGenerationDay = AvatarGenerationDay
+
+public protocol AvatarProviding: Sendable {
     /// 生成稳定、无个人信息的头像元数据，不发起网络请求。
     func avatars(
         query: String,
         offset: Int,
         count: Int,
-        generationDay: DiceBearGenerationDay
+        generationDay: AvatarGenerationDay
     ) async -> [RemoteImageRecord]
 
     /// 获取当前生成日，供跨分页调用在开始时冻结同一日批次。
-    func currentGenerationDay() async -> DiceBearGenerationDay
+    func currentGenerationDay() async -> AvatarGenerationDay
 }
 
-public extension DiceBearProviding {
+/// 保留旧协议名，测试替身和调用方无需与本次多供应商接入同时迁移。
+public typealias DiceBearProviding = AvatarProviding
+
+public extension AvatarProviding {
     /// 旧调用入口每次只读取一次日期，再交给显式生成方法。
     func avatars(query: String, offset: Int = 0, count: Int) async -> [RemoteImageRecord] {
         let generationDay = await currentGenerationDay()
@@ -71,23 +77,23 @@ public extension DiceBearProviding {
 }
 
 /// 构造 DiceBear 10.x PNG 地址；真正的图片下载由消费方按需进行。
-public struct DiceBearClient: DiceBearProviding, Sendable {
+public struct DiceBearClient: AvatarProviding, AvatarSourceGenerating, Sendable {
     private let endpoint: URL
     private let styles: [DiceBearStyle]
     private let now: @Sendable () -> Date
 
     public init(
         endpoint: URL = URL(string: "https://api.dicebear.com")!,
-        styles: [DiceBearStyle] = DiceBearStyle.allCases,
+        styles: [DiceBearStyle] = DiceBearStyle.mirageCatalog,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.endpoint = endpoint
-        self.styles = styles.isEmpty ? DiceBearStyle.allCases : styles
+        self.styles = styles.isEmpty ? DiceBearStyle.mirageCatalog : styles
         self.now = now
     }
 
-    public func currentGenerationDay() async -> DiceBearGenerationDay {
-        DiceBearGenerationDay(date: now())
+    public func currentGenerationDay() async -> AvatarGenerationDay {
+        AvatarGenerationDay(date: now())
     }
 
     /// 查询文字只参与本地 SHA-256；风格按摘要稳定随机，原始文字不会进入远程 URL。
@@ -95,37 +101,43 @@ public struct DiceBearClient: DiceBearProviding, Sendable {
         query: String,
         offset: Int,
         count: Int,
-        generationDay: DiceBearGenerationDay
+        generationDay: AvatarGenerationDay
     ) async -> [RemoteImageRecord] {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let safeOffset = max(offset, 0)
-        let safeCount = min(max(count, 0), 20)
-        let end = safeOffset.addingReportingOverflow(safeCount)
-        guard !end.overflow else { return [] }
-        return (safeOffset..<end.partialValue).compactMap { index in
-            let material = "mirage-daily-v1|\(generationDay.identifier)|\(normalized)|\(index)"
-            let seedHash = StableImageID.seedHash(material)
-            let style = selectedStyle(seedMaterial: material)
-            guard let url = imageURL(style: style, seed: seedHash) else { return nil }
-            return RemoteImageRecord(
-                id: StableImageID.dailyDiceBear(
-                    style: style.rawValue,
-                    generationDay: generationDay,
-                    seedMaterial: material
-                ),
-                title: "\(style.displayName) avatar",
-                source: .diceBear,
-                imageURL: url,
-                thumbnailURL: url,
-                sourcePageURL: URL(string: "https://www.dicebear.com/styles/\(style.rawValue)/"),
-                license: style.license,
-                creator: style.creator,
-                creatorURL: style.creatorURL,
-                width: 256,
-                height: 256,
-                mimeType: "image/png"
-            )
-        }
+        AvatarSeed.batch(
+            query: query,
+            offset: offset,
+            count: count,
+            generationDay: generationDay
+        ).compactMap { avatar(seedMaterial: $0.material, generationDay: generationDay) }
+    }
+
+    let avatarCatalogIdentifier = ImageSource.diceBear.rawValue
+
+    func avatar(
+        seedMaterial: String,
+        generationDay: AvatarGenerationDay
+    ) -> RemoteImageRecord? {
+        let seedHash = StableImageID.seedHash("mirage-dicebear-seed-v1|\(seedMaterial)")
+        let style = selectedStyle(seedMaterial: seedMaterial)
+        guard let url = imageURL(style: style, seed: seedHash) else { return nil }
+        return RemoteImageRecord(
+            id: StableImageID.dailyDiceBear(
+                style: style.rawValue,
+                generationDay: generationDay,
+                seedMaterial: seedMaterial
+            ),
+            title: "\(style.displayName) avatar",
+            source: .diceBear,
+            imageURL: url,
+            thumbnailURL: url,
+            sourcePageURL: URL(string: "https://www.dicebear.com/styles/\(style.rawValue)/"),
+            license: style.license,
+            creator: style.creator,
+            creatorURL: style.creatorURL,
+            width: 256,
+            height: 256,
+            mimeType: "image/png"
+        )
     }
 
     /// 对每个候选风格独立打分并取最高值；目录重排不改变结果，新增风格也只影响少量记录。

@@ -61,7 +61,7 @@ public struct PhotoSearchEnvironment: Sendable {
         for surface: PhotoSourceSurface,
         purpose: PhotoSearchPurpose = .interactive,
         selectedSourceID: PhotoSourceID? = nil,
-        diceBear: any DiceBearProviding = DiceBearClient()
+        diceBear: any AvatarProviding = AvatarCatalogClient()
     ) -> ImageSearchService {
         let giphySource: (any PhotoSourceSearching)? = surface == .app && purpose == .interactive
             ? ConfiguredGiphyCatalogSearcher(

@@ -49,7 +49,7 @@ public enum DiscoveryFeedError: Error, LocalizedError, Equatable, Sendable {
 public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private let storage: AppGroupStorage
     private let service: ImageSearchService
-    private let diceBear: any DiceBearProviding
+    private let avatarProvider: any AvatarProviding
     private let networkTimeout: Duration
     private let now: @Sendable () -> Date
     private let catalogKey: @Sendable () async -> String
@@ -59,7 +59,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     public init(
         storage: AppGroupStorage,
         service: ImageSearchService = ImageSearchService(),
-        diceBear: any DiceBearProviding = DiceBearClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
         catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
@@ -68,7 +68,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     ) {
         self.storage = storage
         self.service = service
-        self.diceBear = diceBear
+        self.avatarProvider = diceBear
         self.networkTimeout = networkTimeout
         self.now = now
         self.catalogKey = catalogKey
@@ -83,7 +83,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     /// 生产环境直接打开固定 App Group；失败由调用方决定是否降级为普通搜索。
     public init(
         service: ImageSearchService = ImageSearchService(),
-        diceBear: any DiceBearProviding = DiceBearClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
         catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
@@ -92,7 +92,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     ) throws {
         self.storage = try AppGroupStorage()
         self.service = service
-        self.diceBear = diceBear
+        self.avatarProvider = diceBear
         self.networkTimeout = networkTimeout
         self.now = now
         self.catalogKey = catalogKey
@@ -370,14 +370,14 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         return records
     }
 
-    /// 本地兜底根据绝对页偏移生成稳定且跨页不重复的 DiceBear 记录。
+    /// 本地兜底根据绝对页偏移生成稳定且跨页不重复的头像记录。
     private func fallbackRecords(
         page: Int,
         pageSize: Int,
         excluding existingIDs: Set<String>
     ) async -> [RemoteImageRecord] {
         let pageOffset = (try? Self.offset(page: page, pageSize: pageSize)) ?? 0
-        let candidates = await diceBear.avatars(
+        let candidates = await avatarProvider.avatars(
             query: DiscoveryRecommendation.fallbackSeed,
             offset: pageOffset,
             count: pageSize

@@ -40,6 +40,15 @@ public enum DiceBearStyle: String, CaseIterable, Codable, Sendable {
     case toonHead = "toon-head"
     case triangles
 
+    /// Mirage 生产环境只允许这五种人物头像风格参与稳定随机选择。
+    public static let mirageCatalog: [DiceBearStyle] = [
+        .notionistsNeutral,
+        .lorelei,
+        .croodles,
+        .adventurer,
+        .micah,
+    ]
+
     /// 风格名称只用于展示；远程请求始终使用稳定的 rawValue。
     public var displayName: String {
         rawValue

@@ -99,7 +99,8 @@ final class ProviderSourcePolicyTests: XCTestCase {
         case .pixabay: license = .pixabay
         case .nasa: license = .nasaMediaUsage
         case .giphy: license = .giphy
-        case .openverse, .metMuseum, .diceBear: license = .cc0
+        case .gravatar: license = .gravatarUsage
+        case .openverse, .metMuseum, .diceBear, .robohash: license = .cc0
         }
         return RemoteImageRecord(
             id: id,

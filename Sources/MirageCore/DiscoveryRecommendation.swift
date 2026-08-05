@@ -15,10 +15,10 @@ public enum DiscoveryRecommendation {
     /// 单关键词场景（内容筛选与无共享存储时的网络兜底）仍使用目录首词。
     public static let query = queries[0]
 
-    /// v7 的来源游标冻结上游批次大小与本地 offset；旧页码游标不能跨批次策略续读。
-    public static let catalogKey = "mirage-recommendations-v7"
+    /// v9 使旧的单供应商头像兜底快照失效；来源游标仍冻结上游批次大小与本地 offset。
+    public static let catalogKey = "mirage-recommendations-v9"
 
-    /// 网络失败时只把内部稳定种子交给 DiceBear，不发送到远端搜索服务。
+    /// 网络失败时只把内部稳定种子交给头像目录，不发送到远端搜索服务。
     public static let fallbackSeed = "mirage-recommendations-fallback-v2"
 
     /// App 与共享推荐快照仍按 20 张追加；Finder 在同一代次上聚合并交付 40 张。

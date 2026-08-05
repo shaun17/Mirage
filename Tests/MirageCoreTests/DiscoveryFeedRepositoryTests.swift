@@ -17,7 +17,7 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
                 "推荐词不应包含高风险主题：\(query)"
             )
         }
-        XCTAssertEqual(DiscoveryRecommendation.catalogKey, "mirage-recommendations-v7")
+        XCTAssertEqual(DiscoveryRecommendation.catalogKey, "mirage-recommendations-v9")
     }
 
     /// 每个测试使用独立共享目录，避免推荐 generation 与其他测试相互污染。
