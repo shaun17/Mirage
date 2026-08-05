@@ -3,6 +3,48 @@ import XCTest
 @testable import MirageCore
 
 final class ConfiguredPhotoSearcherTests: XCTestCase {
+    /// 指定来源搜索必须只构造该服务商，不能先请求全部来源再丢弃其他结果。
+    func testSelectedSourceBuildsOnlyThatConfiguredProvider() async throws {
+        let preferences = makePreferences()
+        _ = try await preferences.saveConfiguration(for: .metMuseum, enabledSurfaces: [.app])
+        _ = try await preferences.saveConfiguration(for: .nasa, enabledSurfaces: [.app])
+        let probe = UncredentialedSourceFactoryProbe()
+        let searcher = ConfiguredPhotoSearcher(
+            surface: .app,
+            selectedSourceID: .nasa,
+            preferences: preferences,
+            credentials: ConfiguredCredentialStore(values: [:]),
+            openverse: ConfiguredFixtureSource(sourceID: .openverse),
+            requestCoordinator: PhotoSourceRequestCoordinator(),
+            uncredentialedSourceFactory: { sourceID in
+                probe.makeSource(sourceID: sourceID)
+            }
+        )
+
+        let page = try await searcher.search(query: "space", cursor: nil, pageSize: 3)
+
+        XCTAssertEqual(page.records.map(\.source), [.nasa])
+        XCTAssertEqual(probe.requests, [.nasa])
+    }
+
+    /// 本地记住的来源若已在 Settings 停用，搜索层也必须拒绝绕过配置直接访问。
+    func testDisabledSelectedSourceIsUnavailable() async throws {
+        let searcher = ConfiguredPhotoSearcher(
+            surface: .app,
+            selectedSourceID: .nasa,
+            preferences: makePreferences(),
+            credentials: ConfiguredCredentialStore(values: [:]),
+            openverse: ConfiguredFixtureSource(sourceID: .openverse)
+        )
+
+        do {
+            _ = try await searcher.search(query: "space", cursor: nil, pageSize: 3)
+            XCTFail("停用的来源不应被搜索")
+        } catch PhotoSearchError.noEnabledSources {
+            // Expected.
+        }
+    }
+
     /// 无密钥来源应从独立工厂创建，并与默认 Openverse 一起参与 App 交互搜索。
     func testAppSearchBuildsMetAndNASAWithoutCredentials() async throws {
         let preferences = makePreferences()
@@ -194,7 +236,54 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
         XCTAssertEqual(probe.requests.count, 1)
     }
 
-    /// 浏览可以降级显示部分 GIPHY 内容，但设置页连接测试必须覆盖 Emoji、GIF、Sticker 三个端点。
+    /// App 配置包装层必须继续转发 GIF 关键词，不能为了读取设置而退化成空查询浏览。
+    func testConfiguredGiphySearcherForwardsKeyword() async throws {
+        let preferences = makePreferences()
+        _ = try await preferences.saveConfiguration(for: .giphy, enabledSurfaces: [.app])
+        let credentials = ConfiguredCredentialStore(values: [.giphy: "giphy-test-key"])
+        let giphy = GiphyQueryRecordingSource()
+        let environment = PhotoSearchEnvironment(
+            preferences: preferences,
+            credentials: credentials,
+            openverse: ConfiguredFixtureSource(sourceID: .openverse),
+            requestCoordinator: PhotoSourceRequestCoordinator(),
+            credentialedSourceFactory: { sourceID, _ in
+                XCTAssertEqual(sourceID, .giphy)
+                return giphy
+            }
+        )
+
+        _ = try await environment.imageSearchService(
+            for: .app,
+            purpose: .interactive
+        ).giphyCatalog(query: "happy cat", cursor: nil, pageSize: 40)
+        let queries = await giphy.recordedQueries()
+
+        XCTAssertEqual(queries, ["happy cat"])
+    }
+
+    /// 设置页测试 API 时同时验证空查询浏览和关键词搜索，避免只验证旧 Trending 能力。
+    func testGiphyConnectionTestCoversBrowsingAndSearch() async throws {
+        let giphy = GiphyQueryRecordingSource()
+        let environment = PhotoSearchEnvironment(
+            preferences: makePreferences(),
+            credentials: ConfiguredCredentialStore(values: [:]),
+            openverse: ConfiguredFixtureSource(sourceID: .openverse),
+            requestCoordinator: PhotoSourceRequestCoordinator(),
+            credentialedSourceFactory: { sourceID, credential in
+                XCTAssertEqual(sourceID, .giphy)
+                XCTAssertEqual(credential, "test-key")
+                return giphy
+            }
+        )
+
+        try await environment.testConnection(sourceID: .giphy, credential: " test-key ")
+        let queries = await giphy.recordedQueries()
+
+        XCTAssertEqual(queries, ["", "mirage"])
+    }
+
+    /// 浏览可以降级显示部分 GIPHY 内容，但设置页连接测试必须覆盖所有必需端点。
     func testGiphyConnectionTestRejectsPartialEndpointFailure() async throws {
         let issue = PhotoSourceIssue(
             sourceID: .giphy,
@@ -238,6 +327,24 @@ private struct GiphyPartialConnectionSource: PhotoSourceSearching {
         pageSize: Int
     ) async throws -> PhotoSourcePage {
         PhotoSourcePage(records: [], nextCursor: nil, issues: [issue])
+    }
+}
+
+private actor GiphyQueryRecordingSource: PhotoSourceSearching {
+    nonisolated let sourceID = PhotoSourceID.giphy
+    private var queries: [String] = []
+
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int
+    ) async throws -> PhotoSourcePage {
+        queries.append(query)
+        return PhotoSourcePage(records: [], nextCursor: nil)
+    }
+
+    func recordedQueries() -> [String] {
+        queries
     }
 }
 

@@ -26,10 +26,23 @@ final class AppModel: ObservableObject {
     private var providerCheckTask: Task<Void, Never>?
     private var latestLibraryRevision: UInt64 = 0
 
-    init(photoEnvironment: PhotoSearchEnvironment = .production()) {
+    init(
+        photoEnvironment: PhotoSearchEnvironment = .production(),
+        photoSourceSelectionStore: PhotoSourceFilterSelectionStore = .standard
+    ) {
         self.photoEnvironment = photoEnvironment
         self.searchModel = SearchModel(
             service: photoEnvironment.imageSearchService(for: .app),
+            photoSearchService: { selectedSourceID in
+                photoEnvironment.imageSearchService(
+                    for: .app,
+                    selectedSourceID: selectedSourceID
+                )
+            },
+            initialPhotoSourceSelection: photoSourceSelectionStore.load(),
+            photoSourceSelectionDidChange: { selection in
+                photoSourceSelectionStore.save(selection)
+            },
             waitsForRecommendationFeed: true
         )
     }
@@ -51,6 +64,8 @@ final class AppModel: ObservableObject {
 
     /// 首次启动并行准备共享资料库和 File Provider，任一失败都不会阻塞另一项。
     private func performStart() async {
+        let sourceSnapshot = await photoEnvironment.preferences.snapshot()
+        searchModel.updatePhotoSourcePreferences(sourceSnapshot)
         async let provider: Void = configureProvider()
         async let library: Void = prepareLibrary()
         _ = await (provider, library)
@@ -178,7 +193,8 @@ final class AppModel: ObservableObject {
 
     /// 设置保存后重启主 App 搜索；只有 Finder 支持的来源才通知扩展刷新。
     private func photoSourceConfigurationDidChange(sourceID: PhotoSourceID) async {
-        searchModel.sourceConfigurationDidChange(sourceID: sourceID)
+        let snapshot = await photoEnvironment.preferences.snapshot()
+        searchModel.sourceConfigurationDidChange(sourceID: sourceID, snapshot: snapshot)
         guard PhotoSourceRegistry.descriptor(for: sourceID)?.supports(.fileProvider) == true else {
             return
         }

@@ -34,6 +34,9 @@ enum SearchFilter: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    /// “全部”仅保留给历史状态与内部混合搜索；内容类型控件不再向用户展示该入口。
+    static let contentTypes: [SearchFilter] = [.avatars, .photos, .gif]
+
     /// GIPHY 内容只属于 App 会话；进入或离开该会话时必须关闭仍在展示的详情资源。
     func crossesGIFBoundary(to other: SearchFilter) -> Bool {
         (self == .gif) != (other == .gif)
@@ -55,6 +58,66 @@ enum SearchFilter: String, CaseIterable, Identifiable {
         guard self != .gif else { return rawQuery }
         let text = SearchQueryParser.parse(rawQuery).text
         return self == .photos ? "图片:\(text)" : "头像:\(text)"
+    }
+}
+
+/// 图片页来源筛选；`all` 表示聚合当前在 Mirage 中启用的全部图片服务商。
+enum PhotoSourceFilterSelection: Hashable, Identifiable, Sendable {
+    case all
+    case source(PhotoSourceID)
+
+    var id: String {
+        switch self {
+        case .all: return "all"
+        case let .source(sourceID): return sourceID.rawValue
+        }
+    }
+
+    var sourceID: PhotoSourceID? {
+        guard case let .source(sourceID) = self else { return nil }
+        return sourceID
+    }
+
+    var title: String {
+        guard let sourceID else { return "全部" }
+        return PhotoSourceRegistry.descriptor(for: sourceID)?.displayName ?? sourceID.rawValue
+    }
+
+    var persistedValue: String { id }
+
+    init(persistedValue: String?) {
+        guard let persistedValue,
+              let sourceID = PhotoSourceID(rawValue: persistedValue),
+              let descriptor = PhotoSourceRegistry.descriptor(for: sourceID),
+              descriptor.availability == .available,
+              descriptor.supportsAggregatedSearch(on: .app, purpose: .interactive) else {
+            self = .all
+            return
+        }
+        self = .source(sourceID)
+    }
+}
+
+/// 来源按钮只属于主 App，使用标准 UserDefaults 保存，不写入 Finder 共用的服务商配置。
+@MainActor
+struct PhotoSourceFilterSelectionStore {
+    private static let storageKey = "discover-photo-source-filter-v1"
+    private let defaults: UserDefaults
+
+    static let standard = PhotoSourceFilterSelectionStore(defaults: .standard)
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    func load() -> PhotoSourceFilterSelection {
+        PhotoSourceFilterSelection(
+            persistedValue: defaults.string(forKey: Self.storageKey)
+        )
+    }
+
+    func save(_ selection: PhotoSourceFilterSelection) {
+        defaults.set(selection.persistedValue, forKey: Self.storageKey)
     }
 }
 

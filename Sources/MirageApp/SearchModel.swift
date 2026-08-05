@@ -4,6 +4,9 @@ import Foundation
 /// 搜索页的唯一状态源，负责防抖、筛选、分页、去重和旧会话隔离。
 @MainActor
 final class SearchModel: ObservableObject {
+    typealias PhotoSearchServiceFactory = (PhotoSourceID?) -> ImageSearchService
+    typealias PhotoSourceSelectionDidChange = (PhotoSourceFilterSelection) -> Void
+
     @Published var query = "" {
         didSet {
             guard query != oldValue else { return }
@@ -21,11 +24,15 @@ final class SearchModel: ObservableObject {
     @Published private(set) var paginationState: SearchPaginationState = .unavailable
     @Published private(set) var sourceIssues: [PhotoSourceIssue] = []
     @Published private(set) var accessibilityEvent: SearchAccessibilityEvent?
+    @Published private(set) var photoSourceSelection: PhotoSourceFilterSelection
+    @Published private(set) var enabledPhotoSourceIDs: Set<PhotoSourceID> = [.openverse]
 
     private static let pageSize = DiscoveryRecommendation.pageSize
     private static let giphyPageSize = SearchPaginationCursor.maximumPageSize
     private static let maximumPagesPerLoad = 3
     private let service: ImageSearchService
+    private let photoSearchService: PhotoSearchServiceFactory
+    private let photoSourceSelectionDidChange: PhotoSourceSelectionDidChange
     private var isWaitingForRecommendationFeed: Bool
     private var recommendationFeed: (any DiscoveryFeedProviding)?
     private var criteriaChangeRevision: UInt64 = 0
@@ -42,10 +49,16 @@ final class SearchModel: ObservableObject {
 
     init(
         service: ImageSearchService = ImageSearchService(),
+        photoSearchService: PhotoSearchServiceFactory? = nil,
+        initialPhotoSourceSelection: PhotoSourceFilterSelection = .all,
+        photoSourceSelectionDidChange: @escaping PhotoSourceSelectionDidChange = { _ in },
         recommendationFeed: (any DiscoveryFeedProviding)? = nil,
         waitsForRecommendationFeed: Bool = false
     ) {
         self.service = service
+        self.photoSearchService = photoSearchService ?? { _ in service }
+        self.photoSourceSelection = initialPhotoSourceSelection
+        self.photoSourceSelectionDidChange = photoSourceSelectionDidChange
         self.recommendationFeed = recommendationFeed
         self.isWaitingForRecommendationFeed = waitsForRecommendationFeed
     }
@@ -73,18 +86,50 @@ final class SearchModel: ObservableObject {
         }
     }
 
+    /// 来源按钮只接受当前设置中已启用的服务商；选择会立即持久化并启动独立搜索会话。
+    func selectPhotoSource(_ selection: PhotoSourceFilterSelection) {
+        guard selection != photoSourceSelection,
+              isPhotoSourceSelectionEnabled(selection) else { return }
+        photoSourceSelection = selection
+        photoSourceSelectionDidChange(selection)
+        guard filter == .photos else { return }
+        deferSearchAfterCriteriaChange()
+    }
+
+    /// App 启动时读取真实配置；若本地记住的来源已停用，则回退到仍可工作的聚合入口。
+    func updatePhotoSourcePreferences(_ snapshot: PhotoSourcePreferencesSnapshot) {
+        let didFallback = applyEnabledPhotoSources(from: snapshot)
+        guard didFallback, filter == .photos else { return }
+        scheduleSearch()
+    }
+
+    func isPhotoSourceSelectionEnabled(_ selection: PhotoSourceFilterSelection) -> Bool {
+        guard let sourceID = selection.sourceID else { return !enabledPhotoSourceIDs.isEmpty }
+        return enabledPhotoSourceIDs.contains(sourceID)
+    }
+
     /// 网络恢复或限流结束后，从第一页重新执行当前条件。
     func retrySearch() {
         scheduleSearch()
     }
 
     /// 数据源开关或凭据变化后只重启受影响的搜索会话，防止无关设置绕过 GIPHY 退避。
-    func sourceConfigurationDidChange(sourceID: PhotoSourceID) {
+    func sourceConfigurationDidChange(
+        sourceID: PhotoSourceID,
+        snapshot: PhotoSourcePreferencesSnapshot? = nil
+    ) {
+        let didFallback = snapshot.map { applyEnabledPhotoSources(from: $0) } ?? false
         if sourceID == .giphy {
             giphyRetryAt = nil
             guard filter == .gif else { return }
         } else {
-            guard filter != .gif else { return }
+            guard filter == .photos || filter == .all else { return }
+            if filter == .photos,
+               !didFallback,
+               case let .source(selectedSourceID) = photoSourceSelection,
+               selectedSourceID != sourceID {
+                return
+            }
         }
         scheduleSearch()
     }
@@ -196,7 +241,7 @@ final class SearchModel: ObservableObject {
             state = .idle
             return
         }
-        if request == .giphy, let retryAt = giphyRetryAt {
+        if request.isGiphy, let retryAt = giphyRetryAt {
             guard retryAt <= Date() else {
                 commitInitialFailure(.rateLimited("GIPHY 请求过于频繁，请稍后重试。"))
                 return
@@ -206,11 +251,10 @@ final class SearchModel: ObservableObject {
         state = .searching
         initialTask = Task { [weak self] in
             do {
-                if case .query = request,
-                   self?.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                guard let self else { return }
+                if request.requiresDebounce(userQuery: self.query) {
                     try await Task.sleep(for: .milliseconds(400))
                 }
-                guard let self else { return }
                 let loaded = try await self.firstVisiblePage(for: request) { [weak self] records in
                     await self?.commitInitialBatch(records, sessionID: newSessionID)
                 }
@@ -243,7 +287,7 @@ final class SearchModel: ObservableObject {
                 // 条件切换、离开页面等真实 Task 取消应保持静默；若下游把一次独立的
                 // I/O 中断包装成 CancellationError，则必须收敛为可见失败，不能永远 searching。
                 guard !Task.isCancelled, let self, self.sessionID == newSessionID else { return }
-                let message = request == .giphy
+                let message = request.isGiphy
                     ? "GIPHY 请求被中断，请重试。"
                     : "搜索请求被中断，请重试。"
                 self.commitInitialFailure(.network(message))
@@ -255,7 +299,7 @@ final class SearchModel: ObservableObject {
                 if case let .allSourcesFailed(issues) = error {
                     self.sourceIssues = issues
                 }
-                if request == .giphy {
+                if request.isGiphy {
                     self.captureGiphyRetryBoundary(from: error)
                 }
                 self.commitInitialFailure(SearchState(photoSearchError: error))
@@ -349,7 +393,7 @@ final class SearchModel: ObservableObject {
             guard !Task.isCancelled,
                   self.sessionID == sessionID,
                   activeRequest == request else { return }
-            let message = request == .giphy
+            let message = request.isGiphy
                 ? "GIPHY 请求被中断，请重试。"
                 : "搜索请求被中断，请重试。"
             paginationState = .failed(message)
@@ -366,7 +410,7 @@ final class SearchModel: ObservableObject {
             if case let .allSourcesFailed(issues) = error {
                 sourceIssues = issues
             }
-            if request == .giphy {
+            if request.isGiphy {
                 captureGiphyRetryBoundary(from: error)
                 paginationRetryAt = giphyRetryAt
             }
@@ -397,7 +441,7 @@ final class SearchModel: ObservableObject {
             )
             try Task.checkCancellation()
             latest = loaded
-            if request == .giphy, !loaded.page.issues.isEmpty {
+            if request.isGiphy, !loaded.page.issues.isEmpty {
                 return loaded
             }
             guard loaded.page.records.isEmpty, let followingCursor = loaded.page.nextCursor,
@@ -421,7 +465,10 @@ final class SearchModel: ObservableObject {
                     cursor: cursor,
                     pageSize: Self.pageSize
                 )
-                return SearchLoadResult(page: fallback, request: .query(DiscoveryRecommendation.query))
+                return SearchLoadResult(
+                    page: fallback,
+                    request: .query(DiscoveryRecommendation.query, photoSourceID: nil)
+                )
             }
             let result = try await recommendationFeed.page(
                 generation: generation,
@@ -432,23 +479,32 @@ final class SearchModel: ObservableObject {
                 page: ImageSearchPage(records: result.records, nextPage: result.nextPage),
                 request: .recommendations(result.generation)
             )
-        case let .query(rawQuery):
+        case let .query(rawQuery, selectedSourceID):
+            let activeService = photoSearchService(selectedSourceID)
             let page: ImageSearchPage
-            if let onPartialResults {
-                page = try await service.search(
+            if let onPartialResults, selectedSourceID == nil {
+                page = try await activeService.search(
                     rawQuery,
                     cursor: cursor,
                     pageSize: Self.pageSize,
                     onPartialResults: onPartialResults
                 )
             } else {
-                page = try await service.search(rawQuery, cursor: cursor, pageSize: Self.pageSize)
+                page = try await activeService.search(
+                    rawQuery,
+                    cursor: cursor,
+                    pageSize: Self.pageSize
+                )
             }
             return SearchLoadResult(page: page, request: request)
-        case .giphy:
+        case let .giphy(query):
             return SearchLoadResult(
-                page: try await service.giphyCatalog(cursor: cursor, pageSize: Self.giphyPageSize),
-                request: .giphy
+                page: try await service.giphyCatalog(
+                    query: query,
+                    cursor: cursor,
+                    pageSize: Self.giphyPageSize
+                ),
+                request: request
             )
         }
     }
@@ -468,10 +524,10 @@ final class SearchModel: ObservableObject {
         }
     }
 
-    /// 空搜索框映射为推荐流；只有不完整的手工关键词进入真正 idle 状态。
+    /// GIF 空查询读取混合目录；其他空查询按当前内容类型读取推荐或默认内容。
     private func pendingRequest() -> SearchRequest? {
         if filter == .gif {
-            return .giphy
+            return .giphy(query.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -482,12 +538,42 @@ final class SearchModel: ObservableObject {
                 // App Group 尚未初始化或不可用时，loadPage 会降级到普通网络推荐，避免发现页永久空白。
                 return .recommendations(nil)
             }
-            return .query(filter.serviceQuery(for: DiscoveryRecommendation.query))
+            return .query(
+                filter.serviceQuery(for: DiscoveryRecommendation.query),
+                photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil
+            )
         }
         let request = filter.serviceQuery(for: query)
         // 统一以移除内容范围前缀后的正文判断，单个中文字符也应是有效查询。
         guard !SearchQueryParser.parse(request).text.isEmpty else { return nil }
-        return .query(request)
+        return .query(
+            request,
+            photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil
+        )
+    }
+
+    /// 只把可在 App 内聚合搜索的来源暴露给标签行，GIPHY 等隔离来源不会混入。
+    private func applyEnabledPhotoSources(
+        from snapshot: PhotoSourcePreferencesSnapshot
+    ) -> Bool {
+        let enabled = Set(snapshot.appSourceIDs.filter { sourceID in
+            guard let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else {
+                return false
+            }
+            return descriptor.availability == .available
+                && descriptor.supportsAggregatedSearch(on: .app, purpose: .interactive)
+        })
+        if enabled != enabledPhotoSourceIDs {
+            enabledPhotoSourceIDs = enabled
+        }
+        guard let selectedSourceID = photoSourceSelection.sourceID,
+              !enabled.contains(selectedSourceID) else { return false }
+
+        let disabledName = photoSourceSelection.title
+        photoSourceSelection = .all
+        photoSourceSelectionDidChange(.all)
+        announce("\(disabledName) 未在设置中启用，已切换到全部来源")
+        return true
     }
 
     /// 新搜索完整清空旧游标和分页反馈，防止筛选切换后沿用上一条件。
@@ -537,7 +623,7 @@ final class SearchModel: ObservableObject {
         from issues: [PhotoSourceIssue],
         for request: SearchRequest
     ) {
-        guard request == .giphy else {
+        guard request.isGiphy else {
             paginationRetryAt = nil
             return
         }
@@ -663,9 +749,25 @@ final class SearchModel: ObservableObject {
 
 /// 搜索会话要么绑定普通查询文字，要么绑定共享推荐快照的 generation。
 private enum SearchRequest: Equatable {
-    case query(String)
+    case query(String, photoSourceID: PhotoSourceID?)
     case recommendations(UInt64?)
-    case giphy
+    case giphy(String)
+
+    var isGiphy: Bool {
+        guard case .giphy = self else { return false }
+        return true
+    }
+
+    func requiresDebounce(userQuery: String) -> Bool {
+        switch self {
+        case .query:
+            return !userQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case let .giphy(query):
+            return !query.isEmpty
+        case .recommendations:
+            return false
+        }
+    }
 }
 
 /// 一次加载同时返回可见页和解析后的稳定会话，第一页由此锁定推荐 generation。

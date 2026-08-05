@@ -117,8 +117,7 @@ struct LibraryGridView: View {
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 8)
             case .ready:
-                Button("加载更多\(pagination.contentName)", action: pagination.loadNextPage)
-                    .padding(.vertical, 8)
+                EmptyView()
             case .unavailable:
                 EmptyView()
             }

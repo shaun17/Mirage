@@ -52,7 +52,7 @@ extension GiphyEmojiError: PhotoSourceFailure {
     }
 }
 
-/// GIPHY 列表 endpoint 适配器；默认指向 Emoji，混合目录会复用它读取 GIF 与 Sticker Trending。
+/// GIPHY 列表 endpoint 适配器；默认指向 Emoji，混合目录会复用它读取 Trending 与 Search。
 public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
     public static let defaultEndpoint = URL(string: "https://api.giphy.com/v2/emoji")!
     public let sourceID = PhotoSourceID.giphy
@@ -67,6 +67,7 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
     private let session: URLSession
     private let endpoint: URL
     private let rating: String?
+    private let queryParameterName: String?
     private let now: @Sendable () -> Date
 
     /// 默认会话不使用 URLCache，避免把含 `api_key` 的请求 URL 持久化。
@@ -90,12 +91,14 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
         session: URLSession? = nil,
         endpoint: URL,
         rating: String? = nil,
+        queryParameterName: String? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.session = session ?? Self.makeEphemeralSession()
         self.endpoint = endpoint
         self.rating = rating
+        self.queryParameterName = queryParameterName
         self.now = now
     }
 
@@ -109,7 +112,7 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
 
         let offset = try Self.offset(from: cursor)
         let safePageSize = min(max(pageSize, 1), Self.maximumPageSize)
-        let request = try makeRequest(offset: offset, pageSize: safePageSize)
+        let request = try makeRequest(query: query, offset: offset, pageSize: safePageSize)
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -156,7 +159,7 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
         }
     }
 
-    private func makeRequest(offset: Int, pageSize: Int) throws -> URLRequest {
+    private func makeRequest(query: String, offset: Int, pageSize: Int) throws -> URLRequest {
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         var queryItems = [
             URLQueryItem(name: "api_key", value: apiKey),
@@ -165,6 +168,12 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
         ]
         if let rating {
             queryItems.append(URLQueryItem(name: "rating", value: rating))
+        }
+        if let queryParameterName {
+            queryItems.append(URLQueryItem(
+                name: queryParameterName,
+                value: query.trimmingCharacters(in: .whitespacesAndNewlines)
+            ))
         }
         components?.queryItems = queryItems
         guard let url = components?.url else {

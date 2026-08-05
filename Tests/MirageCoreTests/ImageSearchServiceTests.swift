@@ -33,8 +33,8 @@ final class ImageSearchServiceTests: XCTestCase {
         ])
     }
 
-    /// GIF 目录只调用隔离的 GIPHY 混合来源，并保留其不透明复合游标。
-    func testGiphyCatalogUsesOnlyGiphyAndAllowsFortyItems() async throws {
+    /// GIF 搜索只调用隔离的 GIPHY 来源，转发关键词并保留其不透明复合游标。
+    func testGiphyCatalogForwardsQueryUsesOnlyGiphyAndAllowsFortyItems() async throws {
         let giphy = GiphyEmojiSpy()
         let service = ImageSearchService(
             photos: BatchForwardingPhotoSearcher(),
@@ -43,8 +43,12 @@ final class ImageSearchServiceTests: XCTestCase {
             maximumPageSize: 40
         )
 
-        let first = try await service.giphyCatalog(cursor: nil, pageSize: 40)
-        let second = try await service.giphyCatalog(cursor: first.nextCursor, pageSize: 40)
+        let first = try await service.giphyCatalog(query: "cat", cursor: nil, pageSize: 40)
+        let second = try await service.giphyCatalog(
+            query: "cat",
+            cursor: first.nextCursor,
+            pageSize: 40
+        )
 
         XCTAssertEqual(first.records.map(\.source), [.giphy])
         XCTAssertEqual(first.nextCursor?.page, 2)
@@ -54,8 +58,8 @@ final class ImageSearchServiceTests: XCTestCase {
         XCTAssertNil(second.nextCursor)
         let calls = await giphy.recordedCalls()
         XCTAssertEqual(calls, [
-            GiphyEmojiCall(query: "", cursor: nil, pageSize: 40),
-            GiphyEmojiCall(query: "", cursor: "40", pageSize: 40)
+            GiphyEmojiCall(query: "cat", cursor: nil, pageSize: 40),
+            GiphyEmojiCall(query: "cat", cursor: "40", pageSize: 40)
         ])
     }
 

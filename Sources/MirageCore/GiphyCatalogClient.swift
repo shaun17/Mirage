@@ -19,22 +19,24 @@ extension GiphyCatalogError: PhotoSourceFailure {
     public var retryAt: Date? { nil }
 }
 
-/// 将 GIPHY Emoji、Trending GIF 与 Trending Sticker 合并为一个可续页目录。
+/// 空查询混合浏览 GIPHY Emoji 与 Trending；关键词查询并行搜索 GIF 与 Sticker。
 public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
     public static let emojiEndpoint = URL(string: "https://api.giphy.com/v2/emoji")!
     public static let gifTrendingEndpoint = URL(string: "https://api.giphy.com/v1/gifs/trending")!
     public static let stickerTrendingEndpoint = URL(string: "https://api.giphy.com/v1/stickers/trending")!
+    public static let gifSearchEndpoint = URL(string: "https://api.giphy.com/v1/gifs/search")!
+    public static let stickerSearchEndpoint = URL(string: "https://api.giphy.com/v1/stickers/search")!
     public static let maximumPageSize = 40
 
     public let sourceID = PhotoSourceID.giphy
 
-    private static let cursorPrefix = "gm1:"
     private static let maximumCursorBytes = 1_024
     private static let maximumPage = Int(Int32.max)
 
-    private let feeds: [Feed]
+    private let browsingFeeds: [Feed]
+    private let searchingFeeds: [Feed]
 
-    /// 三个子客户端共用同一个无持久缓存会话，避免含 API Key 的请求 URL 被写入 URLCache。
+    /// 所有子客户端共用同一个无持久缓存会话，避免含 API Key 的请求 URL 被写入 URLCache。
     public init(
         apiKey: String,
         session: URLSession? = nil,
@@ -62,6 +64,22 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
                 endpoint: Self.stickerTrendingEndpoint,
                 rating: "g",
                 now: now
+            ),
+            gifSearch: GiphyEmojiClient(
+                apiKey: apiKey,
+                session: sharedSession,
+                endpoint: Self.gifSearchEndpoint,
+                rating: "g",
+                queryParameterName: "q",
+                now: now
+            ),
+            stickerSearch: GiphyEmojiClient(
+                apiKey: apiKey,
+                session: sharedSession,
+                endpoint: Self.stickerSearchEndpoint,
+                rating: "g",
+                queryParameterName: "q",
+                now: now
             )
         )
     }
@@ -70,12 +88,18 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
     init(
         emoji: any PhotoSourceSearching,
         gifTrending: any PhotoSourceSearching,
-        stickerTrending: any PhotoSourceSearching
+        stickerTrending: any PhotoSourceSearching,
+        gifSearch: (any PhotoSourceSearching)? = nil,
+        stickerSearch: (any PhotoSourceSearching)? = nil
     ) {
-        self.feeds = [
+        self.browsingFeeds = [
             Feed(kind: .emoji, client: emoji),
             Feed(kind: .gifTrending, client: gifTrending),
             Feed(kind: .stickerTrending, client: stickerTrending)
+        ]
+        self.searchingFeeds = [
+            Feed(kind: .gifTrending, client: gifSearch ?? gifTrending),
+            Feed(kind: .stickerTrending, client: stickerSearch ?? stickerTrending)
         ]
     }
 
@@ -85,8 +109,11 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         pageSize: Int
     ) async throws -> PhotoSourcePage {
         try Task.checkCancellation()
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mode = CatalogMode(query: normalizedQuery)
+        let feeds = mode == .browsing ? browsingFeeds : searchingFeeds
         let safePageSize = min(max(pageSize, 1), Self.maximumPageSize)
-        let current = try Self.cursorState(from: cursor)
+        let current = try Self.cursorState(from: cursor, mode: mode)
         let stateByKind = Dictionary(uniqueKeysWithValues: current.states.map { ($0.kind, $0) })
         let activeFeeds = feeds.filter { stateByKind[$0.kind]?.exhausted == false }
 
@@ -105,7 +132,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         }
         let outcomes = await Self.loadConcurrently(
             requests: requests,
-            query: query
+            query: normalizedQuery
         )
 
         try Task.checkCancellation()
@@ -127,7 +154,8 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
                 do {
                     let nextState = try Self.advancedState(
                         from: request.state,
-                        nextCursor: page.nextCursor
+                        nextCursor: page.nextCursor,
+                        mode: mode
                     )
                     guard let stateIndex = nextStates.firstIndex(where: { $0.kind == kind }) else {
                         throw GiphyCatalogError.invalidCursor
@@ -150,7 +178,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
             }
         }
 
-        // 三个 endpoint 共用同一把 Key；任一路认证失败都代表目录配置不可用，不能伪装成部分成功。
+        // 当前模式内的 endpoint 共用同一把 Key；任一路认证失败都代表配置不可用。
         if let credentialFailure = failures.first(where: {
             guard let failure = $0.error as? any PhotoSourceFailure else { return false }
             return failure.issueKind == .missingCredential || failure.issueKind == .invalidCredential
@@ -169,7 +197,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
             guard !overflow, nextPage <= Self.maximumPage else {
                 throw GiphyCatalogError.invalidCursor
             }
-            nextCursor = try Self.encodedCursor(page: nextPage, states: nextStates)
+            nextCursor = try Self.encodedCursor(page: nextPage, states: nextStates, mode: mode)
         } else {
             nextCursor = nil
         }
@@ -238,21 +266,25 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         return records
     }
 
-    private static func cursorState(from cursor: PhotoSourceCursor?) throws -> CatalogCursorState {
+    private static func cursorState(
+        from cursor: PhotoSourceCursor?,
+        mode: CatalogMode
+    ) throws -> CatalogCursorState {
+        let expectedKinds = mode.feedKinds
         guard let cursor else {
             return CatalogCursorState(
                 page: 0,
-                states: FeedKind.allCases.map {
+                states: expectedKinds.map {
                     FeedCursorState(kind: $0, cursor: nil, exhausted: false)
                 }
             )
         }
         let rawValue = cursor.rawValue
         guard rawValue.utf8.count <= maximumCursorBytes,
-              rawValue.hasPrefix(cursorPrefix) else {
+              rawValue.hasPrefix(mode.cursorPrefix) else {
             throw GiphyCatalogError.invalidCursor
         }
-        let payload = String(rawValue.dropFirst(cursorPrefix.count))
+        let payload = String(rawValue.dropFirst(mode.cursorPrefix.count))
         guard let data = base64URLDecoded(payload) else {
             throw GiphyCatalogError.invalidCursor
         }
@@ -264,7 +296,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
             throw GiphyCatalogError.invalidCursor
         }
         guard (1...maximumPage).contains(wire.page),
-              wire.feeds.map(\.kind) == FeedKind.allCases else {
+              wire.feeds.map(\.kind) == expectedKinds else {
             throw GiphyCatalogError.invalidCursor
         }
 
@@ -273,7 +305,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
                 throw GiphyCatalogError.invalidCursor
             }
             if let cursor = value.cursor {
-                _ = try feedOffset(cursor, kind: value.kind)
+                _ = try feedOffset(cursor, kind: value.kind, mode: mode)
             }
             return FeedCursorState(
                 kind: value.kind,
@@ -286,17 +318,20 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
 
     private static func encodedCursor(
         page: Int,
-        states: [FeedCursorState]
+        states: [FeedCursorState],
+        mode: CatalogMode
     ) throws -> PhotoSourceCursor {
         guard (1...maximumPage).contains(page),
-              states.map(\.kind) == FeedKind.allCases else {
+              states.map(\.kind) == mode.feedKinds else {
             throw GiphyCatalogError.invalidCursor
         }
         for state in states {
             guard !state.exhausted || state.cursor == nil else {
                 throw GiphyCatalogError.invalidCursor
             }
-            if let cursor = state.cursor { _ = try feedOffset(cursor, kind: state.kind) }
+            if let cursor = state.cursor {
+                _ = try feedOffset(cursor, kind: state.kind, mode: mode)
+            }
         }
 
         let wire = WireCursor(
@@ -307,7 +342,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let rawValue = cursorPrefix + base64URLEncoded(try encoder.encode(wire))
+        let rawValue = mode.cursorPrefix + base64URLEncoded(try encoder.encode(wire))
         guard rawValue.utf8.count <= maximumCursorBytes else {
             throw GiphyCatalogError.invalidCursor
         }
@@ -316,7 +351,8 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
 
     private static func advancedState(
         from current: FeedCursorState,
-        nextCursor: PhotoSourceCursor?
+        nextCursor: PhotoSourceCursor?,
+        mode: CatalogMode
     ) throws -> FeedCursorState {
         guard let nextCursor else {
             return FeedCursorState(
@@ -328,7 +364,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         let nextOffset = try numericOffset(nextCursor.rawValue)
         let currentOffset = try current.cursor.map(numericOffset) ?? 0
         guard nextOffset > currentOffset else { throw GiphyCatalogError.invalidCursor }
-        if nextOffset > current.kind.maximumRequestOffset {
+        if nextOffset > mode.maximumRequestOffset(for: current.kind) {
             return FeedCursorState(
                 kind: current.kind,
                 cursor: nil,
@@ -342,10 +378,14 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         )
     }
 
-    /// 三个固定 GIPHY endpoint 的子游标都是规范十进制 offset；Trending 官方上限为 499。
-    private static func feedOffset(_ rawValue: String, kind: FeedKind) throws -> Int {
+    /// 子游标都是规范十进制 offset；Trending 与 Search 使用各自的官方最大位置。
+    private static func feedOffset(
+        _ rawValue: String,
+        kind: FeedKind,
+        mode: CatalogMode
+    ) throws -> Int {
         let value = try numericOffset(rawValue)
-        guard value <= kind.maximumRequestOffset else {
+        guard value <= mode.maximumRequestOffset(for: kind) else {
             throw GiphyCatalogError.invalidCursor
         }
         return value
@@ -469,6 +509,38 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
 }
 
 private extension GiphyCatalogClient {
+    enum CatalogMode: Equatable, Sendable {
+        case browsing
+        case searching
+
+        init(query: String) {
+            self = query.isEmpty ? .browsing : .searching
+        }
+
+        var cursorPrefix: String {
+            switch self {
+            case .browsing: return "gm1:"
+            case .searching: return "gs1:"
+            }
+        }
+
+        var feedKinds: [FeedKind] {
+            switch self {
+            case .browsing: return FeedKind.allCases
+            case .searching: return [.gifTrending, .stickerTrending]
+            }
+        }
+
+        func maximumRequestOffset(for kind: FeedKind) -> Int {
+            switch (self, kind) {
+            case (.browsing, .emoji): return Int(Int32.max)
+            case (.browsing, .gifTrending), (.browsing, .stickerTrending): return 499
+            case (.searching, .gifTrending), (.searching, .stickerTrending): return 4_999
+            case (.searching, .emoji): return 0
+            }
+        }
+    }
+
     enum FeedKind: String, Codable, CaseIterable, Hashable, Sendable {
         case emoji = "e"
         case gifTrending = "g"
@@ -482,12 +554,6 @@ private extension GiphyCatalogClient {
             }
         }
 
-        var maximumRequestOffset: Int {
-            switch self {
-            case .emoji: return Int(Int32.max)
-            case .gifTrending, .stickerTrending: return 499
-            }
-        }
     }
 
     struct Feed: Sendable {

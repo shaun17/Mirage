@@ -60,6 +60,7 @@ public struct PhotoSearchEnvironment: Sendable {
     public func imageSearchService(
         for surface: PhotoSourceSurface,
         purpose: PhotoSearchPurpose = .interactive,
+        selectedSourceID: PhotoSourceID? = nil,
         diceBear: any DiceBearProviding = DiceBearClient()
     ) -> ImageSearchService {
         let giphySource: (any PhotoSourceSearching)? = surface == .app && purpose == .interactive
@@ -73,6 +74,7 @@ public struct PhotoSearchEnvironment: Sendable {
             photos: ConfiguredPhotoSearcher(
                 surface: surface,
                 purpose: purpose,
+                selectedSourceID: selectedSourceID,
                 preferences: preferences,
                 credentials: credentials,
                 openverse: openverse,
@@ -122,13 +124,19 @@ public struct PhotoSearchEnvironment: Sendable {
                 )
             )
         case .giphy:
-            // 每个子流各取一个对象，验证 Emoji、GIF 与 Sticker 三个端点及同一把 Key。
+            // 分别验证混合浏览和关键词搜索，覆盖 Emoji、GIF、Sticker 的五个 endpoint。
             let normalized = credential.trimmingCharacters(in: .whitespacesAndNewlines)
             let source = try credentialedSourceFactory(sourceID, normalized)
-            let page = try await source.search(query: "", cursor: nil, pageSize: 3)
-            guard page.issues.isEmpty else {
-                // 浏览页允许三路中的部分数据先展示；设置页的连接测试必须确认三端点都可用。
-                throw PhotoSearchError.allSourcesFailed(page.issues)
+            for request in [(query: "", pageSize: 3), (query: "mirage", pageSize: 2)] {
+                let page = try await source.search(
+                    query: request.query,
+                    cursor: nil,
+                    pageSize: request.pageSize
+                )
+                guard page.issues.isEmpty else {
+                    // 浏览页允许部分内容先展示；设置页必须确认所有必需 endpoint 可用。
+                    throw PhotoSearchError.allSourcesFailed(page.issues)
+                }
             }
         }
     }
@@ -146,6 +154,7 @@ public struct PhotoSearchEnvironment: Sendable {
 public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     private let surface: PhotoSourceSurface
     private let purpose: PhotoSearchPurpose
+    private let selectedSourceID: PhotoSourceID?
     private let preferences: any PhotoSourcePreferencesReading
     private let credentials: any PhotoSourceCredentialReading
     private let openverse: any PhotoSourceSearching
@@ -156,12 +165,14 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     public init(
         surface: PhotoSourceSurface,
         purpose: PhotoSearchPurpose = .interactive,
+        selectedSourceID: PhotoSourceID? = nil,
         preferences: any PhotoSourcePreferencesReading,
         credentials: any PhotoSourceCredentialReading,
         openverse: any PhotoSourceSearching = OpenversePhotoSource()
     ) {
         self.surface = surface
         self.purpose = purpose
+        self.selectedSourceID = selectedSourceID
         self.preferences = preferences
         self.credentials = credentials
         self.openverse = openverse
@@ -173,6 +184,7 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     init(
         surface: PhotoSourceSurface,
         purpose: PhotoSearchPurpose = .interactive,
+        selectedSourceID: PhotoSourceID? = nil,
         preferences: any PhotoSourcePreferencesReading,
         credentials: any PhotoSourceCredentialReading,
         openverse: any PhotoSourceSearching,
@@ -182,6 +194,7 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     ) {
         self.surface = surface
         self.purpose = purpose
+        self.selectedSourceID = selectedSourceID
         self.preferences = preferences
         self.credentials = credentials
         self.openverse = openverse
@@ -192,7 +205,9 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
 
     public func configurationKey() async -> String {
         let base = await preferences.configurationKey(for: surface)
-        return "\(base):purpose:\(purpose.rawValue):request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
+        let selection = selectedSourceID.map { ":selection:\($0.rawValue)" } ?? ""
+        return "\(base):purpose:\(purpose.rawValue)\(selection)"
+            + ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
     }
 
     public func search(query: String, cursor: PhotoSearchCursor?, pageSize: Int) async throws -> PhotoSearchPage {
@@ -224,7 +239,7 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
         let snapshot = await preferences.snapshot()
         var sources: [any PhotoSourceSearching] = []
         var issues: [PhotoSourceIssue] = []
-        for sourceID in snapshot.sourceIDs(for: surface)
+        for sourceID in selectedSourceIDs(from: snapshot)
         where PhotoSourceRegistry.descriptor(for: sourceID)?.supportsAggregatedSearch(
             on: surface,
             purpose: purpose
@@ -287,6 +302,15 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
         )
     }
 
+    /// 指定来源必须同时存在于当前设置快照中；停用状态不会被筛选操作绕过。
+    private func selectedSourceIDs(
+        from snapshot: PhotoSourcePreferencesSnapshot
+    ) -> [PhotoSourceID] {
+        let enabledSourceIDs = snapshot.sourceIDs(for: surface)
+        guard let selectedSourceID else { return enabledSourceIDs }
+        return enabledSourceIDs.contains(selectedSourceID) ? [selectedSourceID] : []
+    }
+
     private func coordinated(
         _ source: any PhotoSourceSearching,
         partition: String
@@ -308,7 +332,7 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     }
 }
 
-/// 每次 GIF 分页都读取当前设置，并直接调用 GIPHY；不复用会持久化媒体 URL 的批次协调器。
+/// 每次 GIF 浏览或搜索都读取当前设置，并直接调用 GIPHY；不持久化媒体 URL。
 private struct ConfiguredGiphyCatalogSearcher: PhotoSourceSearching, Sendable {
     let sourceID = PhotoSourceID.giphy
 
@@ -364,7 +388,7 @@ private struct ConfiguredGiphyCatalogSearcher: PhotoSourceSearching, Sendable {
         }
 
         do {
-            return try await source.search(query: "", cursor: cursor, pageSize: min(pageSize, 40))
+            return try await source.search(query: query, cursor: cursor, pageSize: min(pageSize, 40))
         } catch is CancellationError {
             throw CancellationError()
         } catch let failure as any PhotoSourceFailure {

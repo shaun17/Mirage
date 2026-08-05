@@ -4,9 +4,10 @@ import XCTest
 
 @MainActor
 final class SearchModelTests: XCTestCase {
-    /// 内容类型按产品入口优先级展示，头像应默认出现在最左侧。
-    func testContentFiltersPresentAvatarsPhotosAllThenGIF() {
-        XCTAssertEqual(SearchFilter.allCases, [.avatars, .photos, .all, .gif])
+    /// 内容类型不再展示混合“全部”，来源行仍可独立提供全部服务商入口。
+    func testContentFiltersPresentAvatarsPhotosThenGIF() {
+        XCTAssertEqual(SearchFilter.contentTypes, [.avatars, .photos, .gif])
+        XCTAssertFalse(SearchFilter.contentTypes.contains(.all))
         XCTAssertEqual(SearchFilter.gif.title, "GIF")
         XCTAssertEqual(SearchFilter.gif.rawValue, "emoji")
     }
@@ -22,6 +23,93 @@ final class SearchModelTests: XCTestCase {
     /// 新搜索会话默认进入头像来源，避免首次发现页混入图片结果。
     func testNewSearchModelDefaultsToAvatarFilter() {
         XCTAssertEqual(SearchModel().filter, .avatars)
+    }
+
+    /// 来源选择写入 App 本地偏好，重新创建状态源后仍能恢复同一个服务商。
+    func testPhotoSourceSelectionStorePersistsSelectedProvider() {
+        let suiteName = "MirageCoreTests.PhotoSourceFilterSelection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PhotoSourceFilterSelectionStore(defaults: defaults)
+
+        XCTAssertEqual(store.load(), .all)
+        store.save(.source(.nasa))
+        XCTAssertEqual(store.load(), .source(.nasa))
+        store.save(.all)
+        XCTAssertEqual(store.load(), .all)
+    }
+
+    /// 离开图片页不会丢失来源；若 Settings 停用该来源，则自动回退并覆盖本地记录。
+    func testPhotoSourceSelectionSurvivesTabSwitchAndFallsBackWhenDisabled() {
+        var persistedSelections: [PhotoSourceFilterSelection] = []
+        let model = SearchModel(
+            initialPhotoSourceSelection: .all,
+            photoSourceSelectionDidChange: { persistedSelections.append($0) }
+        )
+        model.updatePhotoSourcePreferences(PhotoSourcePreferencesSnapshot(
+            appSourceIDs: [.openverse, .nasa],
+            fileProviderSourceIDs: [.openverse]
+        ))
+
+        model.filter = .photos
+        model.selectPhotoSource(.source(.nasa))
+        model.filter = .avatars
+        model.filter = .photos
+
+        XCTAssertEqual(model.photoSourceSelection, .source(.nasa))
+        XCTAssertEqual(persistedSelections, [.source(.nasa)])
+
+        model.sourceConfigurationDidChange(
+            sourceID: .nasa,
+            snapshot: PhotoSourcePreferencesSnapshot(
+                revision: 2,
+                appSourceIDs: [.openverse],
+                fileProviderSourceIDs: [.openverse]
+            )
+        )
+
+        XCTAssertEqual(model.photoSourceSelection, .all)
+        XCTAssertEqual(persistedSelections, [.source(.nasa), .all])
+        XCTAssertEqual(
+            model.accessibilityEvent?.message,
+            "NASA 未在设置中启用，已切换到全部来源"
+        )
+    }
+
+    /// SearchModel 必须把来源选择传入服务装配边界，而不是在聚合结果返回后做界面过滤。
+    func testSelectedPhotoSourceIsPassedToSearchServiceFactory() async {
+        var requestedSourceIDs: [PhotoSourceID?] = []
+        let baseService = ImageSearchService(
+            diceBear: DiceBearClient(styles: [.pixelArt])
+        )
+        let model = SearchModel(
+            service: baseService,
+            photoSearchService: { sourceID in
+                requestedSourceIDs.append(sourceID)
+                return ImageSearchService(
+                    photos: AggregatedPhotoSearcher(
+                        sources: [StaticNASAPhotoSource()],
+                        configurationRevision: 1
+                    ),
+                    diceBear: DiceBearClient(styles: [.pixelArt])
+                )
+            }
+        )
+        model.updatePhotoSourcePreferences(PhotoSourcePreferencesSnapshot(
+            appSourceIDs: [.openverse, .nasa],
+            fileProviderSourceIDs: [.openverse]
+        ))
+        model.filter = .photos
+        model.selectPhotoSource(.source(.nasa))
+        model.setActive(true)
+
+        let loaded = await waitUntil {
+            model.results.map(\.source) == [.nasa]
+        }
+
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(requestedSourceIDs.last!, .nasa)
     }
 
     /// 筛选控件只应同步发布自身绑定值；结果清空和状态切换必须离开当前 SwiftUI 更新事务。
@@ -150,14 +238,40 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(model.paginationState, .exhausted)
         XCTAssertEqual(model.accessibilityEvent?.message, "已加载 1 个 GIF，共 2 个 GIF；已加载全部 GIF")
         let giphyCursors = await giphy.recordedCursors()
+        let giphyQueries = await giphy.recordedQueries()
         let openverseCalls = await openverse.callCount()
         XCTAssertEqual(giphyCursors, [nil, "40"])
+        XCTAssertEqual(giphyQueries, ["", ""])
         XCTAssertEqual(openverseCalls, 0)
 
         model.setActive(false)
         XCTAssertEqual(model.state, .idle)
         XCTAssertTrue(model.results.isEmpty)
         XCTAssertEqual(model.paginationState, .unavailable)
+    }
+
+    /// GIF 模式下输入关键词应经过防抖后原样转发给 GIPHY，而不是继续读取空查询目录。
+    func testGIFKeywordSearchForwardsTrimmedQueryToGiphy() async {
+        let giphy = SearchModelGiphySource()
+        let openverse = OpenverseCallCounter()
+        let model = SearchModel(
+            service: ImageSearchService(
+                openverse: openverse,
+                giphy: giphy,
+                diceBear: DiceBearClient(styles: [.pixelArt])
+            )
+        )
+        model.query = "  funny cat  "
+        model.filter = .gif
+        model.setActive(true)
+
+        let loaded = await waitUntil { model.results.map(\.id) == ["giphy-first"] }
+        let recordedQueries = await giphy.recordedQueries()
+        let openverseCalls = await openverse.callCount()
+
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(recordedQueries, ["funny cat"])
+        XCTAssertEqual(openverseCalls, 0)
     }
 
     /// 非调用方触发的 CancellationError 必须成为可见失败，不能把 GIF 页永久留在搜索态。
@@ -810,6 +924,28 @@ final class SearchModelTests: XCTestCase {
     }
 }
 
+private struct StaticNASAPhotoSource: PhotoSourceSearching {
+    let sourceID = PhotoSourceID.nasa
+
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int
+    ) async throws -> PhotoSourcePage {
+        PhotoSourcePage(
+            records: [RemoteImageRecord(
+                id: "nasa-selected-source",
+                title: "NASA selected source",
+                source: .nasa,
+                imageURL: URL(string: "https://images-assets.nasa.gov/image/test/test~orig.jpg")!,
+                thumbnailURL: URL(string: "https://images-assets.nasa.gov/image/test/test~thumb.jpg")!,
+                license: .publicDomain
+            )],
+            nextCursor: nil
+        )
+    }
+}
+
 private actor SearchRecommendationFeed: DiscoveryFeedProviding {
     private var requestedPages: [Int] = []
 
@@ -833,6 +969,7 @@ private actor SearchRecommendationFeed: DiscoveryFeedProviding {
 private actor SearchModelGiphySource: PhotoSourceSearching {
     let sourceID = PhotoSourceID.giphy
     private var cursors: [String?] = []
+    private var queries: [String] = []
 
     func search(
         query: String,
@@ -840,7 +977,7 @@ private actor SearchModelGiphySource: PhotoSourceSearching {
         pageSize: Int
     ) async throws -> PhotoSourcePage {
         cursors.append(cursor?.rawValue)
-        XCTAssertEqual(query, "")
+        queries.append(query)
         XCTAssertEqual(pageSize, SearchPaginationCursor.maximumPageSize)
         if cursor == nil {
             return PhotoSourcePage(
@@ -853,6 +990,10 @@ private actor SearchModelGiphySource: PhotoSourceSearching {
 
     func recordedCursors() -> [String?] {
         cursors
+    }
+
+    func recordedQueries() -> [String] {
+        queries
     }
 
     private static func record(id: String) -> RemoteImageRecord {

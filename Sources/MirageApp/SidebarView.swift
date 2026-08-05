@@ -1,19 +1,37 @@
 import SwiftUI
 
-/// 侧栏只承载导航；使用说明与系统状态分别由工具栏和设置页负责。
+/// 侧栏承载主导航，并在底部提供始终可见的设置入口。
 struct SidebarView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        List(selection: $model.selection) {
-            ForEach(AppSection.allCases) { section in
-                Label(section.title, systemImage: section.symbol)
-                    .tag(section)
-                    .accessibilityHint("在右侧显示\(section.title)内容")
+        VStack(spacing: 0) {
+            List(selection: $model.selection) {
+                ForEach(AppSection.allCases) { section in
+                    Label(section.title, systemImage: section.symbol)
+                        .tag(section)
+                        .accessibilityHint("在右侧显示\(section.title)内容")
+                }
             }
+            .listStyle(.sidebar)
+
+            Divider()
+
+            Button {
+                openSettings()
+            } label: {
+                Label("设置", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .help("打开 Mirage 设置")
+            .accessibilityHint("打开服务商和文件面板设置")
         }
-        .listStyle(.sidebar)
-        // 侧栏不再承载说明文字，因此可以收窄到纯导航需要的宽度。
+        // 底部设置入口与导航共用紧凑侧栏宽度。
         .navigationSplitViewColumnWidth(min: 168, ideal: 180, max: 220)
     }
 }

@@ -68,7 +68,7 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
             "可在 App 内收藏，暂不用于 Finder 或自动推荐"
         )
         XCTAssertEqual(giphy?.supportedSurfaces, [.app])
-        XCTAssertEqual(giphy?.summary, "使用你自己的 GIPHY API Key 浏览 Emoji、GIF 与 Sticker")
+        XCTAssertEqual(giphy?.summary, "使用你自己的 GIPHY API Key 浏览 Emoji，并搜索 GIF 与 Sticker")
         XCTAssertEqual(giphy?.resultPresentation, .isolated)
         XCTAssertFalse(giphy?.allowsAutomatedRecommendations ?? true)
         XCTAssertFalse(giphy?.allowsPersistentLibraryStorage ?? true)

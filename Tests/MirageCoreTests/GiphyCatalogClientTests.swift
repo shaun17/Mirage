@@ -29,7 +29,7 @@ final class GiphyCatalogClientTests: XCTestCase {
         ])
         let client = makeClient(script: script)
 
-        let first = try await client.search(query: "ignored", cursor: nil, pageSize: 999)
+        let first = try await client.search(query: "", cursor: nil, pageSize: 999)
         XCTAssertEqual(first.records.map(\.id), ["e0", "g0", "s0", "shared", "s1", "e2", "g2"])
         let firstCursor = try XCTUnwrap(first.nextCursor)
         XCTAssertTrue(firstCursor.rawValue.hasPrefix("gm1:"))
@@ -37,9 +37,9 @@ final class GiphyCatalogClientTests: XCTestCase {
         XCTAssertFalse(firstCursor.rawValue.contains("http"))
         XCTAssertFalse(firstCursor.rawValue.contains("api_key"))
 
-        let second = try await client.search(query: "ignored", cursor: firstCursor, pageSize: 40)
+        let second = try await client.search(query: "", cursor: firstCursor, pageSize: 40)
         let secondCursor = try XCTUnwrap(second.nextCursor)
-        _ = try await client.search(query: "ignored", cursor: secondCursor, pageSize: 40)
+        _ = try await client.search(query: "", cursor: secondCursor, pageSize: 40)
 
         let calls = await script.invocations()
         let callsByFeed = Dictionary(grouping: calls, by: \.feed)
@@ -49,6 +49,50 @@ final class GiphyCatalogClientTests: XCTestCase {
         XCTAssertEqual(callsByFeed[.emoji]?.map(\.cursor), [nil, "10", "11"])
         XCTAssertEqual(callsByFeed[.gif]?.map(\.cursor), [nil, "20", "21"])
         XCTAssertEqual(callsByFeed[.sticker]?.map(\.cursor), [nil, "30", "31"])
+    }
+
+    /// 关键词模式只分配 GIF 与 Sticker，并使用独立游标，不能误接到空查询混合目录。
+    func testKeywordSearchUsesTwoFeedsAndKeepsSearchCursorIsolated() async throws {
+        let script = CatalogScript(steps: [
+            .gif: [
+                .success(ids: ["g0"], nextCursor: "20"),
+                .success(ids: ["g1"], nextCursor: nil)
+            ],
+            .sticker: [
+                .success(ids: ["s0"], nextCursor: "20"),
+                .success(ids: ["s1"], nextCursor: nil)
+            ]
+        ])
+        let client = GiphyCatalogClient(
+            emoji: UnexpectedCatalogFeed(),
+            gifTrending: UnexpectedCatalogFeed(),
+            stickerTrending: UnexpectedCatalogFeed(),
+            gifSearch: ScriptedCatalogFeed(feed: .gif, script: script),
+            stickerSearch: ScriptedCatalogFeed(feed: .sticker, script: script)
+        )
+
+        let first = try await client.search(query: "cat", cursor: nil, pageSize: 40)
+        let firstCursor = try XCTUnwrap(first.nextCursor)
+        XCTAssertEqual(first.records.map(\.id), ["g0", "s0"])
+        XCTAssertTrue(firstCursor.rawValue.hasPrefix("gs1:"))
+
+        do {
+            _ = try await client.search(query: "", cursor: firstCursor, pageSize: 40)
+            XCTFail("关键词游标不应进入空查询混合目录")
+        } catch let error as GiphyCatalogError {
+            XCTAssertEqual(error, .invalidCursor)
+        }
+
+        let second = try await client.search(query: "cat", cursor: firstCursor, pageSize: 40)
+        XCTAssertEqual(second.records.map(\.id), ["g1", "s1"])
+        XCTAssertNil(second.nextCursor)
+
+        let callsByFeed = Dictionary(grouping: await script.invocations(), by: \.feed)
+        XCTAssertNil(callsByFeed[.emoji])
+        XCTAssertEqual(callsByFeed[.gif]?.map(\.pageSize), [20, 20])
+        XCTAssertEqual(callsByFeed[.sticker]?.map(\.pageSize), [20, 20])
+        XCTAssertEqual(callsByFeed[.gif]?.map(\.cursor), [nil, "20"])
+        XCTAssertEqual(callsByFeed[.sticker]?.map(\.cursor), [nil, "20"])
     }
 
     /// 三路供应都充足时首屏必须实际交付 40 条，而不只是把请求配额相加为 40。
@@ -390,7 +434,7 @@ final class GiphyCatalogClientTests: XCTestCase {
         let page = try await GiphyCatalogClient(
             apiKey: "secret&key",
             session: session
-        ).search(query: "ignored", cursor: nil, pageSize: 40)
+        ).search(query: "", cursor: nil, pageSize: 40)
 
         XCTAssertEqual(page.records.map(\.id), [
             StableImageID.giphy(id: "prod-e"),
@@ -415,6 +459,52 @@ final class GiphyCatalogClientTests: XCTestCase {
         XCTAssertEqual(valuesByPath["/v1/stickers/trending"]?["rating"], "g")
         XCTAssertTrue(valuesByPath.values.allSatisfy { $0["api_key"] == "secret&key" })
         XCTAssertTrue(valuesByPath.values.allSatisfy { $0["offset"] == "0" })
+    }
+
+    /// 非空关键词只访问官方 GIF/Sticker Search，并把用户原始关键词放入 q 参数。
+    func testProductionInitializerSearchesGIFAndStickerWithExactQuery() async throws {
+        let recorder = GiphyRequestRecorder()
+        GiphyCatalogURLProtocol.handler = { request in
+            recorder.record(request)
+            let path = try XCTUnwrap(request.url?.path)
+            let (type, id): (String, String)
+            switch path {
+            case "/v1/gifs/search": (type, id) = ("gif", "search-g")
+            case "/v1/stickers/search": (type, id) = ("sticker", "search-s")
+            default: throw URLError(.badURL)
+            }
+            return (
+                Self.response(for: request),
+                Self.giphyEnvelope(type: type, id: id)
+            )
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GiphyCatalogURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        let page = try await GiphyCatalogClient(
+            apiKey: "secret&key",
+            session: session
+        ).search(query: "  猫 & dog  ", cursor: nil, pageSize: 40)
+
+        XCTAssertEqual(page.records.map(\.id), [
+            StableImageID.giphy(id: "search-g"),
+            StableImageID.giphy(id: "search-s")
+        ])
+        let requests = recorder.snapshot().sorted { ($0.url?.path ?? "") < ($1.url?.path ?? "") }
+        XCTAssertEqual(requests.count, 2)
+        for request in requests {
+            let url = try XCTUnwrap(request.url)
+            let values = Dictionary(uniqueKeysWithValues: (URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: false
+            )?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(values["api_key"], "secret&key")
+            XCTAssertEqual(values["q"], "猫 & dog")
+            XCTAssertEqual(values["rating"], "g")
+            XCTAssertEqual(values["limit"], "20")
+            XCTAssertEqual(values["offset"], "0")
+        }
     }
 
     private func makeClient(script: CatalogScript) -> GiphyCatalogClient {

@@ -95,8 +95,9 @@ public struct ImageSearchService: Sendable {
         await photos.configurationKey()
     }
 
-    /// App 内 GIPHY Emoji、GIF 与 Sticker 的独立混合入口；不接受关键词，也不与图片聚合。
+    /// App 内 GIPHY 独立入口；空查询浏览混合目录，关键词查询搜索 GIF 与 Sticker。
     public func giphyCatalog(
+        query: String = "",
         cursor: ImageSearchCursor?,
         pageSize: Int = SearchPaginationCursor.maximumPageSize
     ) async throws -> ImageSearchPage {
@@ -121,7 +122,7 @@ public struct ImageSearchService: Sendable {
 
         let safePageSize = min(max(pageSize, 1), SearchPaginationCursor.maximumPageSize)
         let result = try await giphy.search(
-            query: "",
+            query: query,
             cursor: cursor?.giphyCursor,
             pageSize: safePageSize
         )

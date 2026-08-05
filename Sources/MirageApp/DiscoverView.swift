@@ -37,15 +37,14 @@ struct DiscoverView: View {
             }
     }
 
-    /// GIPHY 混合目录不是关键词搜索；GIF 模式直接移除搜索框焦点节点。
-    @ViewBuilder
+    /// 所有内容类型共用搜索框；GIF 会把原始关键词直接交给 GIPHY Search。
     private var searchableContent: some View {
-        if filterDraft == .gif {
-            discoveryContent
-        } else {
-            discoveryContent
-                .searchable(text: $queryDraft, placement: .toolbar, prompt: "搜索头像或图片")
-        }
+        discoveryContent
+            .searchable(
+                text: $queryDraft,
+                placement: .toolbar,
+                prompt: Text(searchPrompt)
+            )
     }
 
     private var discoveryContent: some View {
@@ -54,8 +53,8 @@ struct DiscoverView: View {
                 .frame(minHeight: 52)
 
             Divider()
-            if filterDraft == .gif {
-                giphyAttributionBar
+            if filterDraft == .photos {
+                photoSourceFilterBar
                 Divider()
             }
             searchBody
@@ -73,13 +72,17 @@ struct DiscoverView: View {
                 .accessibilityHidden(true)
 
             Picker("内容类型", selection: $filterDraft) {
-                ForEach(SearchFilter.allCases) { filter in
+                ForEach(SearchFilter.contentTypes) { filter in
                     Text(filter.title).tag(filter)
                 }
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 300, alignment: .leading)
+            .frame(width: 220, alignment: .leading)
+
+            if filterDraft == .gif {
+                GiphyAttributionLink()
+            }
 
             if filterDraft != .gif,
                let message = model.libraryAvailability.unavailableDescription {
@@ -95,24 +98,13 @@ struct DiscoverView: View {
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
     }
 
-    /// GIPHY 的品牌标记固定在 GIF 内容上方，加载、空态和失败时都不会消失。
-    private var giphyAttributionBar: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("GIPHY GIF")
-                    .font(.callout.weight(.medium))
-                Text("混合浏览 Emoji、GIF 和 Sticker，不支持关键词搜索")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 12)
-            GiphyAttributionLink()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-        .background(.bar)
+    /// 图片内容类型下固定展示完整服务商列表；只有标签区域横向滚动。
+    private var photoSourceFilterBar: some View {
+        PhotoSourceFilterBar(
+            selection: searchModel.photoSourceSelection,
+            enabledSourceIDs: searchModel.enabledPhotoSourceIDs,
+            onSelect: searchModel.selectPhotoSource
+        )
     }
 
     /// 本地草稿保持 AppKit Binding 的同步语义，模型只在下一主队列轮次接收变更。
@@ -135,7 +127,7 @@ struct DiscoverView: View {
             searchModel.filter = filter
             if filter == .gif {
                 AccessibilityNotification.Announcement(
-                    "已切换到 GIF，显示 GIPHY Emoji、GIF 和 Sticker；关键词搜索不可用"
+                    "已切换到 GIF；可以搜索 GIPHY GIF 和 Sticker"
                 ).post()
             }
             // SearchModel 会在自己的下一次主队列轮次清空旧结果；等它先提交再恢复内容渲染。
@@ -185,9 +177,9 @@ struct DiscoverView: View {
                 unavailable("继续输入关键词", symbol: "text.cursor", description: "输入至少一个字符开始搜索。")
             }
         case .searching:
-            ProgressView(isGiphyMode ? "正在读取 GIPHY GIF 内容…" : "正在搜索已启用的图片数据源…")
+            ProgressView(searchingDescription)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel(isGiphyMode ? "正在读取 GIPHY GIF 内容" : "正在搜索")
+                .accessibilityLabel(giphySearchingAccessibilityLabel)
         case .results:
             VStack(spacing: 0) {
                 if showsSourceIssueBar {
@@ -199,7 +191,7 @@ struct DiscoverView: View {
                     records: searchModel.results,
                     favoriteIDs: model.favoriteIDs,
                     emptyTitle: isGiphyMode ? "没有可用 GIF" : "没有结果",
-                    emptyDescription: isGiphyMode ? "GIPHY 当前没有返回可显示的 Emoji、GIF 或 Sticker。" : "换一个关键词再试。",
+                    emptyDescription: resultEmptyDescription,
                     allowsFavoriteChanges: model.libraryAvailability.allowsFavoriteChanges,
                     pagination: GridPagination(
                         state: searchModel.paginationState,
@@ -251,7 +243,7 @@ struct DiscoverView: View {
             case .loading:
                 ProgressView(isGiphyMode ? "正在继续浏览…" : "正在继续查找…")
             case .ready:
-                Button(isGiphyMode ? "加载更多 GIF" : "继续查找", action: searchModel.loadNextPage)
+                EmptyView()
             case .needsContinuation:
                 Button(isGiphyMode ? "继续浏览" : "继续查找", action: searchModel.continueLoadingNextPage)
             case .failed:
@@ -319,6 +311,41 @@ struct DiscoverView: View {
         filterDraft == .gif
     }
 
+    private var hasGiphyQuery: Bool {
+        isGiphyMode
+            && !searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var searchPrompt: String {
+        isGiphyMode ? "搜索 GIPHY GIF 或 Sticker" : "搜索头像或图片"
+    }
+
+    private var searchingDescription: String {
+        if hasGiphyQuery { return "正在搜索 GIPHY GIF 与 Sticker…" }
+        if isGiphyMode { return "正在读取 GIPHY 内容…" }
+        if filterDraft == .avatars { return "正在生成头像…" }
+        switch searchModel.photoSourceSelection {
+        case .all:
+            return "正在搜索已启用的图片数据源…"
+        case let .source(sourceID):
+            let name = PhotoSourceRegistry.descriptor(for: sourceID)?.displayName
+                ?? sourceID.rawValue
+            return "正在搜索 \(name)…"
+        }
+    }
+
+    private var giphySearchingAccessibilityLabel: String {
+        if hasGiphyQuery { return "正在搜索 GIPHY GIF 与 Sticker" }
+        return isGiphyMode ? "正在读取 GIPHY 内容" : "正在搜索"
+    }
+
+    private var resultEmptyDescription: String {
+        guard isGiphyMode else { return "换一个关键词再试。" }
+        return hasGiphyQuery
+            ? "GIPHY 没有返回匹配的 GIF 或 Sticker，换一个关键词再试。"
+            : "GIPHY 当前没有返回可显示的 Emoji、GIF 或 Sticker。"
+    }
+
     private var contentName: String {
         isGiphyMode ? "GIF" : "图片"
     }
@@ -343,5 +370,106 @@ struct DiscoverView: View {
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
+    }
+}
+
+/// 来源标签沿用原生语义色；停用来源保留位置但不响应点击、键盘或悬停。
+private struct PhotoSourceFilterBar: View {
+    let selection: PhotoSourceFilterSelection
+    let enabledSourceIDs: Set<PhotoSourceID>
+    let onSelect: (PhotoSourceFilterSelection) -> Void
+
+    private let descriptors = PhotoSourceRegistry.descriptors.filter {
+        $0.availability == .available
+            && $0.supportsAggregatedSearch(on: .app, purpose: .interactive)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("来源")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    sourceButton(
+                        selection: .all,
+                        isEnabled: !enabledSourceIDs.isEmpty
+                    )
+                    ForEach(descriptors) { descriptor in
+                        sourceButton(
+                            selection: .source(descriptor.id),
+                            isEnabled: enabledSourceIDs.contains(descriptor.id)
+                        )
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+    }
+
+    private func sourceButton(
+        selection option: PhotoSourceFilterSelection,
+        isEnabled: Bool
+    ) -> some View {
+        let isSelected = selection == option && isEnabled
+        let disabledHelp = option == .all
+            ? "没有在设置中启用可用的图片服务商"
+            : "未在设置中启用"
+
+        return Button {
+            onSelect(option)
+        } label: {
+            HStack(spacing: 4) {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption2.weight(.semibold))
+                }
+                Text(option.title)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(
+                isEnabled
+                    ? (isSelected ? Color.accentColor : Color.primary)
+                    : Color.secondary
+            )
+            .padding(.horizontal, isSelected ? 9 : 11)
+            .frame(height: 22)
+            .background {
+                Capsule()
+                    .fill(
+                        isSelected
+                            ? Color.accentColor.opacity(0.12)
+                            : Color.secondary.opacity(0.08)
+                    )
+            }
+            .overlay {
+                Capsule()
+                    .stroke(
+                        isSelected ? Color.accentColor.opacity(0.35) : Color.clear,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.5)
+        .help(isEnabled ? enabledHelp(for: option) : disabledHelp)
+        .accessibilityLabel(
+            isEnabled ? option.title : "\(option.title)，\(disabledHelp)"
+        )
+        .accessibilityValue(
+            isEnabled ? (isSelected ? "已选择" : "未选择") : disabledHelp
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func enabledHelp(for option: PhotoSourceFilterSelection) -> String {
+        option == .all ? "显示全部已启用来源" : "仅显示 \(option.title) 图片"
     }
 }

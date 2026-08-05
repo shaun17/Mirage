@@ -187,7 +187,7 @@ public enum PhotoSourceRegistry {
         PhotoSourceDescriptor(
             id: .giphy,
             displayName: "GIPHY",
-            summary: "使用你自己的 GIPHY API Key 浏览 Emoji、GIF 与 Sticker",
+            summary: "使用你自己的 GIPHY API Key 浏览 Emoji，并搜索 GIF 与 Sticker",
             availability: .available,
             credentialRequirement: .apiKey,
             supportedSurfaces: [.app],
@@ -201,7 +201,7 @@ public enum PhotoSourceRegistry {
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Powered by GIPHY",
                 url: URL(string: "https://giphy.com")!,
-                note: "仅在 App 内混合浏览；不进入 Finder、推荐或收藏"
+                note: "仅在 App 内浏览与搜索；不进入 Finder、推荐或收藏"
             )
         )
     ]
