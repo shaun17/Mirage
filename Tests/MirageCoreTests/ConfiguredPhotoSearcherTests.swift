@@ -262,6 +262,33 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
         XCTAssertEqual(queries, ["happy cat"])
     }
 
+    /// 配置包装层必须保留 GiphyCatalogSearching 能力，让未勾选类型在请求前就被裁剪。
+    func testConfiguredGiphySearcherForwardsSelectedContentTypes() async throws {
+        let preferences = makePreferences()
+        _ = try await preferences.saveConfiguration(for: .giphy, enabledSurfaces: [.app])
+        let giphy = GiphyQueryRecordingSource()
+        let environment = PhotoSearchEnvironment(
+            preferences: preferences,
+            credentials: ConfiguredCredentialStore(values: [.giphy: "giphy-test-key"]),
+            openverse: ConfiguredFixtureSource(sourceID: .openverse),
+            requestCoordinator: PhotoSourceRequestCoordinator(),
+            credentialedSourceFactory: { _, _ in giphy }
+        )
+
+        _ = try await environment.imageSearchService(
+            for: .app,
+            purpose: .interactive
+        ).giphyCatalog(
+            query: "",
+            cursor: nil,
+            pageSize: 40,
+            contentTypes: [.gif, .sticker]
+        )
+
+        let contentTypes = await giphy.recordedContentTypes()
+        XCTAssertEqual(contentTypes, [[.gif, .sticker]])
+    }
+
     /// 设置页测试 API 时同时验证空查询浏览和关键词搜索，避免只验证旧 Trending 能力。
     func testGiphyConnectionTestCoversBrowsingAndSearch() async throws {
         let giphy = GiphyQueryRecordingSource()
@@ -330,21 +357,41 @@ private struct GiphyPartialConnectionSource: PhotoSourceSearching {
     }
 }
 
-private actor GiphyQueryRecordingSource: PhotoSourceSearching {
+private actor GiphyQueryRecordingSource: GiphyCatalogSearching {
     nonisolated let sourceID = PhotoSourceID.giphy
     private var queries: [String] = []
+    private var contentTypeRequests: [Set<GiphyContentType>] = []
 
     func search(
         query: String,
         cursor: PhotoSourceCursor?,
         pageSize: Int
     ) async throws -> PhotoSourcePage {
+        try await search(
+            query: query,
+            cursor: cursor,
+            pageSize: pageSize,
+            contentTypes: Set(GiphyContentType.allCases)
+        )
+    }
+
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int,
+        contentTypes: Set<GiphyContentType>
+    ) async throws -> PhotoSourcePage {
         queries.append(query)
+        contentTypeRequests.append(contentTypes)
         return PhotoSourcePage(records: [], nextCursor: nil)
     }
 
     func recordedQueries() -> [String] {
         queries
+    }
+
+    func recordedContentTypes() -> [Set<GiphyContentType>] {
+        contentTypeRequests
     }
 }
 

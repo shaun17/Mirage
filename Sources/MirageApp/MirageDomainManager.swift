@@ -15,6 +15,7 @@ struct MirageDomainManager: Sendable {
 
     private static let maximumRegistrationAttempts = 5
     static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
+    private static let avatarsIdentifier = NSFileProviderItemIdentifier("avatars")
 
     /// 只把用户明确关闭扩展归为待启用，其余异常保留为可诊断错误。
     enum Availability: Sendable {
@@ -137,15 +138,34 @@ struct MirageDomainManager: Sendable {
         try await signalWorkingSet()
     }
 
-    /// 所有 App 侧变更共用系统唯一支持的 Replicated File Provider 刷新入口。
+    /// 图片来源变化同时唤醒根目录和 working set，旧来源 occurrence 才能及时删除。
+    func signalPhotoFilterChanged() async throws {
+        try await signalEnumerators([.rootContainer, .workingSet])
+    }
+
+    /// 头像类型变化只重枚举头像容器，并同步唤醒 working set 的全局变更入口。
+    func signalAvatarFilterChanged() async throws {
+        try await signalEnumerators([Self.avatarsIdentifier, .workingSet])
+    }
+
+    /// 其他 App 侧变更沿用 working set 全局刷新入口。
     private func signalWorkingSet() async throws {
+        try await signalEnumerators([.workingSet])
+    }
+
+    /// Apple 允许按具体文件夹通知；同一批标识依次完成，避免系统收到失序刷新。
+    private func signalEnumerators(
+        _ identifiers: [NSFileProviderItemIdentifier]
+    ) async throws {
         let domainIdentifier = try synchronizedDomainIdentifier()
         guard let domain = try await installedDomains().first(where: {
             $0.identifier == domainIdentifier
         }), let manager = NSFileProviderManager(for: domain) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        try await manager.signalEnumerator(for: .workingSet)
+        for identifier in identifiers {
+            try await manager.signalEnumerator(for: identifier)
+        }
     }
 
     /// 先读取系统公开的启用/断开状态，再以 URL 与 signal 验证完整运行链路。

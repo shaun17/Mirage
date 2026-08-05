@@ -17,7 +17,7 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
                 "推荐词不应包含高风险主题：\(query)"
             )
         }
-        XCTAssertEqual(DiscoveryRecommendation.catalogKey, "mirage-recommendations-v9")
+        XCTAssertEqual(DiscoveryRecommendation.catalogKey, "mirage-recommendations-v10")
     }
 
     /// 每个测试使用独立共享目录，避免推荐 generation 与其他测试相互污染。
@@ -76,6 +76,34 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
         XCTAssertFalse(cachedSecond.didMutateSnapshot)
         let calls = await openverse.pages()
         XCTAssertEqual(calls, [1, 2])
+    }
+
+    /// Finder 图片范围不得用头像补齐；远端不足一页时应保留纯图片并终止该快照。
+    func testPhotoScopeReturnsOnlyRemotePhotosWithoutAvatarFallback() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let repository = DiscoveryFeedRepository(
+            storage: storage,
+            service: ImageSearchService(
+                openverse: PartialPhotoDiscoveryOpenverse(),
+                diceBear: diceBear
+            ),
+            diceBear: diceBear,
+            catalogKey: { "finder-photo-scope-test-v1" },
+            contentScope: .photos
+        )
+
+        let page = try await repository.page(
+            generation: nil,
+            page: 1,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+
+        XCTAssertEqual(page.records.count, 12)
+        XCTAssertNil(page.nextPage)
+        XCTAssertTrue(page.records.allSatisfy {
+            !$0.source.isAvatarSource && $0.source == .openverse
+        })
     }
 
     /// 当前推荐刷新后，旧 Finder token 仍须续读旧 generation 且不能覆盖当前指针。
@@ -531,6 +559,15 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
                 license: .cc0
             )
         }
+    }
+}
+
+private struct PartialPhotoDiscoveryOpenverse: OpenverseSearching {
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        ImageSearchPage(
+            records: DiscoveryFeedRepositoryTests.records(prefix: "photo-only", count: 12),
+            nextPage: 2
+        )
     }
 }
 

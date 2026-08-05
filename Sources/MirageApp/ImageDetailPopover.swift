@@ -35,7 +35,7 @@ struct ImageDetailPopover: View {
             authorRow
             linkRow(title: "来源页", url: record.sourcePageURL)
             linkRow(
-                title: record.source == .giphy ? "使用条款" : "许可",
+                title: licenseLinkTitle,
                 url: record.license.url,
                 label: record.license.displayName
             )
@@ -75,8 +75,22 @@ struct ImageDetailPopover: View {
 
     private var usageNote: String {
         if record.source == .giphy {
-            return "此 Emoji、GIF 或 Sticker 由 GIPHY 提供，仅在 Mirage App 中瞬时预览，不会写入收藏或 Finder。使用前请核对 GIPHY 来源页与 API 条款。"
+            return "此 Emoji、GIF 或 Sticker 由 GIPHY 提供。收藏只保存 GIPHY 对象 ID，打开收藏时实时回查；媒体文件与媒体 URL 均不落盘，也不写入 Finder。使用前请核对来源页与 API 条款。"
+        }
+        if record.source == .picrew {
+            return "此图来自 Picrew Discovery 的公开作品预览。收藏保存预览与 Maker 来源记录，但不发布到 Finder；实际生成图片的使用范围以来源页中的 Maker 作者说明为准。"
+        }
+        if record.source == .thisPersonDoesNotExist {
+            return "此头像由 AI 动态生成，内容已在首次请求后冻结并可收藏。网站当前未公开 API 合约或使用许可且域名标示出售；对外使用前请自行核实权利与服务状态。"
         }
         return "许可信息来自内容提供方，仅供参考。使用前请核对来源页，并自行确认肖像权、商标权及其他适用限制。"
+    }
+
+    private var licenseLinkTitle: String {
+        switch record.source {
+        case .giphy: return "使用条款"
+        case .picrew: return "使用范围"
+        default: return "许可"
+        }
     }
 }

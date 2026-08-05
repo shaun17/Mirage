@@ -95,11 +95,12 @@ public struct ImageSearchService: Sendable {
         await photos.configurationKey()
     }
 
-    /// App 内 GIPHY 独立入口；空查询浏览混合目录，关键词查询搜索 GIF 与 Sticker。
+    /// GIPHY 的 App 独立入口；使用自己的筛选和游标，不进入普通图片聚合。
     public func giphyCatalog(
         query: String = "",
         cursor: ImageSearchCursor?,
-        pageSize: Int = SearchPaginationCursor.maximumPageSize
+        pageSize: Int = SearchPaginationCursor.maximumPageSize,
+        contentTypes: Set<GiphyContentType> = Set(GiphyContentType.allCases)
     ) async throws -> ImageSearchPage {
         let page = cursor?.page ?? 1
         let cursorIsConsistent = cursor == nil
@@ -115,17 +116,41 @@ public struct ImageSearchService: Sendable {
                 PhotoSourceIssue(
                     sourceID: .giphy,
                     kind: .unavailable,
-                    message: "GIPHY 数据源仅支持 Mirage App 内的独立 GIF 页面。"
+                    message: "App 当前没有启用 GIPHY 独立目录。"
                 )
             ])
         }
 
         let safePageSize = min(max(pageSize, 1), SearchPaginationCursor.maximumPageSize)
-        let result = try await giphy.search(
-            query: query,
-            cursor: cursor?.giphyCursor,
-            pageSize: safePageSize
-        )
+        let supportedTypes = Set(GiphyContentType.allCases)
+        let selectedTypes = contentTypes.intersection(supportedTypes)
+        let effectiveTypes = selectedTypes.isEmpty ? supportedTypes : selectedTypes
+        let result: PhotoSourcePage
+        if let catalog = giphy as? any GiphyCatalogSearching {
+            result = try await catalog.search(
+                query: query,
+                cursor: cursor?.giphyCursor,
+                pageSize: safePageSize,
+                contentTypes: effectiveTypes
+            )
+        } else {
+            let unfiltered = try await giphy.search(
+                query: query,
+                cursor: cursor?.giphyCursor,
+                pageSize: safePageSize
+            )
+            let records = effectiveTypes == supportedTypes
+                ? unfiltered.records
+                : unfiltered.records.filter {
+                    $0.giphyContentType.map(effectiveTypes.contains) == true
+                }
+            result = PhotoSourcePage(
+                records: records,
+                nextCursor: unfiltered.nextCursor,
+                quota: unfiltered.quota,
+                issues: unfiltered.issues
+            )
+        }
         let next = result.nextCursor.flatMap {
             page < SearchPaginationCursor.maximumPage
                 ? ImageSearchCursor(page: page + 1, photoCursor: nil, emojiCursor: $0)
@@ -137,7 +162,8 @@ public struct ImageSearchService: Sendable {
     public func search(
         _ rawQuery: String,
         cursor: ImageSearchCursor?,
-        pageSize: Int = 20
+        pageSize: Int = 20,
+        avatarTypes: Set<AvatarType>? = nil
     ) async throws -> ImageSearchPage {
         let page = cursor?.page ?? 1
         return try await search(
@@ -145,6 +171,7 @@ public struct ImageSearchService: Sendable {
             page: page,
             photoCursor: cursor?.photoCursor,
             pageSize: pageSize,
+            avatarTypes: avatarTypes,
             onPartialResults: nil
         )
     }
@@ -154,6 +181,7 @@ public struct ImageSearchService: Sendable {
         _ rawQuery: String,
         cursor: ImageSearchCursor?,
         pageSize: Int = 20,
+        avatarTypes: Set<AvatarType>? = nil,
         onPartialResults: @escaping @Sendable ([RemoteImageRecord]) async -> Void
     ) async throws -> ImageSearchPage {
         let page = cursor?.page ?? 1
@@ -162,6 +190,7 @@ public struct ImageSearchService: Sendable {
             page: page,
             photoCursor: cursor?.photoCursor,
             pageSize: pageSize,
+            avatarTypes: avatarTypes,
             onPartialResults: onPartialResults
         )
     }
@@ -173,6 +202,7 @@ public struct ImageSearchService: Sendable {
             page: page,
             photoCursor: nil,
             pageSize: pageSize,
+            avatarTypes: nil,
             usesLegacyPage: true,
             onPartialResults: nil
         )
@@ -183,6 +213,7 @@ public struct ImageSearchService: Sendable {
         page: Int,
         photoCursor: PhotoSearchCursor?,
         pageSize: Int,
+        avatarTypes: Set<AvatarType>?,
         usesLegacyPage: Bool = false,
         onPartialResults: (@Sendable ([RemoteImageRecord]) async -> Void)?
     ) async throws -> ImageSearchPage {
@@ -192,7 +223,6 @@ public struct ImageSearchService: Sendable {
             throw SearchPaginationCursorError.invalidValues
         }
         let safePageSize = min(max(pageSize, 1), maximumPageSize)
-        let avatarOffset = try Self.avatarOffset(page: page, pageSize: safePageSize)
 
         switch query.scope {
         case .photo:
@@ -206,16 +236,29 @@ public struct ImageSearchService: Sendable {
             )
             return Self.imagePage(from: result, currentPage: page, pageSize: safePageSize)
         case .avatar:
-            let records = await avatarProvider.avatars(
-                query: query.text,
-                offset: avatarOffset,
-                count: safePageSize
-            )
+            let avatarPageSize = min(safePageSize, AvatarSeed.maximumBatchSize)
+            let avatarOffset = try Self.avatarOffset(page: page, pageSize: avatarPageSize)
+            let records: [RemoteImageRecord]
+            if let avatarTypes {
+                records = await avatarProvider.avatars(
+                    query: query.text,
+                    offset: avatarOffset,
+                    count: avatarPageSize,
+                    allowedTypes: avatarTypes
+                )
+            } else {
+                records = await avatarProvider.avatars(
+                    query: query.text,
+                    offset: avatarOffset,
+                    count: avatarPageSize
+                )
+            }
             let next = records.isEmpty || page == SearchPaginationCursor.maximumPage
                 ? nil
                 : ImageSearchCursor(page: page + 1, photoCursor: nil)
             return ImageSearchPage(records: records, nextCursor: next)
         case .automatic:
+            let avatarOffset = try Self.avatarOffset(page: page, pageSize: safePageSize)
             let avatarCount = min(automaticAvatarCount, safePageSize / 5)
             let photoCount = safePageSize - avatarCount
             let result = try await photoPage(

@@ -2,17 +2,11 @@ import Foundation
 
 /// Gravatar 中会随摘要变化、且不依赖真实用户资料的内建默认头像。
 public enum GravatarStyle: String, CaseIterable, Codable, Sendable {
-    case identicon
     case monsterID = "monsterid"
-    case wavatar
-    case retro
 
     public var displayName: String {
         switch self {
-        case .identicon: return "Identicon"
         case .monsterID: return "Monster ID"
-        case .wavatar: return "Wavatar"
-        case .retro: return "Retro"
         }
     }
 }
@@ -43,20 +37,30 @@ public struct GravatarClient: AvatarProviding, AvatarSourceGenerating, Sendable 
         count: Int,
         generationDay: AvatarGenerationDay
     ) async -> [RemoteImageRecord] {
-        AvatarSeed.batch(
+        var records: [RemoteImageRecord] = []
+        for seed in AvatarSeed.batch(
             query: query,
             offset: offset,
             count: count,
             generationDay: generationDay
-        ).compactMap { avatar(seedMaterial: $0.material, generationDay: generationDay) }
+        ) {
+            if let record = await avatar(
+                seedMaterial: seed.material,
+                generationDay: generationDay
+            ) {
+                records.append(record)
+            }
+        }
+        return records
     }
 
     let avatarCatalogIdentifier = ImageSource.gravatar.rawValue
+    let supportedAvatarTypes: Set<AvatarType> = [.monster]
 
     func avatar(
         seedMaterial: String,
         generationDay: AvatarGenerationDay
-    ) -> RemoteImageRecord? {
+    ) async -> RemoteImageRecord? {
         let style = selectedStyle(seedMaterial: seedMaterial)
         let hash = StableImageID.seedHash("mirage-gravatar-seed-v1|\(seedMaterial)")
         guard let url = imageURL(style: style, hash: hash) else { return nil }
@@ -68,6 +72,7 @@ public struct GravatarClient: AvatarProviding, AvatarSourceGenerating, Sendable 
             ),
             title: "Gravatar \(style.displayName) avatar",
             source: .gravatar,
+            avatarType: .monster,
             imageURL: url,
             thumbnailURL: url,
             sourcePageURL: URL(string: "https://docs.gravatar.com/sdk/images/"),

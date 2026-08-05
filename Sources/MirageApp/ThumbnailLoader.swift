@@ -6,6 +6,34 @@ import MirageCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum ThumbnailDataSource {
+    static let snapshotStorage = try? AppGroupStorage()
+
+    static func data(for url: URL) async throws -> Data {
+        if url.scheme == AvatarSnapshotReference.scheme {
+            guard let reference = AvatarSnapshotReference(url: url),
+                  let snapshotStorage,
+                  let data = try await snapshotStorage.readAvatarSnapshot(
+                      key: reference.key,
+                      maximumBytes: 5 * 1024 * 1024
+                  ) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            return data
+        }
+        if PicrewDiscoveryMediaPolicy.isAllowedThumbnailURL(url) {
+            return try await BoundedDownloader(
+                url: url,
+                maximumBytes: 2 * 1_024 * 1_024,
+                timeoutInterval: 15,
+                allowedHosts: ["cdn.picrew.me"],
+                acceptedMIMETypes: ["image/jpeg", "image/png", "image/webp"]
+            ).download()
+        }
+        return try await URLSession.shared.data(from: url).0
+    }
+}
+
 /// 有界的缩略图缓存，并在解码时就按目标尺寸降采样。
 ///
 /// SwiftUI 的 `AsyncImage` 既不缓存解码结果，也不降采样：`LazyVGrid` 每次回收再复用格子
@@ -24,7 +52,7 @@ actor ThumbnailLoader {
     init(
         countLimit: Int = 240,
         fetch: @escaping @Sendable (URL) async throws -> Data = {
-            try await URLSession.shared.data(from: $0).0
+            try await ThumbnailDataSource.data(for: $0)
         }
     ) {
         cache.countLimit = countLimit

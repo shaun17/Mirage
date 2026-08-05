@@ -1,9 +1,12 @@
 import Foundation
 
 /// 使用流式 URLSession delegate 在接收过程中执行硬字节上限。
-final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+public final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let url: URL
     private let maximumBytes: Int
+    private let timeoutInterval: TimeInterval
+    private let allowedHosts: Set<String>?
+    private let acceptedMIMETypes: Set<String>?
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Data, Error>?
     private var session: URLSession?
@@ -12,15 +15,24 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
     private var finished = false
     private var cancelled = false
 
-    init(url: URL, maximumBytes: Int) {
+    public init(
+        url: URL,
+        maximumBytes: Int,
+        timeoutInterval: TimeInterval = 20,
+        allowedHosts: Set<String>? = nil,
+        acceptedMIMETypes: Set<String>? = nil
+    ) {
         self.url = url
         self.maximumBytes = maximumBytes
+        self.timeoutInterval = timeoutInterval
+        self.allowedHosts = allowedHosts.map { Set($0.map { $0.lowercased() }) }
+        self.acceptedMIMETypes = acceptedMIMETypes.map { Set($0.map { $0.lowercased() }) }
         super.init()
     }
 
     /// 下载 HTTPS 内容；任务取消会立即终止底层连接并恢复 continuation。
-    func download() async throws -> Data {
-        guard url.scheme?.lowercased() == "https", url.host != nil else {
+    public func download() async throws -> Data {
+        guard maximumBytes > 0, timeoutInterval > 0, isAllowed(url) else {
             throw DownloadError.insecureURL
         }
         return try await withTaskCancellationHandler {
@@ -28,7 +40,16 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
                 let configuration = URLSessionConfiguration.ephemeral
                 configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
                 let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-                let task = session.dataTask(with: url)
+                var request = URLRequest(
+                    url: url,
+                    cachePolicy: .reloadIgnoringLocalCacheData,
+                    timeoutInterval: timeoutInterval
+                )
+                request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                if let acceptedMIMETypes {
+                    request.setValue(acceptedMIMETypes.sorted().joined(separator: ","), forHTTPHeaderField: "Accept")
+                }
+                let task = session.dataTask(with: request)
                 let shouldStart = lock.withLock { () -> Bool in
                     guard !cancelled else { return false }
                     self.continuation = continuation
@@ -48,7 +69,6 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         }
     }
 
-    /// 接到取消信号后确保 continuation 只恢复一次。
     private func cancel() {
         let task = lock.withLock {
             cancelled = true
@@ -58,15 +78,17 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         finish(.failure(CancellationError()))
     }
 
-    /// 在收到响应头时拒绝 HTTP 错误及明确超限的响应。
-    func urlSession(
+    public func urlSession(
         _ session: URLSession,
         dataTask: URLSessionDataTask,
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
         guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
+              (200..<300).contains(http.statusCode),
+              let responseURL = http.url,
+              isAllowed(responseURL),
+              isAcceptedMIME(http.mimeType) else {
             completionHandler(.cancel)
             finish(.failure(DownloadError.invalidResponse))
             return
@@ -79,15 +101,14 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         completionHandler(.allow)
     }
 
-    /// 允许 HTTPS 内部跳转，但拒绝任何把安全请求降级到明文 HTTP 的重定向。
-    func urlSession(
+    public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        guard request.url?.scheme?.lowercased() == "https", request.url?.host != nil else {
+        guard let redirectURL = request.url, isAllowed(redirectURL) else {
             completionHandler(nil)
             finish(.failure(DownloadError.insecureURL))
             return
@@ -95,11 +116,12 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         completionHandler(request)
     }
 
-    /// 分块累积数据，一旦超过上限立即取消连接。
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let exceeded = lock.withLock { () -> Bool in
             guard !finished else { return false }
-            guard buffer.count <= maximumBytes - data.count else { return true }
+            guard data.count <= maximumBytes, buffer.count <= maximumBytes - data.count else {
+                return true
+            }
             buffer.append(data)
             return false
         }
@@ -109,8 +131,7 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         }
     }
 
-    /// 正常结束时交付完整数据；底层错误转换为稳定网络错误。
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
             finish(.failure(DownloadError.network(error.localizedDescription)))
         } else {
@@ -118,7 +139,18 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
         }
     }
 
-    /// 串行化所有终止路径，防止取消与 delegate 同时恢复 continuation。
+    private func isAllowed(_ candidate: URL) -> Bool {
+        guard candidate.scheme?.lowercased() == "https",
+              let host = candidate.host?.lowercased() else { return false }
+        return allowedHosts?.contains(host) ?? true
+    }
+
+    private func isAcceptedMIME(_ mimeType: String?) -> Bool {
+        guard let acceptedMIMETypes else { return true }
+        guard let mimeType else { return false }
+        return acceptedMIMETypes.contains(mimeType.lowercased())
+    }
+
     private func finish(_ result: Result<Data, Error>) {
         let state = lock.withLock { () -> (CheckedContinuation<Data, Error>?, URLSession?) in
             guard !finished, continuation != nil else { return (nil, nil) }
@@ -133,16 +165,15 @@ final class BoundedDownloader: NSObject, URLSessionDataDelegate, @unchecked Send
     }
 }
 
-/// 下载层只暴露可分类的安全错误。
-enum DownloadError: Error, LocalizedError, Sendable {
+public enum DownloadError: Error, LocalizedError, Sendable {
     case insecureURL
     case invalidResponse
     case tooLarge(Int)
     case network(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
-        case .insecureURL: return "远程图片地址必须使用 HTTPS。"
+        case .insecureURL: return "远程图片地址必须使用受信任的 HTTPS。"
         case .invalidResponse: return "远程图片服务返回了无效响应。"
         case let .tooLarge(limit): return "远程图片超过 \(limit) 字节上限。"
         case let .network(message): return "远程图片下载失败：\(message)"

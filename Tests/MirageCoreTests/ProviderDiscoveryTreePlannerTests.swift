@@ -1,7 +1,6 @@
 import FileProvider
 import Foundation
 import MirageCore
-import UniformTypeIdentifiers
 import XCTest
 
 final class ProviderDiscoveryTreePlannerTests: XCTestCase {
@@ -74,10 +73,10 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         XCTAssertEqual(decoded.avatarPage, second)
         XCTAssertNil(decoded.discoveryPage)
         XCTAssertEqual(decoded.parentItemIdentifier, second.itemIdentifier)
-        XCTAssertEqual(ProviderEnumerationScope.avatars.storageKey, "avatars:v3")
+        XCTAssertEqual(ProviderEnumerationScope.avatars.storageKey, "avatars:v4")
         XCTAssertEqual(
             ProviderEnumerationScope.avatarPage(second).storageKey,
-            "avatars:v3:2"
+            "avatars:v4:2"
         )
 
         let invalidDirectories = [
@@ -383,4 +382,5 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
             )
         }
     }
+
 }

@@ -96,6 +96,11 @@
 		C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */; };
 		C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */; };
 		669FA174B3F6BF2BCD112A64 /* AvatarCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */; };
+		A91B2C3D4E5F60718293A402 /* AvatarType.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91B2C3D4E5F60718293A401 /* AvatarType.swift */; };
+		A91B2C3D4E5F60718293A404 /* AvatarTypeFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91B2C3D4E5F60718293A403 /* AvatarTypeFilterBar.swift */; };
+		A91B2C3D4E5F60718293A406 /* AvatarTypeFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91B2C3D4E5F60718293A405 /* AvatarTypeFilterTests.swift */; };
+		B7C1A94E2D6F40A9B8E71C02 /* AvatarSnapshotReference.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C1A94E2D6F40A9B8E71C01 /* AvatarSnapshotReference.swift */; };
+		B7C1A94E2D6F40A9B8E71C04 /* ThisPersonDoesNotExistClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C1A94E2D6F40A9B8E71C03 /* ThisPersonDoesNotExistClient.swift */; };
 		E2A61F399BDA52C7ABF9624E /* GravatarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */; };
 		D0C74D78B7CED30B668042B9 /* RobohashClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2906D240D1389820AF2EB118 /* RobohashClient.swift */; };
 		4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */; };
@@ -111,6 +116,7 @@
 		D47EFB0A88F5378E3D8F92F5 /* PexelsClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBA4F055A61FA0925976D9BC /* PexelsClientTests.swift */; };
 		D5E9A91C70BD6D1C3E44AE73 /* PhotoSourceCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EDAB962A83006A1EA2D47A8 /* PhotoSourceCredentialStore.swift */; };
 		D83524EE60AD3659D83DC624 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */; };
+		F6A70C1D2E3F405162738498 /* PicrewDiscoveryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A70C1D2E3F405162738497 /* PicrewDiscoveryClient.swift */; };
 		D938999B023BCCA9B6039ACD /* ProviderSearchResultStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */; };
 		D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2514621218B785F24793DCD /* OpenverseClientTests.swift */; };
 		DA2FABA9159F38E393E698B0 /* PhotoSourceRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC81491A3BEF0B56A74E7CF0 /* PhotoSourceRequestCoordinator.swift */; };
@@ -257,6 +263,11 @@
 		948E8761E82C9C91131B7E14 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearClient.swift; sourceTree = "<group>"; };
 		8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarCatalogClient.swift; sourceTree = "<group>"; };
+		A91B2C3D4E5F60718293A401 /* AvatarType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarType.swift; sourceTree = "<group>"; };
+		A91B2C3D4E5F60718293A403 /* AvatarTypeFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarTypeFilterBar.swift; sourceTree = "<group>"; };
+		A91B2C3D4E5F60718293A405 /* AvatarTypeFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarTypeFilterTests.swift; sourceTree = "<group>"; };
+		B7C1A94E2D6F40A9B8E71C01 /* AvatarSnapshotReference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarSnapshotReference.swift; sourceTree = "<group>"; };
+		B7C1A94E2D6F40A9B8E71C03 /* ThisPersonDoesNotExistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThisPersonDoesNotExistClient.swift; sourceTree = "<group>"; };
 		149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GravatarClient.swift; sourceTree = "<group>"; };
 		2906D240D1389820AF2EB118 /* RobohashClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobohashClient.swift; sourceTree = "<group>"; };
 		F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarProviderTests.swift; sourceTree = "<group>"; };
@@ -276,6 +287,7 @@
 		BDD59051C53C7E99FE6187AD /* PhotoSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSource.swift; sourceTree = "<group>"; };
 		C4CC5C99EE46F274897367E4 /* OpenversePhotoSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenversePhotoSource.swift; sourceTree = "<group>"; };
 		CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
+		F6A70C1D2E3F405162738497 /* PicrewDiscoveryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PicrewDiscoveryClient.swift; sourceTree = "<group>"; };
 		CBA4F055A61FA0925976D9BC /* PexelsClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PexelsClientTests.swift; sourceTree = "<group>"; };
 		D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		D211C0CE00B4780D047748CD /* NASAImagesClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NASAImagesClientTests.swift; sourceTree = "<group>"; };
@@ -334,6 +346,7 @@
 				52B5496B1780C4B8FCDAF312 /* AggregatedPhotoSearcherTests.swift */,
 				68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */,
 				F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */,
+				A91B2C3D4E5F60718293A405 /* AvatarTypeFilterTests.swift */,
 				445083B2456F60A1FB7ECA53 /* ConfiguredPhotoSearcherTests.swift */,
 				979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */,
 				735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */,
@@ -369,6 +382,7 @@
 			children = (
 				4317C2B9AEBF745304572E2B /* AppModel.swift */,
 				FE5E2B42AD514018FDA6A230 /* AppViewState.swift */,
+				A91B2C3D4E5F60718293A403 /* AvatarTypeFilterBar.swift */,
 				86D01A404320AA471FC8774F /* Assets.xcassets */,
 				948E8761E82C9C91131B7E14 /* ContentView.swift */,
 				CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */,
@@ -393,11 +407,15 @@
 				FC8EF4A1F4F7B78844ECAC45 /* AggregatedPhotoSearcher.swift */,
 				EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */,
 				8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */,
+				B7C1A94E2D6F40A9B8E71C01 /* AvatarSnapshotReference.swift */,
+				A91B2C3D4E5F60718293A401 /* AvatarType.swift */,
+				63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */,
 				9512AF8A95FF01013CDE8EBF /* DiceBearClient.swift */,
 				1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */,
 				84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */,
 				323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */,
 				072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */,
+				F6A70C1D2E3F405162738497 /* PicrewDiscoveryClient.swift */,
 				C1A4F7890E2D4C10A8B9F015 /* GiphyCatalogClient.swift */,
 				C1A4F7890E2D4C10A8B9F011 /* GiphyEmojiClient.swift */,
 				149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */,
@@ -422,6 +440,7 @@
 				2906D240D1389820AF2EB118 /* RobohashClient.swift */,
 				0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */,
 				B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */,
+				B7C1A94E2D6F40A9B8E71C03 /* ThisPersonDoesNotExistClient.swift */,
 			);
 			path = MirageCore;
 			sourceTree = "<group>";
@@ -441,7 +460,6 @@
 		6580B39032C8F305B226686B /* MirageFileProvider */ = {
 			isa = PBXGroup;
 			children = (
-				63BBBF7E1F1528422C503058 /* BoundedDownloader.swift */,
 				D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */,
 				EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */,
 				6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */,
@@ -709,6 +727,7 @@
 			files = (
 				9B2B3683BDD6F188F4FF94B4 /* AppModel.swift in Sources */,
 				705CBFFD8A543C52F747FA19 /* AppViewState.swift in Sources */,
+				A91B2C3D4E5F60718293A404 /* AvatarTypeFilterBar.swift in Sources */,
 				A8FDD253FD3F538032A1CCC5 /* ContentView.swift in Sources */,
 				D83524EE60AD3659D83DC624 /* DiscoverView.swift in Sources */,
 				2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */,
@@ -732,11 +751,15 @@
 				D3366C6F186C2652E7ACD2CC /* AggregatedPhotoSearcher.swift in Sources */,
 				552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */,
 				669FA174B3F6BF2BCD112A64 /* AvatarCatalogClient.swift in Sources */,
+				B7C1A94E2D6F40A9B8E71C02 /* AvatarSnapshotReference.swift in Sources */,
+				A91B2C3D4E5F60718293A402 /* AvatarType.swift in Sources */,
+				F32C1EFE00479572FBC681D7 /* BoundedDownloader.swift in Sources */,
 				C4B0FC0109313E28566A3B32 /* DiceBearClient.swift in Sources */,
 				3255F9CAD35B8A4106F839F2 /* DiceBearStyle.swift in Sources */,
 				99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */,
 				545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */,
 				5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */,
+				F6A70C1D2E3F405162738498 /* PicrewDiscoveryClient.swift in Sources */,
 				C1A4F7890E2D4C10A8B9F016 /* GiphyCatalogClient.swift in Sources */,
 				C1A4F7890E2D4C10A8B9F012 /* GiphyEmojiClient.swift in Sources */,
 				E2A61F399BDA52C7ABF9624E /* GravatarClient.swift in Sources */,
@@ -761,6 +784,7 @@
 				D0C74D78B7CED30B668042B9 /* RobohashClient.swift in Sources */,
 				EF9C34C91E5E4A88CA41E68E /* SearchPaginationCursor.swift in Sources */,
 				548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */,
+				B7C1A94E2D6F40A9B8E71C04 /* ThisPersonDoesNotExistClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -783,6 +807,7 @@
 				F166E6A23AC9D0EE0B262A3C /* AggregatedPhotoSearcherTests.swift in Sources */,
 				B0C8CAB8A4875F0079440D60 /* AppGroupStorageTests.swift in Sources */,
 				4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */,
+				A91B2C3D4E5F60718293A406 /* AvatarTypeFilterTests.swift in Sources */,
 				77560B755F59DC94AE0E17BC /* AppViewState.swift in Sources */,
 				87BA4968F8E3F713309B5588 /* ConfiguredPhotoSearcherTests.swift in Sources */,
 				2B126922A34AF6562188BDDD /* DetailWindowLayoutStateTests.swift in Sources */,
@@ -833,7 +858,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F32C1EFE00479572FBC681D7 /* BoundedDownloader.swift in Sources */,
 				79F0BD0C9F2EAC0B4D8D24FD /* FileProviderExtension+Content.swift in Sources */,
 				C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */,
 				61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */,
@@ -1040,7 +1064,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 29;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1129,7 +1153,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 29;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;

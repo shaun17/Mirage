@@ -1,8 +1,8 @@
 import FileProvider
 import Foundation
-import MirageCore
 import UniformTypeIdentifiers
 import XCTest
+@testable import MirageCore
 
 final class ProviderRepositoryPageSnapshotTests: XCTestCase {
     private var temporaryURL: URL!
@@ -56,6 +56,105 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, [1, 2])
     }
 
+    /// Finder 根目录读取共享图片来源筛选，同时拒绝头像和 GIF 记录混入图片流。
+    func testRootTracksSharedPhotoSourceSelectionAndExcludesNonPhotoRecords() async throws {
+        let suiteName = "MirageProviderPageTests.PhotoFilters.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        filters.setPhotoSourceID(.pexels)
+
+        let openverse = Self.record(id: "openverse", source: .openverse)
+        let pexels = Self.record(id: "pexels", source: .pexels)
+        let avatar = RemoteImageRecord(
+            id: "db:v13:2025-08-03:avatar",
+            title: "Avatar",
+            source: .diceBear,
+            avatarType: .cartoonCharacter,
+            imageURL: URL(string: "https://example.com/avatar.png")!,
+            thumbnailURL: URL(string: "https://example.com/avatar.png")!,
+            license: .cc0
+        )
+        let giphy = Self.record(id: "giphy", source: .giphy)
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderStaticDiscoveryFeed(
+                records: [openverse, pexels, avatar, giphy]
+            ),
+            filterPreferences: filters
+        )
+
+        let root = try await ProviderCatalog(repository: repository)
+            .preparedItems(for: .root)
+        let visible = Self.images(in: root)
+
+        XCTAssertEqual(
+            visible.compactMap {
+                ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
+            },
+            [pexels.id]
+        )
+        XCTAssertTrue(visible.allSatisfy { $0.parentItemIdentifier == .rootContainer })
+        for item in visible {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(occurrence?.record.source, .pexels)
+        }
+
+        filters.setPhotoSourceID(nil)
+        let allSourcesRoot = try await ProviderCatalog(repository: repository)
+            .preparedItems(for: .root)
+        XCTAssertEqual(
+            Self.images(in: allSourcesRoot).compactMap {
+                ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
+            },
+            [openverse.id, pexels.id]
+        )
+
+        filters.setPhotoSourceID(.metMuseum)
+        let unsupportedSourceRoot = try await ProviderCatalog(repository: repository)
+            .preparedItems(for: .root)
+        XCTAssertTrue(Self.images(in: unsupportedSourceRoot).isEmpty)
+        XCTAssertEqual(
+            Set(unsupportedSourceRoot.map(\.itemIdentifier)),
+            [
+                ProviderIdentifiers.avatars,
+                ProviderIdentifiers.recent,
+                ProviderIdentifiers.favorites,
+                ProviderIdentifiers.searchBacking,
+            ]
+        )
+        let workingSet = try await ProviderCatalog(repository: repository)
+            .preparedItems(for: .workingSet)
+        XCTAssertTrue(Self.images(in: workingSet).isEmpty)
+    }
+
+    /// 无结果的纯图片快照仍必须发布根目录固定入口，不能将整个域误报为过期页。
+    func testEmptyPhotoSnapshotKeepsRootDirectoriesAvailable() async throws {
+        let suiteName = "MirageProviderPageTests.EmptyPhotoFilter.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            filterPreferences: DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        )
+        let catalog = ProviderCatalog(repository: repository)
+
+        let root = try await catalog.preparedItems(for: .root)
+        let workingSet = try await catalog.preparedItems(for: .workingSet)
+
+        XCTAssertTrue(Self.images(in: root).isEmpty)
+        XCTAssertEqual(root.count, 4)
+        XCTAssertEqual(Set(root.map(\.discoveryGeneration)), [1])
+        XCTAssertEqual(Set(workingSet.map(\.itemIdentifier)), Set(root.map(\.itemIdentifier)))
+    }
+
     /// “头像”首页生成 40 个稳定 occurrence，并在末尾发布唯一“加载更多”目录。
     func testAvatarFolderPublishesFirstFortyAndLoadMoreWithoutOpenverse() async throws {
         let context = try makeContext()
@@ -68,7 +167,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(images.map(\.itemIdentifier)).count, 40)
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier == ProviderIdentifiers.avatars
-                && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v12:")
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar:db:v13:")
         })
         let continuation = try XCTUnwrap(directories.only)
         XCTAssertEqual(continuation.filename, "加载更多")
@@ -121,7 +220,8 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
     /// 生产头像目录在 Finder 中必须同时接受三家来源，并能按统一生成日恢复持久缓存。
     func testAvatarFolderPublishesAndRestoresAllProductionProviders() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
-        let avatars = AvatarCatalogClient(now: { Self.avatarSeedDate1 })
+        // 这里验证确定性供应商混排；动态人像源在独立测试中使用临时存储。
+        let avatars = Self.deterministicAvatarCatalog(now: { Self.avatarSeedDate1 })
         let repository = ProviderRepository(
             manager: nil,
             storage: storage,
@@ -146,11 +246,46 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             manager: nil,
             storage: storage,
             discoveryFeed: ProviderEmptyDiscoveryFeed(),
-            diceBear: AvatarCatalogClient(now: { Self.avatarSeedDate1Later })
+            diceBear: Self.deterministicAvatarCatalog(now: { Self.avatarSeedDate1Later })
         )
         let restored = try await ProviderCatalog(repository: restoredRepository)
             .preparedItems(for: .avatars)
         XCTAssertEqual(first.map(\.itemIdentifier), restored.map(\.itemIdentifier))
+    }
+
+    /// 头像 scope 每次读取 App Group 筛选；切换类型后旧 occurrence 必须从目录和回查中同时消失。
+    func testAvatarFolderTracksSharedTypeSelectionAndInvalidatesCachedScope() async throws {
+        let suiteName = "MirageProviderPageTests.Filters.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        filters.setAvatarTypes([.cartoonCharacter])
+
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let avatars = ProviderRecordingDiceBear(now: { Self.avatarSeedDate1 })
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: avatars,
+            filterPreferences: filters
+        )
+        let catalog = ProviderCatalog(repository: repository)
+
+        let first = try await catalog.preparedItems(for: .avatars)
+        let oldIdentifier = try XCTUnwrap(Self.images(in: first).first?.itemIdentifier)
+        XCTAssertEqual(Self.images(in: first).count, 40)
+
+        filters.setAvatarTypes([.monster])
+        let filtered = try await catalog.preparedItems(for: .avatars)
+        let removedOccurrence = try await repository.occurrence(for: oldIdentifier)
+
+        XCTAssertTrue(Self.images(in: filtered).isEmpty)
+        XCTAssertEqual(filtered.map(\.filename), ["加载更多"])
+        XCTAssertNil(removedOccurrence)
+        let requests = await avatars.requests()
+        XCTAssertEqual(requests.count, 4)
     }
 
     /// 打开头像第 2 层只生成 offsets 40...79，并发布指向第 3 层的稳定入口。
@@ -189,7 +324,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         ))
         XCTAssertTrue(images.allSatisfy {
             $0.parentItemIdentifier == second.itemIdentifier
-                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v2:2:db:v12:")
+                && $0.itemIdentifier.rawValue.hasPrefix("avatar-page-item:v2:2:db:v13:")
         })
         let continuation = try XCTUnwrap(page.last)
         XCTAssertEqual(continuation.filename, "加载更多")
@@ -323,7 +458,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == page.itemIdentifier })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:3")
         XCTAssertEqual(continuation.parentItemIdentifier, page.itemIdentifier)
         XCTAssertEqual(continuation.filename, "更多图片")
@@ -365,7 +500,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.parentItemIdentifier == third.itemIdentifier })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:3:provider:5:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         XCTAssertEqual(continuation.itemIdentifier.rawValue, "discover-page:v3:4")
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, Array(1...6))
@@ -400,7 +535,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             fifthImages.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:5:provider:9:0"
         )
-        XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
         XCTAssertEqual(sixthContinuation.parentItemIdentifier, fifth.itemIdentifier)
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
@@ -464,7 +599,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(images.count, 40)
         XCTAssertTrue(images.allSatisfy { $0.discoveryGeneration == publishedGeneration })
         XCTAssertEqual(images.first?.itemIdentifier.rawValue, "discover-page-item:v3:2:provider:3:0")
-        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(images.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         XCTAssertFalse(images.contains { $0.itemIdentifier.rawValue.contains("refreshed") })
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(requestedPages, [1, 2, 3, 4])
@@ -659,12 +794,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             rebuiltSecond.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:2:refreshed:3:0"
         )
-        XCTAssertTrue(rebuiltSecond.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(rebuiltSecond.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         XCTAssertEqual(
             rebuiltThird.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:3:refreshed:5:0"
         )
-        XCTAssertTrue(rebuiltThird.last?.itemIdentifier.rawValue.contains(":db:v12:") == true)
+        XCTAssertTrue(rebuiltThird.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
         // 自动推荐每页固定补入 4 个稳定头像；换代后远端照片必须替换，头像 ID 则允许复用。
         let oldRemoteChildIDs = Set(oldChildIDs.filter { !$0.rawValue.contains(":db:") })
         let refreshedRemoteChildIDs = Set(refreshedWorkingSet
@@ -957,6 +1092,19 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
     private static let avatarSeedDay1 = DiceBearGenerationDay(date: avatarSeedDate1)
     private static let avatarSeedDay2 = DiceBearGenerationDay(date: avatarSeedDate2)
 
+    private static func deterministicAvatarCatalog(
+        now: @escaping @Sendable () -> Date
+    ) -> AvatarCatalogClient {
+        AvatarCatalogClient(
+            providers: [
+                DiceBearClient(now: now),
+                GravatarClient(now: now),
+                RobohashClient(now: now),
+            ],
+            now: now
+        )
+    }
+
     private static func discoveryDirectories(in items: [ProviderItem]) -> [ProviderItem] {
         let fixed: Set<NSFileProviderItemIdentifier> = [
             ProviderIdentifiers.avatars,
@@ -997,6 +1145,19 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             )
         }
     }
+
+    private static func record(id: String, source: ImageSource) -> RemoteImageRecord {
+        let url = URL(string: "https://example.com/\(id).png")!
+        return RemoteImageRecord(
+            id: id,
+            title: id.capitalized,
+            source: source,
+            imageURL: url,
+            thumbnailURL: url,
+            license: source == .giphy ? .giphy : .cc0,
+            mimeType: source == .giphy ? "image/gif" : "image/png"
+        )
+    }
 }
 
 private struct ProviderTestContext {
@@ -1019,6 +1180,19 @@ private struct ProviderEmptyDiscoveryFeed: DiscoveryFeedProviding {
         DiscoveryFeedPage(
             generation: generation ?? 1,
             records: [],
+            nextPage: nil,
+            didMutateSnapshot: false
+        )
+    }
+}
+
+private struct ProviderStaticDiscoveryFeed: DiscoveryFeedProviding {
+    let records: [RemoteImageRecord]
+
+    func page(generation: UInt64?, page: Int, pageSize: Int) async throws -> DiscoveryFeedPage {
+        DiscoveryFeedPage(
+            generation: generation ?? 1,
+            records: page == 1 ? Array(records.prefix(pageSize)) : [],
             nextPage: nil,
             didMutateSnapshot: false
         )

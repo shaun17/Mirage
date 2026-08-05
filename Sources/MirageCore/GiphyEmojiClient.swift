@@ -5,6 +5,7 @@ public enum GiphyEmojiError: Error, Equatable, Sendable {
     case rateLimited(retryAt: Date?)
     case invalidResponse(statusCode: Int)
     case invalidCursor
+    case invalidIdentifier
     case decoding(String)
     case network(String)
 }
@@ -20,6 +21,8 @@ extension GiphyEmojiError: LocalizedError {
             return "GIPHY 返回异常状态：\(statusCode)"
         case .invalidCursor:
             return "GIPHY 分页位置无效。"
+        case .invalidIdentifier:
+            return "GIPHY 内容标识无效。"
         case let .decoding(message):
             return "GIPHY 数据解析失败：\(message)"
         case let .network(message):
@@ -37,7 +40,7 @@ extension GiphyEmojiError: PhotoSourceFailure {
             return .invalidCredential
         case .rateLimited:
             return .rateLimited
-        case .invalidResponse, .invalidCursor:
+        case .invalidResponse, .invalidCursor, .invalidIdentifier:
             return .invalidResponse
         case .decoding:
             return .decoding
@@ -55,20 +58,31 @@ extension GiphyEmojiError: PhotoSourceFailure {
 /// GIPHY 列表 endpoint 适配器；默认指向 Emoji，混合目录会复用它读取 Trending 与 Search。
 public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
     public static let defaultEndpoint = URL(string: "https://api.giphy.com/v2/emoji")!
+    public static let lookupEndpoint = URL(string: "https://api.giphy.com/v1/gifs")!
     public let sourceID = PhotoSourceID.giphy
 
     private static let maximumPageSize = 40
     private static let maximumOffset = Int(Int32.max)
     private static let pageHosts: Set<String> = ["giphy.com", "www.giphy.com"]
-    /// 三个目录共用同一对象 schema，但服务端会根据 endpoint 返回不同 type。
-    private static let supportedObjectTypes: Set<String> = ["emoji", "sticker", "gif"]
-
     private let apiKey: String
     private let session: URLSession
     private let endpoint: URL
     private let rating: String?
     private let queryParameterName: String?
     private let now: @Sendable () -> Date
+
+    /// Finder occurrence 会把公开对象 ID 放进稳定条目标识；只允许 GIPHY 官方 ID 字符集。
+    private static func validatedIdentifier(_ rawValue: String) -> String? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty,
+              value.utf8.count <= 128,
+              value.allSatisfy({
+                  $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_")
+              }) else {
+            return nil
+        }
+        return value
+    }
 
     /// 默认会话不使用 URLCache，避免把含 `api_key` 的请求 URL 持久化。
     public init(
@@ -159,6 +173,67 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
         }
     }
 
+    /// 收藏恢复使用官方 Get GIFs by ID，一次最多回查 50 个对象且不使用 URLCache。
+    public func records(ids: [String]) async throws -> [RemoteImageRecord] {
+        try Task.checkCancellation()
+        guard !apiKey.isEmpty else { throw GiphyEmojiError.invalidCredential }
+
+        var seen = Set<String>()
+        let normalizedIDs = ids.compactMap { rawValue -> String? in
+            guard let value = Self.validatedIdentifier(rawValue),
+                  seen.insert(value).inserted else {
+                return nil
+            }
+            return value
+        }
+        guard normalizedIDs.count == Set(ids.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }).count,
+              (1...50).contains(normalizedIDs.count) else {
+            throw GiphyEmojiError.invalidIdentifier
+        }
+
+        let request = try makeLookupRequest(ids: normalizedIDs)
+        do {
+            let (data, response) = try await session.data(for: request)
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else {
+                throw GiphyEmojiError.invalidResponse(statusCode: 0)
+            }
+            switch http.statusCode {
+            case 200..<300:
+                return try Self.decodePage(
+                    data,
+                    response: http,
+                    now: now(),
+                    requestedOffset: 0,
+                    requestedPageSize: normalizedIDs.count
+                ).records
+            case 401, 403:
+                throw GiphyEmojiError.invalidCredential
+            case 429:
+                throw GiphyEmojiError.rateLimited(
+                    retryAt: Self.retryDate(
+                        http.value(forHTTPHeaderField: "Retry-After"),
+                        now: now()
+                    )
+                )
+            default:
+                throw GiphyEmojiError.invalidResponse(statusCode: http.statusCode)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as GiphyEmojiError {
+            throw error
+        } catch let error as URLError {
+            if Task.isCancelled { throw CancellationError() }
+            throw GiphyEmojiError.network("错误代码 \(error.code.rawValue)")
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw GiphyEmojiError.network("请求失败")
+        }
+    }
+
     private func makeRequest(query: String, offset: Int, pageSize: Int) throws -> URLRequest {
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         var queryItems = [
@@ -180,6 +255,25 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
             throw GiphyEmojiError.network("无法构造请求地址")
         }
 
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 20
+        )
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    private func makeLookupRequest(ids: [String]) throws -> URLRequest {
+        var components = URLComponents(url: Self.lookupEndpoint, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "api_key", value: apiKey),
+            URLQueryItem(name: "ids", value: ids.joined(separator: ","))
+        ]
+        guard let url = components?.url else {
+            throw GiphyEmojiError.network("无法构造请求地址")
+        }
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
@@ -294,7 +388,7 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
     }
 
     private static func makeRecord(_ emoji: GiphyEmoji) -> RemoteImageRecord? {
-        guard supportedObjectTypes.contains(emoji.type.normalizedGiphyField),
+        guard let contentType = GiphyContentType(rawValue: emoji.type.normalizedGiphyField),
               let gifID = emoji.id.trimmedGiphyField,
               let original = emoji.images.original,
               let imageURL = mediaURL(original.url),
@@ -314,6 +408,8 @@ public struct GiphyEmojiClient: PhotoSourceSearching, Sendable {
             id: StableImageID.giphy(id: gifID),
             title: title,
             source: .giphy,
+            giphyContentType: contentType,
+            giphyID: gifID,
             imageURL: imageURL,
             thumbnailURL: thumbnailURL,
             sourcePageURL: pageURL(emoji.url),

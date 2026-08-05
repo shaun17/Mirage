@@ -27,8 +27,8 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels])
     }
 
-    /// Settings 按稳定顺序展示六个入口，并明确声明新来源的使用边界。
-    func testRegistryIncludesMetNASAAndGiphyAsAppOnlyProviders() {
+    /// Settings 按稳定顺序展示六个入口，并明确声明各来源的使用边界。
+    func testRegistryIncludesMetNASAAndAppOnlyGiphy() {
         XCTAssertEqual(
             PhotoSourceRegistry.descriptors.map(\.id),
             [.openverse, .metMuseum, .nasa, .pexels, .pixabay, .giphy]
@@ -68,15 +68,40 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
             "可在 App 内收藏，暂不用于 Finder 或自动推荐"
         )
         XCTAssertEqual(giphy?.supportedSurfaces, [.app])
-        XCTAssertEqual(giphy?.summary, "使用你自己的 GIPHY API Key 浏览 Emoji，并搜索 GIF 与 Sticker")
+        XCTAssertEqual(
+            giphy?.summary,
+            "使用你自己的 GIPHY API Key 浏览 Emoji，并搜索 GIF 与 Sticker"
+        )
         XCTAssertEqual(giphy?.resultPresentation, .isolated)
         XCTAssertFalse(giphy?.allowsAutomatedRecommendations ?? true)
-        XCTAssertFalse(giphy?.allowsPersistentLibraryStorage ?? true)
+        XCTAssertTrue(giphy?.allowsPersistentLibraryStorage ?? false)
         XCTAssertFalse(giphy?.allowsMediaCaching ?? true)
         XCTAssertEqual(giphy?.searchResultAttribution?.text, "Powered by GIPHY")
         XCTAssertEqual(ImageSource.giphy.photoSourceID, .giphy)
-        XCTAssertFalse(ImageSource.giphy.allowsPersistentLibraryStorage)
+        XCTAssertTrue(ImageSource.giphy.allowsPersistentLibraryStorage)
         XCTAssertFalse(ImageSource.giphy.allowsMediaCaching)
+    }
+
+    /// GIPHY 只允许 App；保存后不能进入 Finder 配置。
+    func testAppOnlyGiphyConfigurationDoesNotEnableFinder() async throws {
+        let store = makeStore()
+
+        let saved = try await store.saveConfiguration(
+            for: .giphy,
+            enabledSurfaces: [.app]
+        )
+
+        XCTAssertEqual(saved.appSourceIDs, [.openverse, .giphy])
+        XCTAssertEqual(saved.fileProviderSourceIDs, [.openverse])
+        let reloaded = await store.snapshot()
+        XCTAssertEqual(reloaded, saved)
+
+        do {
+            _ = try await store.setEnabled(true, sourceID: .giphy, surface: .fileProvider)
+            XCTFail("GIPHY 不应进入 Finder")
+        } catch {
+            XCTAssertEqual(error as? PhotoSourcePreferencesError, .unsupportedSurface)
+        }
     }
 
     /// Met 与 NASA 都可进入 App 交互搜索，但不能越过政策开启 Finder。

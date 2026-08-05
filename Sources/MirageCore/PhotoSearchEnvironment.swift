@@ -63,7 +63,8 @@ public struct PhotoSearchEnvironment: Sendable {
         selectedSourceID: PhotoSourceID? = nil,
         diceBear: any AvatarProviding = AvatarCatalogClient()
     ) -> ImageSearchService {
-        let giphySource: (any PhotoSourceSearching)? = surface == .app && purpose == .interactive
+        let giphySource: (any PhotoSourceSearching)? = purpose == .interactive
+            && surface == .app
             ? ConfiguredGiphyCatalogSearcher(
                 preferences: preferences,
                 credentials: credentials,
@@ -104,6 +105,26 @@ public struct PhotoSearchEnvironment: Sendable {
         // App 与 Finder 仅在有效来源及请求策略都相同时共享同一 generation。
         return "\(DiscoveryRecommendation.catalogKey):photo-sources:\(snapshot.revision):\(sourceIDs)"
             + ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
+    }
+
+    /// GIPHY 收藏只保存公开对象 ID；每次打开资料库时通过官方批量端点恢复临时媒体 URL。
+    public func giphyFavoriteRecords(ids: [String]) async throws -> [RemoteImageRecord] {
+        guard !ids.isEmpty else { return [] }
+        guard let credential = try await credentials.credential(for: .giphy),
+              !credential.isEmpty else {
+            throw PhotoSourceCredentialError.emptyCredential
+        }
+
+        let client = GiphyEmojiClient(apiKey: credential)
+        var records: [RemoteImageRecord] = []
+        var offset = 0
+        while offset < ids.count {
+            try Task.checkCancellation()
+            let upperBound = min(offset + 50, ids.count)
+            records.append(contentsOf: try await client.records(ids: Array(ids[offset..<upperBound])))
+            offset = upperBound
+        }
+        return records
     }
 
     /// 设置页用供应商最小合法批次验证凭据，并复用 App 与 Finder 共用的缓存和预算层。
@@ -332,8 +353,8 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     }
 }
 
-/// 每次 GIF 浏览或搜索都读取当前设置，并直接调用 GIPHY；不持久化媒体 URL。
-private struct ConfiguredGiphyCatalogSearcher: PhotoSourceSearching, Sendable {
+/// 每次 App 内 GIF 浏览或搜索都读取当前设置，并直接调用 GIPHY 独立目录。
+private struct ConfiguredGiphyCatalogSearcher: GiphyCatalogSearching, Sendable {
     let sourceID = PhotoSourceID.giphy
 
     private let preferences: any PhotoSourcePreferencesReading
@@ -355,11 +376,25 @@ private struct ConfiguredGiphyCatalogSearcher: PhotoSourceSearching, Sendable {
         cursor: PhotoSourceCursor?,
         pageSize: Int
     ) async throws -> PhotoSourcePage {
+        try await search(
+            query: query,
+            cursor: cursor,
+            pageSize: pageSize,
+            contentTypes: Set(GiphyContentType.allCases)
+        )
+    }
+
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int,
+        contentTypes: Set<GiphyContentType>
+    ) async throws -> PhotoSourcePage {
         let snapshot = await preferences.snapshot()
-        guard snapshot.sourceIDs(for: .app).contains(.giphy) else {
+        guard snapshot.appSourceIDs.contains(.giphy) else {
             throw Self.failure(
                 kind: .unavailable,
-                message: "请先在设置中启用 GIPHY 数据源。"
+                message: "请先在设置中为 App 启用 GIPHY 数据源。"
             )
         }
 
@@ -388,7 +423,31 @@ private struct ConfiguredGiphyCatalogSearcher: PhotoSourceSearching, Sendable {
         }
 
         do {
-            return try await source.search(query: query, cursor: cursor, pageSize: min(pageSize, 40))
+            if let catalog = source as? any GiphyCatalogSearching {
+                return try await catalog.search(
+                    query: query,
+                    cursor: cursor,
+                    pageSize: min(pageSize, 40),
+                    contentTypes: contentTypes
+                )
+            }
+            let page = try await source.search(
+                query: query,
+                cursor: cursor,
+                pageSize: min(pageSize, 40)
+            )
+            let supportedTypes = Set(GiphyContentType.allCases)
+            let selectedTypes = contentTypes.intersection(supportedTypes)
+            let effectiveTypes = selectedTypes.isEmpty ? supportedTypes : selectedTypes
+            if effectiveTypes == supportedTypes { return page }
+            return PhotoSourcePage(
+                records: page.records.filter {
+                    $0.giphyContentType.map(effectiveTypes.contains) == true
+                },
+                nextCursor: page.nextCursor,
+                quota: page.quota,
+                issues: page.issues
+            )
         } catch is CancellationError {
             throw CancellationError()
         } catch let failure as any PhotoSourceFailure {

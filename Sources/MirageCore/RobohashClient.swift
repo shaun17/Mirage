@@ -1,12 +1,11 @@
 import Foundation
 
-/// Robohash 官方公共实例当前公开的六个固定图集；生产地址不使用会随新增图集漂移的 `any`。
+/// Robohash 产品目录保留的五个固定图集；生产地址不使用会随新增图集漂移的 `any`。
 public enum RobohashSet: String, CaseIterable, Codable, Sendable {
     case classicRobots = "set1"
     case monsters = "set2"
     case robotHeads = "set3"
     case cats = "set4"
-    case humanAvatars = "set5"
     case cosmicApes = "set6"
 
     public var displayName: String {
@@ -15,8 +14,15 @@ public enum RobohashSet: String, CaseIterable, Codable, Sendable {
         case .monsters: return "Monsters"
         case .robotHeads: return "Robot Heads"
         case .cats: return "Cats"
-        case .humanAvatars: return "Human Avatars"
         case .cosmicApes: return "Cosmic Apes"
+        }
+    }
+
+    public var avatarType: AvatarType {
+        switch self {
+        case .classicRobots, .robotHeads: return .robot
+        case .monsters: return .monster
+        case .cats, .cosmicApes: return .animal
         }
     }
 
@@ -40,12 +46,6 @@ public enum RobohashSet: String, CaseIterable, Codable, Sendable {
                 displayName: "CC BY 4.0",
                 url: URL(string: "https://creativecommons.org/licenses/by/4.0/")
             )
-        case .humanAvatars:
-            return LicenseInfo(
-                identifier: "avataaars-free-use",
-                displayName: "Free for personal and commercial use",
-                url: URL(string: "https://avataaars.com/")
-            )
         case .cosmicApes:
             return .cc0
         }
@@ -57,7 +57,6 @@ public enum RobohashSet: String, CaseIterable, Codable, Sendable {
         case .monsters: return "Hrvoje Novakovic"
         case .robotHeads: return "Julian Peter Arias"
         case .cats: return "David Revoy"
-        case .humanAvatars: return "Pablo Stanley"
         case .cosmicApes: return "OceanSlim"
         }
     }
@@ -65,7 +64,6 @@ public enum RobohashSet: String, CaseIterable, Codable, Sendable {
     public var creatorURL: URL? {
         switch self {
         case .cats: return URL(string: "https://www.peppercarrot.com/")
-        case .humanAvatars: return URL(string: "https://avataaars.com/")
         case .cosmicApes: return URL(string: "https://github.com/OceanSlim")
         case .classicRobots, .monsters, .robotHeads: return nil
         }
@@ -98,21 +96,58 @@ public struct RobohashClient: AvatarProviding, AvatarSourceGenerating, Sendable 
         count: Int,
         generationDay: AvatarGenerationDay
     ) async -> [RemoteImageRecord] {
-        AvatarSeed.batch(
+        var records: [RemoteImageRecord] = []
+        for seed in AvatarSeed.batch(
             query: query,
             offset: offset,
             count: count,
             generationDay: generationDay
-        ).compactMap { avatar(seedMaterial: $0.material, generationDay: generationDay) }
+        ) {
+            if let record = await avatar(
+                seedMaterial: seed.material,
+                generationDay: generationDay
+            ) {
+                records.append(record)
+            }
+        }
+        return records
     }
 
     let avatarCatalogIdentifier = ImageSource.robohash.rawValue
+    var supportedAvatarTypes: Set<AvatarType> { Set(sets.map(\.avatarType)) }
 
     func avatar(
         seedMaterial: String,
         generationDay: AvatarGenerationDay
+    ) async -> RemoteImageRecord? {
+        record(
+            seedMaterial: seedMaterial,
+            generationDay: generationDay,
+            candidateSets: sets
+        )
+    }
+
+    func avatar(
+        seedMaterial: String,
+        generationDay: AvatarGenerationDay,
+        allowedTypes: Set<AvatarType>
+    ) async -> RemoteImageRecord? {
+        record(
+            seedMaterial: seedMaterial,
+            generationDay: generationDay,
+            candidateSets: sets.filter { allowedTypes.contains($0.avatarType) }
+        )
+    }
+
+    private func record(
+        seedMaterial: String,
+        generationDay: AvatarGenerationDay,
+        candidateSets: [RobohashSet]
     ) -> RemoteImageRecord? {
-        let set = selectedSet(seedMaterial: seedMaterial)
+        guard let set = selectedSet(
+            seedMaterial: seedMaterial,
+            candidateSets: candidateSets
+        ) else { return nil }
         let hash = StableImageID.seedHash("mirage-robohash-seed-v1|\(seedMaterial)")
         guard let url = imageURL(set: set, hash: hash) else { return nil }
         return RemoteImageRecord(
@@ -123,6 +158,7 @@ public struct RobohashClient: AvatarProviding, AvatarSourceGenerating, Sendable 
             ),
             title: "Robohash \(set.displayName) avatar",
             source: .robohash,
+            avatarType: set.avatarType,
             imageURL: url,
             thumbnailURL: url,
             sourcePageURL: URL(string: "https://robohash.org/"),
@@ -135,10 +171,13 @@ public struct RobohashClient: AvatarProviding, AvatarSourceGenerating, Sendable 
         )
     }
 
-    private func selectedSet(seedMaterial: String) -> RobohashSet {
-        var selected = sets[0]
+    private func selectedSet(
+        seedMaterial: String,
+        candidateSets: [RobohashSet]
+    ) -> RobohashSet? {
+        guard var selected = candidateSets.first else { return nil }
         var selectedRank = setRank(selected, seedMaterial: seedMaterial)
-        for set in sets.dropFirst() {
+        for set in candidateSets.dropFirst() {
             let rank = setRank(set, seedMaterial: seedMaterial)
             if rank > selectedRank || (rank == selectedRank && set.rawValue > selected.rawValue) {
                 selected = set

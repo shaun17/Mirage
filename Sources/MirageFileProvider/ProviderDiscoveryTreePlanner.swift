@@ -111,6 +111,19 @@ struct ProviderAvatarBatch: Sendable {
     let page: Int
     let records: [RemoteImageRecord]
     let hasMore: Bool
+    let filterKey: String
+
+    init(
+        page: Int,
+        records: [RemoteImageRecord],
+        hasMore: Bool,
+        filterKey: String = "discover-avatar-filter-v1:all"
+    ) {
+        self.page = page
+        self.records = records
+        self.hasMore = hasMore
+        self.filterKey = filterKey
+    }
 }
 
 /// 非法头像批次不能进入持久化 File Provider 树。
@@ -163,7 +176,7 @@ enum ProviderAvatarTreePlanner {
             directory: reference.itemIdentifier,
             parent: reference.parentItemIdentifier,
             name: continuationFolderName,
-            metadataVersionToken: "avatar-pagination-v2"
+            metadataVersionToken: "avatar-pagination-v3:\(batch.filterKey)"
         )
     }
 

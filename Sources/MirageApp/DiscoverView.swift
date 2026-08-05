@@ -53,7 +53,13 @@ struct DiscoverView: View {
                 .frame(minHeight: 52)
 
             Divider()
-            if filterDraft == .photos {
+            if filterDraft == .avatars {
+                avatarTypeFilterBar
+                Divider()
+            } else if filterDraft == .gif {
+                giphyContentTypeFilterBar
+                Divider()
+            } else if filterDraft == .photos {
                 photoSourceFilterBar
                 Divider()
             }
@@ -81,21 +87,37 @@ struct DiscoverView: View {
             .frame(width: 220, alignment: .leading)
 
             if filterDraft == .gif {
+                Spacer(minLength: 0)
                 GiphyAttributionLink()
+            } else {
+                if let message = model.libraryAvailability.unavailableDescription {
+                    Label("收藏不可用", systemImage: "heart.slash")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help(message)
+                        .accessibilityLabel(message)
+                }
+                Spacer(minLength: 0)
             }
-
-            if filterDraft != .gif,
-               let message = model.libraryAvailability.unavailableDescription {
-                Label("收藏不可用", systemImage: "heart.slash")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .help(message)
-                    .accessibilityLabel(message)
-            }
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+    }
+
+    /// 头像内容类型由 SearchModel 持有，切换内容页签不会重建或重置勾选。
+    private var avatarTypeFilterBar: some View {
+        AvatarTypeFilterBar(
+            selection: searchModel.avatarTypeSelection,
+            onToggle: searchModel.toggleAvatarType
+        )
+    }
+
+    /// GIF 类型选择由 SearchModel 持有，未选中的 GIPHY 子流不会发起网络请求。
+    private var giphyContentTypeFilterBar: some View {
+        GiphyContentTypeFilterBar(
+            selection: searchModel.giphyContentTypeSelection,
+            onToggle: searchModel.toggleGiphyContentType
+        )
     }
 
     /// 图片内容类型下固定展示完整服务商列表；只有标签区域横向滚动。

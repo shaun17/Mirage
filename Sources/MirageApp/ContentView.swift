@@ -121,14 +121,11 @@ struct ContentView: View {
             )
         case .favorites:
             libraryContent(title: "收藏") {
-                LibraryGridView(
-                    title: "收藏",
+                FavoritesGridView(
                     records: model.favorites,
                     favoriteIDs: model.favoriteIDs,
-                    emptyTitle: "还没有收藏",
-                    emptyDescription: "在发现页点按心形按钮，收藏会同步到文件面板。",
-                    allowsFavoriteChanges: true,
-                    pagination: nil,
+                    isRefreshingGiphy: model.isRefreshingGiphyFavorites,
+                    unresolvedGiphyCount: model.unresolvedGiphyFavoriteCount,
                     onToggleFavorite: { record in
                         Task { await model.toggleFavorite(record) }
                     },
@@ -140,6 +137,10 @@ struct ContentView: View {
                 RecentGridView(
                     records: model.recent,
                     favoriteIDs: model.favoriteIDs,
+                    allowsFavoriteChanges: model.libraryAvailability.allowsFavoriteChanges,
+                    onToggleFavorite: { record in
+                        Task { await model.toggleFavorite(record) }
+                    },
                     onShowDetails: { presentDetailDrawer(for: $0) }
                 )
             }

@@ -74,6 +74,7 @@ final class GiphyCatalogClientTests: XCTestCase {
         let first = try await client.search(query: "cat", cursor: nil, pageSize: 40)
         let firstCursor = try XCTUnwrap(first.nextCursor)
         XCTAssertEqual(first.records.map(\.id), ["g0", "s0"])
+        XCTAssertEqual(first.records.map(\.giphyContentType), [.gif, .sticker])
         XCTAssertTrue(firstCursor.rawValue.hasPrefix("gs1:"))
 
         do {
@@ -93,6 +94,41 @@ final class GiphyCatalogClientTests: XCTestCase {
         XCTAssertEqual(callsByFeed[.sticker]?.map(\.pageSize), [20, 20])
         XCTAssertEqual(callsByFeed[.gif]?.map(\.cursor), [nil, "20"])
         XCTAssertEqual(callsByFeed[.sticker]?.map(\.cursor), [nil, "20"])
+    }
+
+    /// 类型筛选在目录层裁剪子流；未选中的 endpoint 不应请求，旧筛选游标也不能跨集合复用。
+    func testSelectedContentTypesOnlyRequestChosenFeedsAndInvalidateDifferentCursor() async throws {
+        let script = CatalogScript(steps: [
+            .gif: [.success(ids: ["g0"], nextCursor: "20")],
+            .sticker: [.success(ids: ["s0"], nextCursor: "30")]
+        ])
+        let client = makeClient(script: script)
+
+        let first = try await client.search(
+            query: "",
+            cursor: nil,
+            pageSize: 40,
+            contentTypes: [.gif, .sticker]
+        )
+
+        XCTAssertEqual(first.records.map(\.id), ["g0", "s0"])
+        let firstCursor = try XCTUnwrap(first.nextCursor)
+        let callsByFeed = Dictionary(grouping: await script.invocations(), by: \.feed)
+        XCTAssertNil(callsByFeed[.emoji])
+        XCTAssertEqual(callsByFeed[.gif]?.map(\.pageSize), [20])
+        XCTAssertEqual(callsByFeed[.sticker]?.map(\.pageSize), [20])
+
+        do {
+            _ = try await client.search(
+                query: "",
+                cursor: firstCursor,
+                pageSize: 40,
+                contentTypes: [.gif]
+            )
+            XCTFail("不同类型集合不能复用旧复合游标")
+        } catch let error as GiphyCatalogError {
+            XCTAssertEqual(error, .invalidCursor)
+        }
     }
 
     /// 三路供应都充足时首屏必须实际交付 40 条，而不只是把请求配额相加为 40。
@@ -441,6 +477,7 @@ final class GiphyCatalogClientTests: XCTestCase {
             StableImageID.giphy(id: "prod-g"),
             StableImageID.giphy(id: "prod-s")
         ])
+        XCTAssertEqual(page.records.map(\.giphyContentType), [.emoji, .gif, .sticker])
         let requests = recorder.snapshot().sorted { ($0.url?.path ?? "") < ($1.url?.path ?? "") }
         XCTAssertEqual(requests.count, 3)
         let valuesByPath = try Dictionary(uniqueKeysWithValues: requests.map { request in

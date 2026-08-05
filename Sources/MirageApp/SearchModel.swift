@@ -5,6 +5,8 @@ import Foundation
 @MainActor
 final class SearchModel: ObservableObject {
     typealias PhotoSearchServiceFactory = (PhotoSourceID?) -> ImageSearchService
+    typealias AvatarTypeSelectionDidChange = (AvatarTypeSelection) -> Void
+    typealias GiphyContentTypeSelectionDidChange = (GiphyContentTypeSelection) -> Void
     typealias PhotoSourceSelectionDidChange = (PhotoSourceFilterSelection) -> Void
 
     @Published var query = "" {
@@ -24,6 +26,8 @@ final class SearchModel: ObservableObject {
     @Published private(set) var paginationState: SearchPaginationState = .unavailable
     @Published private(set) var sourceIssues: [PhotoSourceIssue] = []
     @Published private(set) var accessibilityEvent: SearchAccessibilityEvent?
+    @Published private(set) var avatarTypeSelection: AvatarTypeSelection
+    @Published private(set) var giphyContentTypeSelection: GiphyContentTypeSelection
     @Published private(set) var photoSourceSelection: PhotoSourceFilterSelection
     @Published private(set) var enabledPhotoSourceIDs: Set<PhotoSourceID> = [.openverse]
 
@@ -32,6 +36,8 @@ final class SearchModel: ObservableObject {
     private static let maximumPagesPerLoad = 3
     private let service: ImageSearchService
     private let photoSearchService: PhotoSearchServiceFactory
+    private let avatarTypeSelectionDidChange: AvatarTypeSelectionDidChange
+    private let giphyContentTypeSelectionDidChange: GiphyContentTypeSelectionDidChange
     private let photoSourceSelectionDidChange: PhotoSourceSelectionDidChange
     private var isWaitingForRecommendationFeed: Bool
     private var recommendationFeed: (any DiscoveryFeedProviding)?
@@ -50,6 +56,10 @@ final class SearchModel: ObservableObject {
     init(
         service: ImageSearchService = ImageSearchService(),
         photoSearchService: PhotoSearchServiceFactory? = nil,
+        initialAvatarTypeSelection: AvatarTypeSelection = .all,
+        avatarTypeSelectionDidChange: @escaping AvatarTypeSelectionDidChange = { _ in },
+        initialGiphyContentTypeSelection: GiphyContentTypeSelection = .all,
+        giphyContentTypeSelectionDidChange: @escaping GiphyContentTypeSelectionDidChange = { _ in },
         initialPhotoSourceSelection: PhotoSourceFilterSelection = .all,
         photoSourceSelectionDidChange: @escaping PhotoSourceSelectionDidChange = { _ in },
         recommendationFeed: (any DiscoveryFeedProviding)? = nil,
@@ -57,10 +67,40 @@ final class SearchModel: ObservableObject {
     ) {
         self.service = service
         self.photoSearchService = photoSearchService ?? { _ in service }
+        self.avatarTypeSelection = initialAvatarTypeSelection
+        self.avatarTypeSelectionDidChange = avatarTypeSelectionDidChange
+        self.giphyContentTypeSelection = initialGiphyContentTypeSelection
+        self.giphyContentTypeSelectionDidChange = giphyContentTypeSelectionDidChange
         self.photoSourceSelection = initialPhotoSourceSelection
         self.photoSourceSelectionDidChange = photoSourceSelectionDidChange
         self.recommendationFeed = recommendationFeed
         self.isWaitingForRecommendationFeed = waitsForRecommendationFeed
+    }
+
+    /// 头像类型支持任意多选；最后一个已选类型不会被取消。
+    func toggleAvatarType(_ type: AvatarType) {
+        let updatedSelection = avatarTypeSelection.toggling(type)
+        guard updatedSelection != avatarTypeSelection else {
+            announce("至少保留一种头像类型")
+            return
+        }
+        avatarTypeSelection = updatedSelection
+        avatarTypeSelectionDidChange(updatedSelection)
+        guard filter == .avatars else { return }
+        deferSearchAfterCriteriaChange()
+    }
+
+    /// GIF 类型支持任意多选；改变选择时开启全新 GIPHY 游标会话。
+    func toggleGiphyContentType(_ type: GiphyContentType) {
+        let updatedSelection = giphyContentTypeSelection.toggling(type)
+        guard updatedSelection != giphyContentTypeSelection else {
+            announce("至少保留一种 GIF 类型")
+            return
+        }
+        giphyContentTypeSelection = updatedSelection
+        giphyContentTypeSelectionDidChange(updatedSelection)
+        guard filter == .gif else { return }
+        deferSearchAfterCriteriaChange()
     }
 
     /// App Group 准备完成后注入共享推荐仓库，并立即启动空查询首页加载。
@@ -467,7 +507,11 @@ final class SearchModel: ObservableObject {
                 )
                 return SearchLoadResult(
                     page: fallback,
-                    request: .query(DiscoveryRecommendation.query, photoSourceID: nil)
+                    request: .query(
+                        DiscoveryRecommendation.query,
+                        photoSourceID: nil,
+                        avatarTypes: nil
+                    )
                 )
             }
             let result = try await recommendationFeed.page(
@@ -479,7 +523,7 @@ final class SearchModel: ObservableObject {
                 page: ImageSearchPage(records: result.records, nextPage: result.nextPage),
                 request: .recommendations(result.generation)
             )
-        case let .query(rawQuery, selectedSourceID):
+        case let .query(rawQuery, selectedSourceID, avatarTypes):
             let activeService = photoSearchService(selectedSourceID)
             let page: ImageSearchPage
             if let onPartialResults, selectedSourceID == nil {
@@ -487,22 +531,28 @@ final class SearchModel: ObservableObject {
                     rawQuery,
                     cursor: cursor,
                     pageSize: Self.pageSize,
+                    avatarTypes: avatarTypes,
                     onPartialResults: onPartialResults
                 )
             } else {
                 page = try await activeService.search(
                     rawQuery,
                     cursor: cursor,
-                    pageSize: Self.pageSize
+                    pageSize: Self.pageSize,
+                    avatarTypes: avatarTypes
                 )
             }
-            return SearchLoadResult(page: page, request: request)
-        case let .giphy(query):
+            return SearchLoadResult(
+                page: page,
+                request: request
+            )
+        case let .giphy(query, contentTypes):
             return SearchLoadResult(
                 page: try await service.giphyCatalog(
                     query: query,
                     cursor: cursor,
-                    pageSize: Self.giphyPageSize
+                    pageSize: Self.giphyPageSize,
+                    contentTypes: contentTypes
                 ),
                 request: request
             )
@@ -527,7 +577,10 @@ final class SearchModel: ObservableObject {
     /// GIF 空查询读取混合目录；其他空查询按当前内容类型读取推荐或默认内容。
     private func pendingRequest() -> SearchRequest? {
         if filter == .gif {
-            return .giphy(query.trimmingCharacters(in: .whitespacesAndNewlines))
+            return .giphy(
+                query.trimmingCharacters(in: .whitespacesAndNewlines),
+                contentTypes: giphyContentTypeSelection.types
+            )
         }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -540,7 +593,8 @@ final class SearchModel: ObservableObject {
             }
             return .query(
                 filter.serviceQuery(for: DiscoveryRecommendation.query),
-                photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil
+                photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil,
+                avatarTypes: filter == .avatars ? avatarTypeSelection.types : nil
             )
         }
         let request = filter.serviceQuery(for: query)
@@ -548,7 +602,8 @@ final class SearchModel: ObservableObject {
         guard !SearchQueryParser.parse(request).text.isEmpty else { return nil }
         return .query(
             request,
-            photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil
+            photoSourceID: filter == .photos ? photoSourceSelection.sourceID : nil,
+            avatarTypes: filter == .avatars ? avatarTypeSelection.types : nil
         )
     }
 
@@ -749,9 +804,13 @@ final class SearchModel: ObservableObject {
 
 /// 搜索会话要么绑定普通查询文字，要么绑定共享推荐快照的 generation。
 private enum SearchRequest: Equatable {
-    case query(String, photoSourceID: PhotoSourceID?)
+    case query(
+        String,
+        photoSourceID: PhotoSourceID?,
+        avatarTypes: Set<AvatarType>?
+    )
     case recommendations(UInt64?)
-    case giphy(String)
+    case giphy(String, contentTypes: Set<GiphyContentType>)
 
     var isGiphy: Bool {
         guard case .giphy = self else { return false }
@@ -762,7 +821,7 @@ private enum SearchRequest: Equatable {
         switch self {
         case .query:
             return !userQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case let .giphy(query):
+        case let .giphy(query, _):
             return !query.isEmpty
         case .recommendations:
             return false

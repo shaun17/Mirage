@@ -192,7 +192,7 @@ public enum PhotoSourceRegistry {
             credentialRequirement: .apiKey,
             supportedSurfaces: [.app],
             allowsAutomatedRecommendations: false,
-            allowsPersistentLibraryStorage: false,
+            allowsPersistentLibraryStorage: true,
             allowsMediaCaching: false,
             resultPresentation: .isolated,
             credentialURL: URL(string: "https://developers.giphy.com/dashboard/")!,
@@ -201,7 +201,7 @@ public enum PhotoSourceRegistry {
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Powered by GIPHY",
                 url: URL(string: "https://giphy.com")!,
-                note: "仅在 App 内浏览与搜索；不进入 Finder、推荐或收藏"
+                note: "仅在 App 的独立 GIF 页展示；收藏只保存对象 ID，不进入 Finder 或普通图片推荐"
             )
         )
     ]
@@ -221,11 +221,11 @@ public extension ImageSource {
         case .pexels: return .pexels
         case .pixabay: return .pixabay
         case .giphy: return .giphy
-        case .diceBear, .gravatar, .robohash: return nil
+        case .picrew, .diceBear, .gravatar, .robohash, .thisPersonDoesNotExist: return nil
         }
     }
 
-    /// 注册表统一声明能否长期写入资料库；临时预览来源不能把远程 URL 持久化收藏。
+    /// 所有可展示记录均可写入 App 内收藏；媒体缓存和 Finder 发布由独立能力控制。
     var allowsPersistentLibraryStorage: Bool {
         guard let sourceID = photoSourceID,
               let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else {
@@ -234,7 +234,7 @@ public extension ImageSource {
         return descriptor.allowsPersistentLibraryStorage
     }
 
-    /// 标准 GIPHY 集成不得缓存媒体 URL 或媒体副本；UI 据此改走瞬时直连加载。
+    /// 媒体缓存与 Finder 发布由来源能力独立控制；GIPHY 只保留 ID 型收藏。
     var allowsMediaCaching: Bool {
         guard let sourceID = photoSourceID,
               let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else {

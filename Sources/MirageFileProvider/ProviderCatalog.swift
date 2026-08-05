@@ -11,28 +11,32 @@ struct ProviderCatalog: Sendable {
     }
 
     /// 根目录固定公开资料库目录，并附带一个系统隐藏的 Spotlight backing 容器。
-    func rootDirectories() -> [ProviderItem] {
+    func rootDirectories(discoveryGeneration: UInt64? = nil) async -> [ProviderItem] {
         [
             ProviderItem(
                 directory: ProviderIdentifiers.avatars,
                 parent: .rootContainer,
-                name: "头像"
+                name: "头像",
+                discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(
                 directory: ProviderIdentifiers.recent,
                 parent: .rootContainer,
-                name: "最近使用"
+                name: "最近使用",
+                discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(
                 directory: ProviderIdentifiers.favorites,
                 parent: .rootContainer,
-                name: "收藏"
+                name: "收藏",
+                discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(
                 directory: ProviderIdentifiers.searchBacking,
                 parent: .rootContainer,
                 name: "_SearchBacking",
-                hidden: true
+                hidden: true,
+                discoveryGeneration: discoveryGeneration
             )
         ]
     }
@@ -74,17 +78,10 @@ struct ProviderCatalog: Sendable {
              ProviderIdentifiers.recent,
              ProviderIdentifiers.favorites,
              ProviderIdentifiers.searchBacking:
-            return rootDirectories().first { $0.itemIdentifier == identifier }
+            return await rootDirectories().first { $0.itemIdentifier == identifier }
         default:
             if let reference = ProviderIdentifiers.avatarPageReference(from: identifier) {
-                guard try await repository.isAvatarPagePublished(reference) else { return nil }
-                return try ProviderAvatarTreePlanner.continuationItem(
-                    after: ProviderAvatarBatch(
-                        page: reference.page - 1,
-                        records: [],
-                        hasMore: true
-                    )
-                )
+                return try await repository.avatarContinuationItem(for: reference)
             }
             if let reference = ProviderIdentifiers.discoveryPageReference(from: identifier) {
                 guard let parentBatch = try await repository.parentBatch(
@@ -171,11 +168,19 @@ struct ProviderCatalog: Sendable {
 
     /// 根目录一次发布固定 40 张；下一批只能通过显式“更多图片”目录打开。
     private func rootItems() async throws -> [ProviderItem] {
-        let batch = try await repository.discoveryRootBatch()
+        let batch: ProviderDiscoveryBatch
+        do {
+            batch = try await repository.discoveryRootBatch()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // 普通照片暂不可用不能连带隐藏头像、最近使用和收藏等独立资料库。
+            batch = try await repository.fallbackDiscoveryRootBatch()
+        }
         try Task.checkCancellation()
         return try ProviderDiscoveryTreePlanner.items(
             for: batch,
-            fixedDirectories: rootDirectories()
+            fixedDirectories: await rootDirectories(discoveryGeneration: batch.generation)
         )
     }
 
@@ -249,8 +254,8 @@ extension ProviderEnumerationScope {
         switch self {
         case .root: return "root"
         case let .discoveryPage(reference): return "discovery:v3:\(reference.page)"
-        case .avatars: return "avatars:v3"
-        case let .avatarPage(reference): return "avatars:v3:\(reference.page)"
+        case .avatars: return "avatars:v4"
+        case let .avatarPage(reference): return "avatars:v4:\(reference.page)"
         case .search: return "search"
         case .recent: return "recent"
         case .favorites: return "favorites"

@@ -9,6 +9,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let discoveryFeed: (any DiscoveryFeedProviding)?
     private let avatarProvider: any AvatarProviding
     private let sourcePreferences: (any PhotoSourcePreferencesReading)?
+    private let photoEnvironment: PhotoSearchEnvironment?
+    private let filterPreferences: DiscoveryFilterPreferencesStore?
+    private var filteredDiscoveryFeeds: [String: DiscoveryFeedRepository] = [:]
 
     /// Finder 头像分页按绝对 offset 生成；每次调用仍受头像协议单次 20 条限制。
     private static let avatarChunkSize = 20
@@ -17,30 +20,17 @@ actor ProviderRepository: ProviderSearchResultStoring {
     init(
         manager: NSFileProviderManager?,
         environment: PhotoSearchEnvironment = .production(),
-        diceBear: any AvatarProviding = AvatarCatalogClient()
+        diceBear: any AvatarProviding = AvatarCatalogClient(),
+        filterPreferences: DiscoveryFilterPreferencesStore = .production()
     ) {
         let storage = try? AppGroupStorage()
-        let service = environment.imageSearchService(
-            for: .fileProvider,
-            purpose: .recommendation,
-            diceBear: diceBear
-        )
         self.storage = storage
         self.manager = manager
         self.avatarProvider = diceBear
         self.sourcePreferences = environment.preferences
-        self.discoveryFeed = storage.map {
-            DiscoveryFeedRepository(
-                storage: $0,
-                service: service,
-                diceBear: diceBear,
-                // 一层最多补 3 个底层页；单页 1.5 秒使 Finder 枚举总等待仍控制在数秒内。
-                networkTimeout: .milliseconds(1_500),
-                catalogKey: { [environment] in
-                    await environment.recommendationCatalogKey(for: .fileProvider)
-                }
-            )
-        }
+        self.discoveryFeed = nil
+        self.photoEnvironment = environment
+        self.filterPreferences = filterPreferences
     }
 
     /// 测试注入共享存储与推荐仓库，验证 File Provider 位置语义而不访问真实 App Group。
@@ -49,13 +39,16 @@ actor ProviderRepository: ProviderSearchResultStoring {
         storage: AppGroupStorage,
         discoveryFeed: any DiscoveryFeedProviding,
         diceBear: any AvatarProviding = AvatarCatalogClient(),
-        sourcePreferences: (any PhotoSourcePreferencesReading)? = nil
+        sourcePreferences: (any PhotoSourcePreferencesReading)? = nil,
+        filterPreferences: DiscoveryFilterPreferencesStore? = nil
     ) {
         self.storage = storage
         self.manager = manager
         self.discoveryFeed = discoveryFeed
         self.avatarProvider = diceBear
         self.sourcePreferences = sourcePreferences
+        self.photoEnvironment = nil
+        self.filterPreferences = filterPreferences
     }
 
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
@@ -89,15 +82,33 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
+    /// 回查分页目录时使用当前筛选 token 构造版本，避免 Finder 复用上一个类型范围的目录元数据。
+    func avatarContinuationItem(
+        for reference: AvatarPageReference
+    ) async throws -> ProviderItem? {
+        guard try await isAvatarPagePublished(reference) else { return nil }
+        return try ProviderAvatarTreePlanner.continuationItem(
+            after: ProviderAvatarBatch(
+                page: reference.page - 1,
+                records: [],
+                hasMore: true,
+                filterKey: currentFilterSnapshot().avatarCatalogKey
+            )
+        )
+    }
+
     /// 每个可见目录生成固定 40 个确定性头像，不读取混合推荐流或照片来源。
     private func avatarItems(page: Int) async throws -> [ProviderItem] {
         let storage = try requireStorage()
+        let filters = currentFilterSnapshot()
         // 一批头像可能跨越多个 20 条分段；日期必须只捕获一次，避免午夜混入两天 seed。
         let generationDay = await avatarProvider.currentGenerationDay()
         if let cached = try await cachedAvatarItems(
             in: storage,
             page: page,
-            generationDay: generationDay
+            generationDay: generationDay,
+            allowedTypes: filters.avatarTypes,
+            filterKey: filters.avatarCatalogKey
         ) {
             return cached
         }
@@ -105,7 +116,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         let range = try ProviderAvatarTreePlanner.recordRange(for: page)
 
         var seen = Set<String>()
-        var records: [RemoteImageRecord] = []
+        var generatedRecords: [RemoteImageRecord] = []
         var offset = range.lowerBound
         while offset < range.upperBound {
             try Task.checkCancellation()
@@ -119,13 +130,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
             for record in generated
                 where Self.isCurrentAvatarRecord(record, generationDay: generationDay)
                     && seen.insert(record.id).inserted {
-                records.append(record)
+                generatedRecords.append(record)
             }
             offset += count
         }
-        guard records.count == ProviderAvatarTreePlanner.batchSize else {
+        guard generatedRecords.count == ProviderAvatarTreePlanner.batchSize else {
             throw ProviderError.serverUnreachable("无法生成完整的头像批次。")
         }
+        let records = generatedRecords.filter { $0.matchesAvatarTypes(filters.avatarTypes) }
         try Task.checkCancellation()
         for record in records {
             try await storage.writeItem(record)
@@ -135,7 +147,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
             for: ProviderAvatarBatch(
                 page: page,
                 records: records,
-                hasMore: page < AvatarPageReference.maximumPage
+                hasMore: page < AvatarPageReference.maximumPage,
+                filterKey: filters.avatarCatalogKey
             )
         )
     }
@@ -144,7 +157,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private func cachedAvatarItems(
         in storage: AppGroupStorage,
         page: Int,
-        generationDay: AvatarGenerationDay
+        generationDay: AvatarGenerationDay,
+        allowedTypes: Set<AvatarType>,
+        filterKey: String
     ) async throws -> [ProviderItem]? {
         let scope: ProviderEnumerationScope
         let expectedPage: AvatarPageReference?
@@ -157,11 +172,16 @@ actor ProviderRepository: ProviderSearchResultStoring {
             expectedPage = reference
         }
         let hasMore = page < AvatarPageReference.maximumPage
-        let emptyBatch = ProviderAvatarBatch(page: page, records: [], hasMore: hasMore)
+        let emptyBatch = ProviderAvatarBatch(
+            page: page,
+            records: [],
+            hasMore: hasMore,
+            filterKey: filterKey
+        )
         let expectedContinuation = try ProviderAvatarTreePlanner.continuationItem(after: emptyBatch)
-        let expectedCount = ProviderAvatarTreePlanner.batchSize + (expectedContinuation == nil ? 0 : 1)
         guard let states = try await storage.providerScopeSnapshot(scope.storageKey),
-              states.count == expectedCount else {
+              states.count <= ProviderAvatarTreePlanner.batchSize
+                + (expectedContinuation == nil ? 0 : 1) else {
             return nil
         }
         let imageStates: ArraySlice<ProviderStoredItemState>
@@ -200,7 +220,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 // fileExists 与实际读取之间若被清理，按普通 cache miss 自愈。
                 return nil
             }
-            guard Self.isCurrentAvatarRecord(record, generationDay: generationDay) else {
+            guard Self.isCurrentAvatarRecord(record, generationDay: generationDay),
+                  record.matchesAvatarTypes(allowedTypes) else {
+                return nil
+            }
+            guard try await hasAvailableAvatarContent(record, in: storage) else {
                 return nil
             }
             let item: ProviderItem
@@ -215,15 +239,60 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
             records.append(record)
         }
-        guard records.count == ProviderAvatarTreePlanner.batchSize else { return nil }
         return try ProviderAvatarTreePlanner.items(
-            for: ProviderAvatarBatch(page: page, records: records, hasMore: hasMore)
+            for: ProviderAvatarBatch(
+                page: page,
+                records: records,
+                hasMore: hasMore,
+                filterKey: filterKey
+            )
         )
     }
 
     /// 根目录固定公开推荐流的首个 40 张批次；底层仍按 Mirage 的 20 张共享页读取。
     func discoveryRootBatch() async throws -> ProviderDiscoveryBatch {
         try await resolveDiscoveryBatch(page: 1, generation: nil)
+    }
+
+    /// 普通图片没有可用来源或首次联网失败时，仍以持久稳定的空 generation 发布固定资料库目录。
+    /// fallback 使用独立 catalog key，确保照片来源恢复后仍会重新尝试真实推荐，而不是长期命中空缓存。
+    func fallbackDiscoveryRootBatch() async throws -> ProviderDiscoveryBatch {
+        try Task.checkCancellation()
+        let storage = try requireStorage()
+        let filters = currentFilterSnapshot()
+        let sourceKey = await sourcePreferences?.configurationKey(for: .fileProvider)
+            ?? "photo-sources:test"
+        let catalogKey = "provider-fixed-root-fallback-v1:\(sourceKey):\(filters.photoCatalogKey)"
+        if let current = try await storage.readDiscoveryFeedSnapshot(),
+           current.source == .fallback,
+           current.catalogKey == catalogKey,
+           current.queryKey == DiscoveryRecommendation.query,
+           current.records.isEmpty,
+           current.nextPage == nil {
+            return ProviderDiscoveryBatch(
+                page: 1,
+                generation: current.generation,
+                records: [],
+                hasMore: false
+            )
+        }
+        try Task.checkCancellation()
+        let committed = try await storage.commitDiscoveryFeed(
+            records: [],
+            refreshedAt: Date(),
+            source: .fallback,
+            catalogKey: catalogKey,
+            queryKey: DiscoveryRecommendation.query,
+            pageSize: DiscoveryRecommendation.pageSize,
+            nextPage: nil
+        )
+        try Task.checkCancellation()
+        return ProviderDiscoveryBatch(
+            page: 1,
+            generation: committed.generation,
+            records: [],
+            hasMore: false
+        )
     }
 
     /// 下一批严格继承父入口发布时的代次；祖先断链或换代后不能借旧 scope 继续联网。
@@ -276,12 +345,25 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
         }
         try Task.checkCancellation()
-        guard snapshot.generation == first.generation,
-              bounds.lowerBound < snapshot.records.count else {
+        guard snapshot.generation == first.generation else {
             throw ProviderError.expiredDiscoveryPage()
         }
+        if bounds.lowerBound >= snapshot.records.count {
+            guard page == 1, snapshot.records.isEmpty, snapshot.nextPage == nil else {
+                throw ProviderError.expiredDiscoveryPage()
+            }
+            return ProviderDiscoveryBatch(
+                page: page,
+                generation: snapshot.generation,
+                records: [],
+                hasMore: false
+            )
+        }
         let upperBound = min(bounds.upperBound, snapshot.records.count)
-        let records = Array(snapshot.records[bounds.lowerBound..<upperBound])
+        let slicedRecords = Array(snapshot.records[bounds.lowerBound..<upperBound])
+        let records = filterPreferences == nil
+            ? slicedRecords
+            : slicedRecords.filter(isAllowedInCurrentDiscoveryFilter)
         let hasMore = upperBound < snapshot.records.count || snapshot.nextPage != nil
         return ProviderDiscoveryBatch(
             page: page,
@@ -298,7 +380,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
     ) async throws -> DiscoveryRootFeed {
         let storage = try requireStorage()
         guard let snapshot = try await storage.readDiscoveryFeedSnapshot(generation: generation) else {
-            guard fallback.generation == generation, !fallback.records.isEmpty else {
+            guard fallback.generation == generation,
+                  !fallback.records.isEmpty || fallback.nextPage == nil else {
                 throw ProviderError.expiredDiscoveryPage()
             }
             return DiscoveryRootFeed(
@@ -421,7 +504,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                     didMutateSnapshot: false
                 )
             }
-            let feed = try requireDiscoveryFeed()
+            let feed = try await requireDiscoveryFeed()
             let result = try await feed.page(
                 generation: generation,
                 page: page,
@@ -446,7 +529,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
     }
 
-    /// Replicated File Provider 只接受 working set signal；系统再把差异投影到各已枚举目录。
+    /// 推荐快照换代后通知 working set，系统再把差异投影到已枚举目录。
     func signalWorkingSet() async {
         guard let manager else { return }
         try? await manager.signalEnumerator(for: .workingSet)
@@ -484,7 +567,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 ProviderEnumerationScope.avatarPage(avatarPage).storageKey,
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
-               Self.isCurrentAvatarRecord(record) else {
+               Self.isCurrentAvatarRecord(record),
+               record.matchesAvatarTypes(currentFilterSnapshot().avatarTypes),
+               try await hasAvailableAvatarContent(record, in: storage) else {
                 return nil
             }
             try Task.checkCancellation()
@@ -500,7 +585,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
             let record = try await storage.readDiscoveryRecord(id: reference.recordID)
             try Task.checkCancellation()
-            guard let record, await isAllowedInFileProvider(record) else { return nil }
+            guard let record, isAllowedInCurrentDiscoveryFilter(record),
+                  await isAllowedInFileProvider(record) else { return nil }
             return ProviderOccurrence(
                 reference: reference,
                 record: record,
@@ -510,15 +596,19 @@ actor ProviderRepository: ProviderSearchResultStoring {
         let occurrence: ProviderOccurrence?
         switch reference.view {
         case .discover:
-            occurrence = try await storage.readDiscoveryRecord(id: reference.recordID).map {
-                ProviderOccurrence(reference: reference, record: $0)
+            occurrence = try await storage.readDiscoveryRecord(id: reference.recordID).flatMap {
+                isAllowedInCurrentDiscoveryFilter($0)
+                    ? ProviderOccurrence(reference: reference, record: $0)
+                    : nil
             }
         case .avatar:
             guard try await storage.providerScope(
                 ProviderEnumerationScope.avatars.storageKey,
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
-               Self.isCurrentAvatarRecord(record) else {
+               Self.isCurrentAvatarRecord(record),
+               record.matchesAvatarTypes(currentFilterSnapshot().avatarTypes),
+               try await hasAvailableAvatarContent(record, in: storage) else {
                 return nil
             }
             occurrence = ProviderOccurrence(reference: reference, record: record)
@@ -537,13 +627,19 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
         case .favorite:
             let records = try await storage.readFavoriteRecords()
-            occurrence = records.first { $0.id == reference.recordID }.map {
+            occurrence = records.first(where: { $0.id == reference.recordID }).map {
                 ProviderOccurrence(reference: reference, record: $0)
             }
         }
         try Task.checkCancellation()
         guard let occurrence else { return nil }
-        return await isAllowedInFileProvider(occurrence.record) ? occurrence : nil
+        guard await isAllowedInFileProvider(occurrence.record) else { return nil }
+        if occurrence.record.source == .thisPersonDoesNotExist {
+            guard (try? await hasAvailableAvatarContent(occurrence.record, in: storage)) == true else {
+                return nil
+            }
+        }
+        return occurrence
     }
 
     /// 每次从持久化搜索快照恢复，确保其他扩展进程的最新原子提交不会被内存缓存遮蔽。
@@ -593,7 +689,18 @@ actor ProviderRepository: ProviderSearchResultStoring {
         _ records: [RemoteImageRecord]
     ) async -> [RemoteImageRecord] {
         let enabledSourceIDs = await enabledFileProviderSourceIDs()
-        return records.filter { Self.isAllowed($0, enabledSourceIDs: enabledSourceIDs) }
+        var allowed: [RemoteImageRecord] = []
+        allowed.reserveCapacity(records.count)
+        for record in records where Self.isAllowed(record, enabledSourceIDs: enabledSourceIDs) {
+            if record.source == .thisPersonDoesNotExist {
+                guard let storage,
+                      (try? await hasAvailableAvatarContent(record, in: storage)) == true else {
+                    continue
+                }
+            }
+            allowed.append(record)
+        }
+        return allowed
     }
 
     private func enabledFileProviderSourceIDs() async -> Set<PhotoSourceID>? {
@@ -606,8 +713,19 @@ actor ProviderRepository: ProviderSearchResultStoring {
         _ record: RemoteImageRecord,
         enabledSourceIDs: Set<PhotoSourceID>?
     ) -> Bool {
+        guard record.source != .picrew else { return false }
         guard let sourceID = record.source.photoSourceID else { return record.source.isAvatarSource }
+        guard PhotoSourceRegistry.descriptor(for: sourceID)?.supports(.fileProvider) == true else {
+            return false
+        }
         return enabledSourceIDs?.contains(sourceID) ?? true
+    }
+
+    /// 根推荐严格属于图片视图，并进一步匹配 App 当前选中的单一图片来源。
+    private func isAllowedInCurrentDiscoveryFilter(_ record: RemoteImageRecord) -> Bool {
+        guard !record.source.isAvatarSource, record.source != .giphy else { return false }
+        guard let selectedSourceID = currentFilterSnapshot().photoSourceID else { return true }
+        return record.source.photoSourceID == selectedSourceID
     }
 
     /// 头像树只接受当前命名空间，且记录来源必须与 ID 前缀一致。
@@ -621,6 +739,54 @@ actor ProviderRepository: ProviderSearchResultStoring {
             return false
         }
         return expectedGenerationDay.map { $0 == generationDay } ?? true
+    }
+
+    /// 动态端点的元数据只有在冻结 PNG 仍存在且摘要一致时才算可复用缓存。
+    private func hasAvailableAvatarContent(
+        _ record: RemoteImageRecord,
+        in storage: AppGroupStorage
+    ) async throws -> Bool {
+        guard record.source == .thisPersonDoesNotExist else { return true }
+        guard record.imageURL == record.thumbnailURL,
+              let reference = AvatarSnapshotReference(url: record.imageURL),
+              let expectedHash = StableImageID.thisPersonDoesNotExistSnapshotHash(
+                  from: record.id
+              ) else {
+            return false
+        }
+        do {
+            guard let data = try await storage.readAvatarSnapshot(key: reference.key) else {
+                return false
+            }
+            return StableImageID.dataHash(data) == expectedHash
+        } catch is AvatarSnapshotStorageError {
+            return false
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return false
+        }
+    }
+
+    /// 远程来源继续走有界 HTTPS 下载；动态人像只能从已冻结的 App Group 快照读取。
+    func imageData(at url: URL, maximumBytes: Int) async throws -> Data {
+        if url.scheme == AvatarSnapshotReference.scheme {
+            guard let reference = AvatarSnapshotReference(url: url) else {
+                throw DownloadError.invalidResponse
+            }
+            do {
+                guard let data = try await requireStorage().readAvatarSnapshot(
+                    key: reference.key,
+                    maximumBytes: maximumBytes
+                ) else {
+                    throw DownloadError.invalidResponse
+                }
+                return data
+            } catch is AvatarSnapshotStorageError {
+                throw DownloadError.invalidResponse
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                throw DownloadError.invalidResponse
+            }
+        }
+        return try await BoundedDownloader(url: url, maximumBytes: maximumBytes).download()
     }
 
     /// 成功物化图片后记录最近使用，底层元数据继续保留供其他 occurrence 和在途请求使用。
@@ -819,12 +985,43 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return storage
     }
 
-    /// 把共享推荐仓库初始化失败转换为 File Provider 可退避的服务错误。
-    private func requireDiscoveryFeed() throws -> any DiscoveryFeedProviding {
-        guard let discoveryFeed else {
+    /// 生产环境按当前图片来源筛选复用独立照片快照；测试仍可注入固定推荐仓库。
+    private func requireDiscoveryFeed() async throws -> any DiscoveryFeedProviding {
+        if let discoveryFeed { return discoveryFeed }
+        guard let storage, let photoEnvironment else {
             throw ProviderError.serverUnreachable("无法访问 Mirage 推荐存储。")
         }
-        return discoveryFeed
+
+        let filters = currentFilterSnapshot()
+        let filterKey = filters.photoCatalogKey
+        if let cached = filteredDiscoveryFeeds[filterKey] { return cached }
+
+        let service = photoEnvironment.imageSearchService(
+            for: .fileProvider,
+            purpose: .recommendation,
+            selectedSourceID: filters.photoSourceID,
+            diceBear: avatarProvider
+        )
+        let feed = DiscoveryFeedRepository(
+            storage: storage,
+            service: service,
+            diceBear: avatarProvider,
+            // 一层最多补 3 个底层页；单页 1.5 秒使 Finder 枚举总等待仍控制在数秒内。
+            networkTimeout: .milliseconds(1_500),
+            catalogKey: { [photoEnvironment, filterKey] in
+                let sourceKey = await photoEnvironment.recommendationCatalogKey(
+                    for: .fileProvider
+                )
+                return "\(sourceKey):\(filterKey):content-scope:photos-v1"
+            },
+            contentScope: .photos
+        )
+        filteredDiscoveryFeeds[filterKey] = feed
+        return feed
+    }
+
+    private func currentFilterSnapshot() -> DiscoveryFilterPreferencesSnapshot {
+        filterPreferences?.snapshot() ?? DiscoveryFilterPreferencesSnapshot()
     }
 }
 

@@ -30,6 +30,12 @@ public protocol DiscoveryFeedProviding: Sendable {
     ) async throws -> DiscoveryFeedPage
 }
 
+/// App 的混合推荐允许头像兜底；Finder 图片根目录只接受真实照片记录。
+public enum DiscoveryFeedContentScope: Sendable {
+    case mixed
+    case photos
+}
+
 /// 推荐页参数不合法或冻结快照已经被历史窗口淘汰。
 public enum DiscoveryFeedError: Error, LocalizedError, Equatable, Sendable {
     case invalidPage
@@ -53,6 +59,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     private let networkTimeout: Duration
     private let now: @Sendable () -> Date
     private let catalogKey: @Sendable () async -> String
+    private let contentScope: DiscoveryFeedContentScope
     private let snapshotMutationNotifier: DiscoveryFeedSnapshotMutationNotifier?
     private var inFlightPages: [DiscoveryFeedRequestKey: Task<DiscoveryFeedPage, Error>] = [:]
 
@@ -63,6 +70,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
         catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
+        contentScope: DiscoveryFeedContentScope = .mixed,
         snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
         snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) {
@@ -72,6 +80,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         self.networkTimeout = networkTimeout
         self.now = now
         self.catalogKey = catalogKey
+        self.contentScope = contentScope
         self.snapshotMutationNotifier = snapshotDidChange.map {
             DiscoveryFeedSnapshotMutationNotifier(
                 signal: $0,
@@ -87,6 +96,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         networkTimeout: Duration = .seconds(6),
         now: @escaping @Sendable () -> Date = Date.init,
         catalogKey: @escaping @Sendable () async -> String = { DiscoveryRecommendation.catalogKey },
+        contentScope: DiscoveryFeedContentScope = .mixed,
         snapshotDidChange: (@Sendable () async throws -> Void)? = nil,
         snapshotNotificationRetryDelay: Duration = .seconds(1)
     ) throws {
@@ -96,6 +106,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         self.networkTimeout = networkTimeout
         self.now = now
         self.catalogKey = catalogKey
+        self.contentScope = contentScope
         self.snapshotMutationNotifier = snapshotDidChange.map {
             DiscoveryFeedSnapshotMutationNotifier(
                 signal: $0,
@@ -270,8 +281,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         }
     }
 
-    /// 网络页必须在调用方预算内完成；失败时生成同页唯一的本地头像元数据。
-    /// 游标决定「向哪个关键词的第几页」抓取；逻辑页只用于本地兜底的稳定 seed 区间。
+    /// 网络页必须在调用方预算内完成；只有混合推荐允许用头像补齐或兜底。
+    /// 游标决定「向哪个关键词的第几页」抓取；逻辑页只用于混合流的稳定 seed 区间。
     private func loadPage(
         at cursor: DiscoveryRemoteCursor,
         logicalPage: Int,
@@ -280,6 +291,9 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     ) async throws -> LoadedDiscoveryPage {
         let catalog = DiscoveryRecommendation.queries
         guard catalog.indices.contains(cursor.queryIndex), cursor.remotePage >= 1 else {
+            guard contentScope == .mixed else {
+                throw DiscoveryFeedError.snapshotExpired
+            }
             // 目录跨版本收缩或游标损坏：用兜底头像收满本页并终结推荐流，而不是崩溃或重放。
             let records = await fallbackRecords(
                 page: logicalPage,
@@ -291,7 +305,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         do {
             let response = try await Self.searchWithTimeout(
                 service: service,
-                query: catalog[cursor.queryIndex],
+                query: serviceQuery(for: catalog[cursor.queryIndex]),
                 cursor: cursor,
                 pageSize: pageSize,
                 timeout: networkTimeout
@@ -303,18 +317,22 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
                 pageSize: pageSize,
                 excluding: existingIDs
             )
-            return LoadedDiscoveryPage(
-                records: records,
-                nextCursor: Self.advancedCursor(
+            let nextCursor = contentScope == .photos && records.count < pageSize
+                ? nil
+                : Self.advancedCursor(
                     after: cursor,
                     nextImageCursor: response.nextCursor,
                     catalogCount: catalog.count
-                ),
+                )
+            return LoadedDiscoveryPage(
+                records: records,
+                nextCursor: nextCursor,
                 source: .network
             )
         } catch is CancellationError {
             throw CancellationError()
-        } catch {
+        } catch let error {
+            guard contentScope == .mixed else { throw error }
             // 远端失败只影响本逻辑页：兜底头像保持流动，远端位置不被消费，下一页原地重试。
             let records = await fallbackRecords(
                 page: logicalPage,
@@ -357,8 +375,13 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
         excluding existingIDs: Set<String>
     ) async -> [RemoteImageRecord] {
         var seen = existingIDs
-        var records = candidates.filter { seen.insert($0.id).inserted }
+        var records = candidates.filter {
+            let isAllowed = contentScope == .mixed
+                || (!$0.source.isAvatarSource && $0.source != .giphy)
+            return isAllowed && seen.insert($0.id).inserted
+        }
         guard records.count < pageSize else { return Array(records.prefix(pageSize)) }
+        guard contentScope == .mixed else { return records }
         let fillers = await fallbackRecords(
             page: page,
             pageSize: pageSize,
@@ -368,6 +391,11 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             records.append(record)
         }
         return records
+    }
+
+    /// 显式图片前缀使统一搜索服务跳过 automatic 分支，根目录不会混入头像补位。
+    private func serviceQuery(for query: String) -> String {
+        contentScope == .photos ? "图片:\(query)" : query
     }
 
     /// 本地兜底根据绝对页偏移生成稳定且跨页不重复的头像记录。

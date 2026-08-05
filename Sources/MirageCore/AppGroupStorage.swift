@@ -246,6 +246,17 @@ public enum AppGroupStorageError: Error, LocalizedError, Sendable {
     }
 }
 
+public enum FavoriteStorageError: Error, LocalizedError, Equatable, Sendable {
+    case missingGiphyIdentifier
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingGiphyIdentifier:
+            return "该 GIPHY 内容缺少可安全保存的对象标识，请刷新后重试。"
+        }
+    }
+}
+
 /// Finder 持有的推荐 generation 已被历史窗口淘汰，需要从第一页重新枚举。
 public enum DiscoveryFeedStorageError: Error, Equatable, Sendable {
     case snapshotExpired
@@ -262,6 +273,8 @@ public enum DiscoveryFeedCommitResult: Equatable, Sendable {
 /// App 与扩展共享的文件存储。Actor 保护实例内并发，路径锁与 fcntl 保护跨进程事务。
 public actor AppGroupStorage {
     public static let appGroupIdentifier = "N4TQ2P9B46.group.com.wenren.Mirage"
+    public static let maximumAvatarSnapshotBytes = 2 * 1024 * 1024
+    public static let maximumAvatarSnapshotCount = 256
 
     private let fileManager: FileManager
     private let baseURL: URL
@@ -271,6 +284,7 @@ public actor AppGroupStorage {
     private let discoveryItemsURL: URL
     private let discoverySnapshotsURL: URL
     private let discoveryPagesURL: URL
+    private let avatarSnapshotsURL: URL
     private let favoritesURL: URL
     private let discoverySnapshotURL: URL
     private let discoveryGenerationStateURL: URL
@@ -282,7 +296,8 @@ public actor AppGroupStorage {
     // v4 引入发布纪元，域重建后拒绝仍在异步构造中的旧发布任务回填已清空 scope。
     private static let providerSchemaVersion = 4
     private static let providerDiscoveryScopePrefix = "discovery:v3:"
-    private static let favoritesSchemaVersion = 1
+    // v2 的 GIPHY 收藏只持久化对象 ID 和内部引用，不落盘任何 GIPHY 媒体 URL。
+    private static let favoritesSchemaVersion = 2
     private static let searchBackingSchemaVersion = 1
     private static let discoveryGenerationSchemaVersion = 1
     private static let discoverySnapshotHistoryLimit = 8
@@ -315,6 +330,10 @@ public actor AppGroupStorage {
             "discovery-pages",
             isDirectory: true
         )
+        self.avatarSnapshotsURL = canonicalURL.appendingPathComponent(
+            "avatar-snapshots",
+            isDirectory: true
+        )
         self.favoritesURL = canonicalURL.appendingPathComponent("favorites.json")
         self.discoverySnapshotURL = canonicalURL.appendingPathComponent("discovery-feed.json")
         self.discoveryGenerationStateURL = canonicalURL.appendingPathComponent(
@@ -329,7 +348,42 @@ public actor AppGroupStorage {
         try fileManager.createDirectory(at: discoveryItemsURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: discoverySnapshotsURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: discoveryPagesURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: avatarSnapshotsURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: lockDirectoryURL, withIntermediateDirectories: true)
+    }
+
+    /// 读取由动态头像来源冻结的标准 PNG；文件键只能是内部生成的 SHA-256。
+    public func readAvatarSnapshot(
+        key: String,
+        maximumBytes: Int = AppGroupStorage.maximumAvatarSnapshotBytes
+    ) throws -> Data? {
+        guard maximumBytes > 0 else {
+            throw AvatarSnapshotStorageError.dataTooLarge(
+                actualBytes: 0,
+                maximumBytes: maximumBytes
+            )
+        }
+        return try readAvatarSnapshotUnlocked(key: key, maximumBytes: maximumBytes)
+    }
+
+    /// 跨进程只提交第一份成功内容；竞速输家读取胜者字节，确保同一记录不会换脸。
+    @discardableResult
+    public func commitAvatarSnapshotIfAbsent(
+        _ data: Data,
+        key: String
+    ) throws -> Data {
+        try validateAvatarSnapshot(data, key: key)
+        return try withExclusiveFileLock(named: "avatar-snapshots") {
+            if let existing = try readAvatarSnapshotUnlocked(
+                key: key,
+                maximumBytes: Self.maximumAvatarSnapshotBytes
+            ) {
+                return existing
+            }
+            try data.write(to: try avatarSnapshotURL(key: key), options: .atomic)
+            try pruneAvatarSnapshotsUnlocked()
+            return data
+        }
     }
 
     /// 将一个条目的元数据写进独立 JSON，避免修改共享大文件。
@@ -797,11 +851,14 @@ public actor AppGroupStorage {
             for id in uniqueIDs where recordsByID[id] == nil {
                 recordsByID[id] = try readItem(id: id)
             }
-            let snapshot = FavoriteSnapshot(
+            let snapshot = Self.normalizedFavoriteSnapshot(FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
                 recordIDs: uniqueIDs,
                 records: uniqueIDs.compactMap { recordsByID[$0] }
-            )
+            ))
+            for record in snapshot.records where record.source == .giphy {
+                try writeItem(record)
+            }
             try writeFavoriteSnapshotUnlocked(snapshot)
         }
     }
@@ -843,9 +900,12 @@ public actor AppGroupStorage {
                 ids.remove(at: existingIndex)
                 recordsByID.removeValue(forKey: item.id)
             } else {
+                guard let persistedItem = item.persistentFavoriteRecord() else {
+                    throw FavoriteStorageError.missingGiphyIdentifier
+                }
                 ids.append(item.id)
-                recordsByID[item.id] = item
-                try writeItem(item)
+                recordsByID[item.id] = persistedItem
+                try writeItem(persistedItem)
             }
             let snapshot = FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
@@ -1250,10 +1310,23 @@ public actor AppGroupStorage {
         let currentError: Error
         do {
             let snapshot = try decode(FavoriteSnapshot.self, from: data)
-            guard snapshot.schemaVersion == Self.favoritesSchemaVersion else {
+            guard snapshot.schemaVersion == 1
+                    || snapshot.schemaVersion == Self.favoritesSchemaVersion else {
                 throw StorageSnapshotValidationError.unsupportedSchema
             }
-            return snapshot
+            if snapshot.schemaVersion == 1 {
+                try removeLegacyGiphyItemsUnlocked()
+            }
+            let normalized = Self.normalizedFavoriteSnapshot(snapshot)
+            if snapshot.schemaVersion != normalized.schemaVersion
+                || snapshot.recordIDs != normalized.recordIDs
+                || snapshot.records != normalized.records {
+                try writeFavoriteSnapshotUnlocked(normalized)
+                for record in normalized.records where record.source == .giphy {
+                    try writeItem(record)
+                }
+            }
+            return normalized
         } catch {
             currentError = error
         }
@@ -1261,12 +1334,16 @@ public actor AppGroupStorage {
         do {
             let legacyIDs = Self.uniqueIDs(try decode([String].self, from: data))
             let records = try legacyIDs.compactMap { try readItem(id: $0) }
-            let migrated = FavoriteSnapshot(
+            try removeLegacyGiphyItemsUnlocked()
+            let migrated = Self.normalizedFavoriteSnapshot(FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
                 recordIDs: legacyIDs,
                 records: records
-            )
+            ))
             try writeFavoriteSnapshotUnlocked(migrated)
+            for record in migrated.records where record.source == .giphy {
+                try writeItem(record)
+            }
             return migrated
         } catch {
             throw currentError
@@ -1276,6 +1353,40 @@ public actor AppGroupStorage {
     /// 原子替换收藏快照；调用方必须已经持有 favorites 锁。
     private func writeFavoriteSnapshotUnlocked(_ snapshot: FavoriteSnapshot) throws {
         try encode(snapshot).write(to: favoritesURL, options: .atomic)
+    }
+
+    /// 无法恢复 GIPHY 对象 ID 的旧记录必须从收藏索引移除，避免继续保存历史媒体 URL。
+    private static func normalizedFavoriteSnapshot(
+        _ snapshot: FavoriteSnapshot
+    ) -> FavoriteSnapshot {
+        let recordsByID = Self.recordsByID(snapshot.records)
+        var normalizedIDs: [String] = []
+        var normalizedRecords: [RemoteImageRecord] = []
+        for id in Self.uniqueIDs(snapshot.recordIDs) {
+            guard let record = recordsByID[id],
+                  let persistedRecord = record.persistentFavoriteRecord() else {
+                continue
+            }
+            normalizedIDs.append(id)
+            normalizedRecords.append(persistedRecord)
+        }
+        return FavoriteSnapshot(
+            schemaVersion: Self.favoritesSchemaVersion,
+            recordIDs: normalizedIDs,
+            records: normalizedRecords
+        )
+    }
+
+    /// v1 曾把 GIPHY 完整记录写入通用 items；升级时一次性删除其中的历史媒体 URL。
+    private func removeLegacyGiphyItemsUnlocked() throws {
+        for url in try jsonFiles(in: itemsURL) {
+            guard let data = try? Data(contentsOf: url),
+                  let record = try? decode(RemoteImageRecord.self, from: data),
+                  record.source == .giphy else {
+                continue
+            }
+            try fileManager.removeItem(at: url)
+        }
     }
 
     /// 按首次出现去重，保持 Finder 与主 App 已经观察到的稳定顺序。
@@ -1603,6 +1714,82 @@ public actor AppGroupStorage {
         lock.l_len = 0
         while Darwin.fcntl(descriptor, F_SETLK, &lock) == -1, errno == EINTR {}
         _ = Darwin.close(descriptor)
+    }
+
+    private func readAvatarSnapshotUnlocked(
+        key: String,
+        maximumBytes: Int
+    ) throws -> Data? {
+        let url = try avatarSnapshotURL(key: key)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        let expectedSize = values.fileSize ?? 0
+        guard expectedSize <= maximumBytes else {
+            throw AvatarSnapshotStorageError.dataTooLarge(
+                actualBytes: expectedSize,
+                maximumBytes: maximumBytes
+            )
+        }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        try validateAvatarSnapshot(data, key: key, maximumBytes: maximumBytes)
+        return data
+    }
+
+    private func validateAvatarSnapshot(
+        _ data: Data,
+        key: String,
+        maximumBytes: Int = AppGroupStorage.maximumAvatarSnapshotBytes
+    ) throws {
+        guard AvatarSnapshotReference(key: key) != nil else {
+            throw AvatarSnapshotStorageError.invalidKey
+        }
+        guard data.count <= maximumBytes else {
+            throw AvatarSnapshotStorageError.dataTooLarge(
+                actualBytes: data.count,
+                maximumBytes: maximumBytes
+            )
+        }
+        let signature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        let endChunk: [UInt8] = [
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+            0xAE, 0x42, 0x60, 0x82
+        ]
+        guard data.starts(with: signature), data.suffix(endChunk.count) == Data(endChunk) else {
+            throw AvatarSnapshotStorageError.invalidPNG
+        }
+    }
+
+    private func avatarSnapshotURL(key: String) throws -> URL {
+        guard let reference = AvatarSnapshotReference(key: key) else {
+            throw AvatarSnapshotStorageError.invalidKey
+        }
+        return avatarSnapshotsURL.appendingPathComponent("\(reference.key).png", isDirectory: false)
+    }
+
+    /// 动态人像不进入长期收藏；保留最近 256 份即可覆盖推荐快照、Finder 页面与最近使用。
+    private func pruneAvatarSnapshotsUnlocked() throws {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
+        let files = try fileManager.contentsOfDirectory(
+            at: avatarSnapshotsURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ).filter { url in
+            guard url.pathExtension == "png",
+                  let values = try? url.resourceValues(forKeys: keys) else { return false }
+            return values.isRegularFile == true
+        }
+        guard files.count > Self.maximumAvatarSnapshotCount else { return }
+        let newestFirst = files.sorted { left, right in
+            let leftDate = (try? left.resourceValues(forKeys: keys).contentModificationDate)
+                ?? .distantPast
+            let rightDate = (try? right.resourceValues(forKeys: keys).contentModificationDate)
+                ?? .distantPast
+            if leftDate == rightDate { return left.lastPathComponent < right.lastPathComponent }
+            return leftDate > rightDate
+        }
+        for url in newestFirst.dropFirst(Self.maximumAvatarSnapshotCount) {
+            try fileManager.removeItem(at: url)
+        }
     }
 
     /// 把当前 errno 转为 Foundation 可传播的类型化错误。

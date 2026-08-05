@@ -8,6 +8,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var favorites: [RemoteImageRecord] = []
     @Published private(set) var recent: [RecentImageRecord] = []
     @Published private(set) var favoriteIDs: Set<String> = []
+    @Published private(set) var isRefreshingGiphyFavorites = false
+    @Published private(set) var unresolvedGiphyFavoriteCount = 0
     @Published private(set) var libraryAvailability: LibraryAvailability = .preparing
     @Published private(set) var providerState: ProviderState = .checking
     @Published var libraryNotice: String?
@@ -20,28 +22,53 @@ final class AppModel: ObservableObject {
         }
     )
     private let photoEnvironment: PhotoSearchEnvironment
-    private let domainManager = MirageDomainManager()
+    private let domainManager: MirageDomainManager
     private var storage: AppGroupStorage?
     private var startupTask: Task<Void, Never>?
     private var providerCheckTask: Task<Void, Never>?
     private var latestLibraryRevision: UInt64 = 0
+    private var persistedFavorites: [RemoteImageRecord] = []
+    private var liveGiphyFavoritesByID: [String: RemoteImageRecord] = [:]
 
     init(
         photoEnvironment: PhotoSearchEnvironment = .production(),
+        avatarTypeSelectionStore: AvatarTypeSelectionStore = .standard,
+        giphyContentTypeSelectionStore: GiphyContentTypeSelectionStore = .standard,
         photoSourceSelectionStore: PhotoSourceFilterSelectionStore = .standard
     ) {
+        let appAvatarProvider = AvatarCatalogClient(includesPicrewDiscovery: true)
+        let domainManager = MirageDomainManager()
         self.photoEnvironment = photoEnvironment
+        self.domainManager = domainManager
         self.searchModel = SearchModel(
-            service: photoEnvironment.imageSearchService(for: .app),
+            service: photoEnvironment.imageSearchService(
+                for: .app,
+                diceBear: appAvatarProvider
+            ),
             photoSearchService: { selectedSourceID in
                 photoEnvironment.imageSearchService(
                     for: .app,
-                    selectedSourceID: selectedSourceID
+                    selectedSourceID: selectedSourceID,
+                    diceBear: appAvatarProvider
                 )
+            },
+            initialAvatarTypeSelection: avatarTypeSelectionStore.load(),
+            avatarTypeSelectionDidChange: { selection in
+                avatarTypeSelectionStore.save(selection)
+                Task {
+                    try? await domainManager.signalAvatarFilterChanged()
+                }
+            },
+            initialGiphyContentTypeSelection: giphyContentTypeSelectionStore.load(),
+            giphyContentTypeSelectionDidChange: { selection in
+                giphyContentTypeSelectionStore.save(selection)
             },
             initialPhotoSourceSelection: photoSourceSelectionStore.load(),
             photoSourceSelectionDidChange: { selection in
                 photoSourceSelectionStore.save(selection)
+                Task {
+                    try? await domainManager.signalPhotoFilterChanged()
+                }
             },
             waitsForRecommendationFeed: true
         )
@@ -78,6 +105,7 @@ final class AppModel: ObservableObject {
             let snapshot = try await storage.readLibrarySnapshot()
             try Task.checkCancellation()
             applyLibrarySnapshot(snapshot)
+            await refreshGiphyFavorites(for: snapshot)
         } catch is CancellationError {
             return
         } catch {
@@ -92,6 +120,14 @@ final class AppModel: ObservableObject {
             libraryNotice = "\(record.source.displayName) 当前仅支持临时搜索预览，请从来源页打开并下载图片。"
             return
         }
+        let normalizedGiphyID = record.giphyID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if record.source == .giphy,
+           !isRemovingExistingFavorite,
+           normalizedGiphyID?.isEmpty != false {
+            libraryNotice = "该 GIPHY 内容缺少可安全保存的对象标识，请刷新后重试。"
+            return
+        }
         guard let storage else {
             switch libraryAvailability {
             case .preparing, .ready:
@@ -100,6 +136,10 @@ final class AppModel: ObservableObject {
                 libraryNotice = "收藏不可用：\(message)"
             }
             return
+        }
+        let previousLiveGiphyRecord = liveGiphyFavoritesByID[record.id]
+        if record.source == .giphy, !isRemovingExistingFavorite {
+            liveGiphyFavoritesByID[record.id] = record
         }
         do {
             let snapshot: LibrarySnapshot
@@ -115,6 +155,11 @@ final class AppModel: ObservableObject {
                 libraryNotice = "收藏已保存，但文件面板暂未刷新：\(error.localizedDescription)"
             }
         } catch {
+            if let previousLiveGiphyRecord {
+                liveGiphyFavoritesByID[record.id] = previousLiveGiphyRecord
+            } else {
+                liveGiphyFavoritesByID.removeValue(forKey: record.id)
+            }
             libraryNotice = "无法更新收藏：\(error.localizedDescription)"
         }
     }
@@ -123,9 +168,75 @@ final class AppModel: ObservableObject {
     private func applyLibrarySnapshot(_ snapshot: LibrarySnapshot) {
         guard snapshot.revision > latestLibraryRevision else { return }
         latestLibraryRevision = snapshot.revision
+        persistedFavorites = snapshot.favorites
         favoriteIDs = snapshot.favoriteIDs
-        favorites = snapshot.favorites
+        liveGiphyFavoritesByID = liveGiphyFavoritesByID.filter {
+            snapshot.favoriteIDs.contains($0.key)
+        }
+        rebuildFavoritePresentation()
         recent = snapshot.recent
+    }
+
+    /// GIPHY 收藏快照只有对象 ID；媒体 URL 每次启动通过官方批量接口临时恢复。
+    private func refreshGiphyFavorites(for snapshot: LibrarySnapshot) async {
+        let allReferences = snapshot.favorites.filter { $0.source == .giphy }
+        let references = allReferences.filter { liveGiphyFavoritesByID[$0.id] == nil }
+        guard !allReferences.isEmpty else {
+            isRefreshingGiphyFavorites = false
+            unresolvedGiphyFavoriteCount = 0
+            return
+        }
+        guard !references.isEmpty else {
+            isRefreshingGiphyFavorites = false
+            rebuildFavoritePresentation()
+            return
+        }
+        let requestedRevision = snapshot.revision
+        let ids = references.compactMap(\.giphyID)
+        guard ids.count == references.count else {
+            isRefreshingGiphyFavorites = false
+            unresolvedGiphyFavoriteCount = references.count
+            return
+        }
+
+        isRefreshingGiphyFavorites = true
+        defer {
+            if latestLibraryRevision == requestedRevision {
+                isRefreshingGiphyFavorites = false
+            }
+        }
+        do {
+            let records = try await photoEnvironment.giphyFavoriteRecords(ids: ids)
+            try Task.checkCancellation()
+            guard latestLibraryRevision == requestedRevision else { return }
+            let requestedIDs = Set(references.map(\.id))
+            for record in records where requestedIDs.contains(record.id) {
+                liveGiphyFavoritesByID[record.id] = record
+            }
+            rebuildFavoritePresentation()
+            if unresolvedGiphyFavoriteCount > 0 {
+                libraryNotice = "有 \(unresolvedGiphyFavoriteCount) 项 GIPHY 收藏已不可用或被下架。"
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard latestLibraryRevision == requestedRevision else { return }
+            rebuildFavoritePresentation()
+            libraryNotice = "GIPHY 收藏暂时无法加载：\(error.localizedDescription)"
+        }
+    }
+
+    /// 普通来源直接展示持久记录；GIPHY 内部引用只有成功实时回查后才进入可见网格。
+    private func rebuildFavoritePresentation() {
+        favorites = persistedFavorites.compactMap { record in
+            guard record.source == .giphy else { return record }
+            return liveGiphyFavoritesByID[record.id]
+        }
+        unresolvedGiphyFavoriteCount = persistedFavorites.reduce(into: 0) { count, record in
+            guard record.source == .giphy,
+                  liveGiphyFavoritesByID[record.id] == nil else { return }
+            count += 1
+        }
     }
 
     /// 初始化共享 App Group 存储，并加载已有收藏和最近使用。

@@ -27,7 +27,7 @@ struct GridPagination {
     }
 }
 
-/// 收藏与搜索共用的自适应网格，最近使用通过独立只读包装调用。
+/// 收藏与搜索共用的自适应网格，最近使用通过独立包装调用。
 struct LibraryGridView: View {
     let title: String?
     let records: [RemoteImageRecord]
@@ -142,6 +142,108 @@ struct LibraryGridView: View {
     }
 }
 
+/// 收藏页把 GIPHY 放在独立网格并展示归属，避免与其他供应商内容混排。
+struct FavoritesGridView: View {
+    let records: [RemoteImageRecord]
+    let favoriteIDs: Set<String>
+    let isRefreshingGiphy: Bool
+    let unresolvedGiphyCount: Int
+    let onToggleFavorite: (RemoteImageRecord) -> Void
+    var onShowDetails: (RemoteImageRecord) -> Void = { _ in }
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 160, maximum: 230), spacing: 18)
+    ]
+
+    private var regularRecords: [RemoteImageRecord] {
+        records.filter { $0.source != .giphy }
+    }
+
+    private var giphyRecords: [RemoteImageRecord] {
+        records.filter { $0.source == .giphy }
+    }
+
+    var body: some View {
+        Group {
+            if favoriteIDs.isEmpty {
+                ContentUnavailableView(
+                    "还没有收藏",
+                    systemImage: "photo.stack",
+                    description: Text(
+                        "在发现页或最近使用中点按心形按钮；支持 Finder 的来源也会显示在文件面板。"
+                    )
+                )
+            } else if records.isEmpty, isRefreshingGiphy {
+                ProgressView("正在恢复 GIPHY 收藏…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if records.isEmpty, unresolvedGiphyCount > 0 {
+                ContentUnavailableView(
+                    "GIPHY 收藏暂时不可用",
+                    systemImage: "heart.slash",
+                    description: Text("请检查 GIPHY API Key 或网络连接后重试。")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        if !regularRecords.isEmpty {
+                            if !giphyRecords.isEmpty || unresolvedGiphyCount > 0 {
+                                sectionTitle("图片与头像")
+                            }
+                            favoriteGrid(records: regularRecords)
+                        }
+
+                        if !giphyRecords.isEmpty || unresolvedGiphyCount > 0 {
+                            if !regularRecords.isEmpty { Divider() }
+                            HStack {
+                                sectionTitle("GIPHY 收藏")
+                                Spacer(minLength: 12)
+                                GiphyAttributionLink()
+                            }
+                            if !giphyRecords.isEmpty {
+                                favoriteGrid(records: giphyRecords)
+                            }
+                            if isRefreshingGiphy {
+                                ProgressView("正在恢复其余 GIPHY 收藏…")
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.vertical, 8)
+                            } else if unresolvedGiphyCount > 0 {
+                                Label(
+                                    "有 \(unresolvedGiphyCount) 项暂时无法加载",
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+        }
+        .navigationTitle("收藏")
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func favoriteGrid(records: [RemoteImageRecord]) -> some View {
+        LazyVGrid(columns: columns, spacing: 20) {
+            ForEach(records) { record in
+                ImageCard(
+                    record: record,
+                    isFavorite: true,
+                    allowsFavoriteChanges: true,
+                    onToggleFavorite: { onToggleFavorite(record) },
+                    onShowDetails: { onShowDetails(record) }
+                )
+            }
+        }
+    }
+}
+
 /// 首尾标识与数量共同区分结果会话和新页面，避免旧尾部任务误触发新条件的分页。
 private struct AutomaticPaginationTailTaskID: Hashable {
     let firstID: String
@@ -164,10 +266,12 @@ private struct AutomaticPaginationTailModifier: ViewModifier {
     }
 }
 
-/// 最近使用只展示扩展记录，不允许在这个视图中改变任何资料库状态。
+/// 最近使用保留扩展写入的时间，同时允许用户直接收藏或取消收藏任意记录。
 struct RecentGridView: View {
     let records: [RecentImageRecord]
     let favoriteIDs: Set<String>
+    let allowsFavoriteChanges: Bool
+    let onToggleFavorite: (RemoteImageRecord) -> Void
     /// 详情交给窗口级检查器统一呈现。
     var onShowDetails: (RemoteImageRecord) -> Void = { _ in }
 
@@ -191,8 +295,8 @@ struct RecentGridView: View {
                                 ImageCard(
                                     record: recent.image,
                                     isFavorite: favoriteIDs.contains(recent.id),
-                                    allowsFavoriteChanges: false,
-                                    onToggleFavorite: {},
+                                    allowsFavoriteChanges: allowsFavoriteChanges,
+                                    onToggleFavorite: { onToggleFavorite(recent.image) },
                                     onShowDetails: { onShowDetails(recent.image) }
                                 )
                                 Text(recent.accessedAt, format: .relative(presentation: .named))

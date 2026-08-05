@@ -1,5 +1,32 @@
 import Foundation
 
+/// GIPHY 独立页面可多选的三种内容；rawValue 同时对应 API 对象的 `type` 字段。
+public enum GiphyContentType: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case emoji
+    case gif
+    case sticker
+
+    public var id: Self { self }
+
+    public var displayName: String {
+        switch self {
+        case .emoji: return "Emoji"
+        case .gif: return "GIF"
+        case .sticker: return "Sticker"
+        }
+    }
+}
+
+/// GIPHY 聚合目录可以在发请求前裁剪子流；普通来源仍只需实现 PhotoSourceSearching。
+public protocol GiphyCatalogSearching: PhotoSourceSearching {
+    func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int,
+        contentTypes: Set<GiphyContentType>
+    ) async throws -> PhotoSourcePage
+}
+
 public enum GiphyCatalogError: Error, Equatable, Sendable {
     case invalidCursor
 }
@@ -20,7 +47,7 @@ extension GiphyCatalogError: PhotoSourceFailure {
 }
 
 /// 空查询混合浏览 GIPHY Emoji 与 Trending；关键词查询并行搜索 GIF 与 Sticker。
-public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
+public struct GiphyCatalogClient: GiphyCatalogSearching, Sendable {
     public static let emojiEndpoint = URL(string: "https://api.giphy.com/v2/emoji")!
     public static let gifTrendingEndpoint = URL(string: "https://api.giphy.com/v1/gifs/trending")!
     public static let stickerTrendingEndpoint = URL(string: "https://api.giphy.com/v1/stickers/trending")!
@@ -108,12 +135,32 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         cursor: PhotoSourceCursor?,
         pageSize: Int
     ) async throws -> PhotoSourcePage {
+        try await search(
+            query: query,
+            cursor: cursor,
+            pageSize: pageSize,
+            contentTypes: Set(GiphyContentType.allCases)
+        )
+    }
+
+    public func search(
+        query: String,
+        cursor: PhotoSourceCursor?,
+        pageSize: Int,
+        contentTypes: Set<GiphyContentType>
+    ) async throws -> PhotoSourcePage {
         try Task.checkCancellation()
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let mode = CatalogMode(query: normalizedQuery)
-        let feeds = mode == .browsing ? browsingFeeds : searchingFeeds
+        let supportedTypes = Set(GiphyContentType.allCases)
+        let selectedTypes = contentTypes.intersection(supportedTypes)
+        let effectiveTypes = selectedTypes.isEmpty ? supportedTypes : selectedTypes
+        let feeds = (mode == .browsing ? browsingFeeds : searchingFeeds).filter {
+            effectiveTypes.contains($0.kind.contentType)
+        }
+        let feedKinds = feeds.map(\.kind)
         let safePageSize = min(max(pageSize, 1), Self.maximumPageSize)
-        let current = try Self.cursorState(from: cursor, mode: mode)
+        let current = try Self.cursorState(from: cursor, mode: mode, feedKinds: feedKinds)
         let stateByKind = Dictionary(uniqueKeysWithValues: current.states.map { ($0.kind, $0) })
         let activeFeeds = feeds.filter { stateByKind[$0.kind]?.exhausted == false }
 
@@ -161,7 +208,9 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
                         throw GiphyCatalogError.invalidCursor
                     }
                     nextStates[stateIndex] = nextState
-                    visiblePages[kind] = Array(page.records.prefix(request.quota))
+                    visiblePages[kind] = page.records.prefix(request.quota).map {
+                        Self.record($0, taggedAs: kind.contentType)
+                    }
                     feedIssues.append(contentsOf: page.issues.map { Self.feedIssue(from: $0, feed: kind) })
                     successCount += 1
                 } catch is CancellationError {
@@ -197,7 +246,12 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
             guard !overflow, nextPage <= Self.maximumPage else {
                 throw GiphyCatalogError.invalidCursor
             }
-            nextCursor = try Self.encodedCursor(page: nextPage, states: nextStates, mode: mode)
+            nextCursor = try Self.encodedCursor(
+                page: nextPage,
+                states: nextStates,
+                mode: mode,
+                feedKinds: feedKinds
+            )
         } else {
             nextCursor = nil
         }
@@ -266,15 +320,40 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
         return records
     }
 
+    /// API 对象的 type 在旧响应中可能只描述媒体容器；用户筛选以实际 endpoint 子流为准。
+    private static func record(
+        _ record: RemoteImageRecord,
+        taggedAs contentType: GiphyContentType
+    ) -> RemoteImageRecord {
+        guard record.source == .giphy, record.giphyContentType != contentType else { return record }
+        return RemoteImageRecord(
+            id: record.id,
+            title: record.title,
+            source: record.source,
+            avatarType: record.avatarType,
+            giphyContentType: contentType,
+            giphyID: record.giphyID,
+            imageURL: record.imageURL,
+            thumbnailURL: record.thumbnailURL,
+            sourcePageURL: record.sourcePageURL,
+            license: record.license,
+            creator: record.creator,
+            creatorURL: record.creatorURL,
+            width: record.width,
+            height: record.height,
+            mimeType: record.mimeType
+        )
+    }
+
     private static func cursorState(
         from cursor: PhotoSourceCursor?,
-        mode: CatalogMode
+        mode: CatalogMode,
+        feedKinds: [FeedKind]
     ) throws -> CatalogCursorState {
-        let expectedKinds = mode.feedKinds
         guard let cursor else {
             return CatalogCursorState(
                 page: 0,
-                states: expectedKinds.map {
+                states: feedKinds.map {
                     FeedCursorState(kind: $0, cursor: nil, exhausted: false)
                 }
             )
@@ -296,7 +375,7 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
             throw GiphyCatalogError.invalidCursor
         }
         guard (1...maximumPage).contains(wire.page),
-              wire.feeds.map(\.kind) == expectedKinds else {
+              wire.feeds.map(\.kind) == feedKinds else {
             throw GiphyCatalogError.invalidCursor
         }
 
@@ -319,10 +398,11 @@ public struct GiphyCatalogClient: PhotoSourceSearching, Sendable {
     private static func encodedCursor(
         page: Int,
         states: [FeedCursorState],
-        mode: CatalogMode
+        mode: CatalogMode,
+        feedKinds: [FeedKind]
     ) throws -> PhotoSourceCursor {
         guard (1...maximumPage).contains(page),
-              states.map(\.kind) == mode.feedKinds else {
+              states.map(\.kind) == feedKinds else {
             throw GiphyCatalogError.invalidCursor
         }
         for state in states {
@@ -524,13 +604,6 @@ private extension GiphyCatalogClient {
             }
         }
 
-        var feedKinds: [FeedKind] {
-            switch self {
-            case .browsing: return FeedKind.allCases
-            case .searching: return [.gifTrending, .stickerTrending]
-            }
-        }
-
         func maximumRequestOffset(for kind: FeedKind) -> Int {
             switch (self, kind) {
             case (.browsing, .emoji): return Int(Int32.max)
@@ -551,6 +624,14 @@ private extension GiphyCatalogClient {
             case .emoji: return "Emoji"
             case .gifTrending: return "GIF"
             case .stickerTrending: return "Sticker"
+            }
+        }
+
+        var contentType: GiphyContentType {
+            switch self {
+            case .emoji: return .emoji
+            case .gifTrending: return .gif
+            case .stickerTrending: return .sticker
             }
         }
 

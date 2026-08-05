@@ -108,6 +108,7 @@ enum ProviderIdentifiers {
         guard let page = Int(rawPage), String(page) == rawPage else { return nil }
         return AvatarPageReference(page: page)
     }
+
 }
 
 /// 远程图片在文件树中的呈现视图。

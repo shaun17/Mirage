@@ -15,8 +15,8 @@ public enum DiscoveryRecommendation {
     /// 单关键词场景（内容筛选与无共享存储时的网络兜底）仍使用目录首词。
     public static let query = queries[0]
 
-    /// v9 使旧的单供应商头像兜底快照失效；来源游标仍冻结上游批次大小与本地 offset。
-    public static let catalogKey = "mirage-recommendations-v9"
+    /// v10 使头像供应商与动态内容冻结策略变更前的推荐快照立即失效。
+    public static let catalogKey = "mirage-recommendations-v10"
 
     /// 网络失败时只把内部稳定种子交给头像目录，不发送到远端搜索服务。
     public static let fallbackSeed = "mirage-recommendations-fallback-v2"

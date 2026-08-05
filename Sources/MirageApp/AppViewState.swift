@@ -1,7 +1,7 @@
 import MirageCore
 import Foundation
 
-/// 主窗口的三个固定内容区；不会映射成额外的 File Provider 文件夹。
+/// 主窗口的三个固定内容区；GIF 是发现页中的独立 App 内容类型。
 enum AppSection: String, CaseIterable, Identifiable {
     case discover
     case favorites
@@ -61,6 +61,144 @@ enum SearchFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// 头像筛选保存内容类型集合；空集合会归一化为全部，保证任何时刻至少选中一项。
+struct AvatarTypeSelection: Equatable, Sendable {
+    private static let supportedTypes = Set(AvatarType.allCases)
+
+    static let all = AvatarTypeSelection(types: supportedTypes)
+
+    private(set) var types: Set<AvatarType>
+
+    init(types: Set<AvatarType>) {
+        let validTypes = types.intersection(Self.supportedTypes)
+        self.types = validTypes.isEmpty ? Self.supportedTypes : validTypes
+    }
+
+    init(persistedValues: [String]?) {
+        guard let persistedValues else {
+            self = .all
+            return
+        }
+        self.init(types: Set(persistedValues.compactMap(AvatarType.init(rawValue:))))
+    }
+
+    var persistedValues: [String] {
+        AvatarType.allCases.filter(types.contains).map(\.rawValue)
+    }
+
+    var count: Int { types.count }
+
+    func contains(_ type: AvatarType) -> Bool {
+        types.contains(type)
+    }
+
+    func toggling(_ type: AvatarType) -> AvatarTypeSelection {
+        var updatedTypes = types
+        if updatedTypes.contains(type) {
+            guard updatedTypes.count > 1 else { return self }
+            updatedTypes.remove(type)
+        } else {
+            updatedTypes.insert(type)
+        }
+        return AvatarTypeSelection(types: updatedTypes)
+    }
+}
+
+/// 头像筛选通过 App Group 与 Finder 共用；该薄适配器只负责 App 的值类型转换。
+@MainActor
+struct AvatarTypeSelectionStore {
+    private let preferences: DiscoveryFilterPreferencesStore
+
+    static let standard = AvatarTypeSelectionStore(
+        preferences: .production()
+    )
+
+    init(defaults: UserDefaults) {
+        preferences = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+    }
+
+    init(preferences: DiscoveryFilterPreferencesStore) {
+        self.preferences = preferences
+    }
+
+    func load() -> AvatarTypeSelection {
+        AvatarTypeSelection(types: preferences.snapshot().avatarTypes)
+    }
+
+    func save(_ selection: AvatarTypeSelection) {
+        preferences.setAvatarTypes(selection.types)
+    }
+}
+
+/// GIF 页面保存 Emoji、GIF、Sticker 的多选集合；空集合统一恢复为全部。
+struct GiphyContentTypeSelection: Equatable, Sendable {
+    private static let supportedTypes = Set(GiphyContentType.allCases)
+
+    static let all = GiphyContentTypeSelection(types: supportedTypes)
+
+    private(set) var types: Set<GiphyContentType>
+
+    init(types: Set<GiphyContentType>) {
+        let validTypes = types.intersection(Self.supportedTypes)
+        self.types = validTypes.isEmpty ? Self.supportedTypes : validTypes
+    }
+
+    init(persistedValues: [String]?) {
+        guard let persistedValues else {
+            self = .all
+            return
+        }
+        self.init(types: Set(persistedValues.compactMap(GiphyContentType.init(rawValue:))))
+    }
+
+    var persistedValues: [String] {
+        GiphyContentType.allCases.filter(types.contains).map(\.rawValue)
+    }
+
+    var count: Int { types.count }
+
+    func contains(_ type: GiphyContentType) -> Bool {
+        types.contains(type)
+    }
+
+    func toggling(_ type: GiphyContentType) -> GiphyContentTypeSelection {
+        var updatedTypes = types
+        if updatedTypes.contains(type) {
+            guard updatedTypes.count > 1 else { return self }
+            updatedTypes.remove(type)
+        } else {
+            updatedTypes.insert(type)
+        }
+        return GiphyContentTypeSelection(types: updatedTypes)
+    }
+}
+
+/// GIF 类型偏好写入共享筛选快照，供 App 页面跨页签和重启恢复。
+@MainActor
+struct GiphyContentTypeSelectionStore {
+    private let preferences: DiscoveryFilterPreferencesStore
+
+    static let standard = GiphyContentTypeSelectionStore(
+        preferences: .production()
+    )
+
+    init(defaults: UserDefaults) {
+        preferences = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+    }
+
+    init(preferences: DiscoveryFilterPreferencesStore) {
+        self.preferences = preferences
+    }
+
+    func load() -> GiphyContentTypeSelection {
+        GiphyContentTypeSelection(types: preferences.snapshot().giphyContentTypes)
+    }
+
+    func save(_ selection: GiphyContentTypeSelection) {
+        preferences.setGiphyContentTypes(selection.types)
+    }
+}
+
 /// 图片页来源筛选；`all` 表示聚合当前在 Mirage 中启用的全部图片服务商。
 enum PhotoSourceFilterSelection: Hashable, Identifiable, Sendable {
     case all
@@ -98,26 +236,29 @@ enum PhotoSourceFilterSelection: Hashable, Identifiable, Sendable {
     }
 }
 
-/// 来源按钮只属于主 App，使用标准 UserDefaults 保存，不写入 Finder 共用的服务商配置。
+/// 图片来源筛选写入 App Group，Finder 根目录据此选择同一数据范围。
 @MainActor
 struct PhotoSourceFilterSelectionStore {
-    private static let storageKey = "discover-photo-source-filter-v1"
-    private let defaults: UserDefaults
+    private let preferences: DiscoveryFilterPreferencesStore
 
-    static let standard = PhotoSourceFilterSelectionStore(defaults: .standard)
+    static let standard = PhotoSourceFilterSelectionStore(
+        preferences: .production()
+    )
 
     init(defaults: UserDefaults) {
-        self.defaults = defaults
+        preferences = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+    }
+
+    init(preferences: DiscoveryFilterPreferencesStore) {
+        self.preferences = preferences
     }
 
     func load() -> PhotoSourceFilterSelection {
-        PhotoSourceFilterSelection(
-            persistedValue: defaults.string(forKey: Self.storageKey)
-        )
+        preferences.snapshot().photoSourceID.map(PhotoSourceFilterSelection.source) ?? .all
     }
 
     func save(_ selection: PhotoSourceFilterSelection) {
-        defaults.set(selection.persistedValue, forKey: Self.storageKey)
+        preferences.setPhotoSourceID(selection.sourceID)
     }
 }
 

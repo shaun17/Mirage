@@ -66,7 +66,7 @@ final class QueryAndIdentifierTests: XCTestCase {
         let records = await DiceBearClient(styles: [.pixelArt], now: { Self.fixedNow })
             .avatars(query: "Private Name", count: 2)
         XCTAssertEqual(records.count, 2)
-        XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v12:pixel-art:") })
+        XCTAssertTrue(records.allSatisfy { $0.id.hasPrefix("db:v13:pixel-art:") })
         XCTAssertTrue(records.allSatisfy { $0.imageURL.path == "/10.x/pixel-art/png" })
         XCTAssertTrue(records.allSatisfy { !$0.imageURL.absoluteString.localizedCaseInsensitiveContains("Private") })
         XCTAssertTrue(records.allSatisfy { $0.width == 256 && $0.height == 256 })
@@ -83,7 +83,7 @@ final class QueryAndIdentifierTests: XCTestCase {
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(
             record.id,
-            "db:v12:pixel-art:2026-08-02:6c3ac86e5af04d9503e81d9448f126ae66f1b3cd3a732cde427eb7af2b32f285"
+            "db:v13:pixel-art:2026-08-02:6c3ac86e5af04d9503e81d9448f126ae66f1b3cd3a732cde427eb7af2b32f285"
         )
         XCTAssertEqual(StableImageID.diceBearGenerationDay(from: record.id)?.identifier, "2026-08-02")
         XCTAssertNil(
@@ -94,6 +94,11 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertNil(
             StableImageID.diceBearGenerationDay(
                 from: "db:v11:pixel-art:2026-08-02:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
+            )
+        )
+        XCTAssertNil(
+            StableImageID.diceBearGenerationDay(
+                from: "db:v12:pixel-art:2026-08-02:5f195348707c9fa3e4de12357db16055570e8d26013f53a5a99e4dbb9a044e23"
             )
         )
     }

@@ -249,3 +249,192 @@ public actor PhotoSourcePreferencesStore: PhotoSourcePreferencesReading {
         return fallback.map { [$0.id] } ?? []
     }
 }
+
+/// 发现页筛选使用同一份 App Group 快照；图片与头像供 File Provider 读取，GIF 仅由 App 使用。
+public struct DiscoveryFilterPreferencesSnapshot: Equatable, Sendable {
+    public let revision: UInt64
+    public let photoSourceID: PhotoSourceID?
+    public let avatarTypes: Set<AvatarType>
+    public let giphyContentTypes: Set<GiphyContentType>
+
+    public init(
+        revision: UInt64 = 1,
+        photoSourceID: PhotoSourceID? = nil,
+        avatarTypes: Set<AvatarType> = Set(AvatarType.allCases),
+        giphyContentTypes: Set<GiphyContentType> = Set(GiphyContentType.allCases)
+    ) {
+        self.revision = max(revision, 1)
+        self.photoSourceID = Self.normalizedPhotoSourceID(photoSourceID)
+        self.avatarTypes = Self.nonempty(
+            avatarTypes.intersection(AvatarType.allCases)
+        )
+        self.giphyContentTypes = Self.nonempty(
+            giphyContentTypes.intersection(GiphyContentType.allCases)
+        )
+    }
+
+    /// 图片推荐快照只随图片来源选择变化，头像和 GIF 筛选不会无意义地换代。
+    public var photoCatalogKey: String {
+        "discover-photo-filter-v1:\(photoSourceID?.rawValue ?? "all")"
+    }
+
+    /// 头像目录缓存按有序类型集合隔离，切换后不会复用上一个范围的 occurrence。
+    public var avatarCatalogKey: String {
+        let values = AvatarType.allCases.filter(avatarTypes.contains).map(\.rawValue)
+        return "discover-avatar-filter-v1:\(values.joined(separator: ","))"
+    }
+
+    private static func normalizedPhotoSourceID(_ sourceID: PhotoSourceID?) -> PhotoSourceID? {
+        guard let sourceID,
+              let descriptor = PhotoSourceRegistry.descriptor(for: sourceID),
+              descriptor.availability == .available,
+              descriptor.supportsAggregatedSearch(on: .app, purpose: .interactive) else {
+            return nil
+        }
+        return sourceID
+    }
+
+    private static func nonempty<T: Hashable & CaseIterable>(_ values: Set<T>) -> Set<T>
+    where T.AllCases: Collection, T.AllCases.Element == T {
+        values.isEmpty ? Set(T.allCases) : values
+    }
+}
+
+/// 非敏感发现页偏好按独立 key 写入共享 defaults；API Key 仍只保存在凭据存储中。
+public final class DiscoveryFilterPreferencesStore: @unchecked Sendable {
+    private static let revisionKey = "discover-filter-preferences-revision-v1"
+    private static let photoSourceKey = "discover-photo-source-filter-v1"
+    private static let avatarTypesKey = "discover-avatar-type-filter-v1"
+    private static let giphyContentTypesKey = "discover-giphy-content-type-filter-v1"
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+
+    public init(userDefaults: UserDefaults) {
+        defaults = userDefaults
+    }
+
+    /// 首次升级时只迁移共享容器中尚不存在的旧 App 偏好，之后 App Group 成为唯一来源。
+    public static func production(
+        legacyDefaults: UserDefaults = .standard
+    ) -> DiscoveryFilterPreferencesStore {
+        let shared = UserDefaults(suiteName: AppGroupStorage.appGroupIdentifier) ?? legacyDefaults
+        let store = DiscoveryFilterPreferencesStore(userDefaults: shared)
+        store.migrateMissingValues(from: legacyDefaults)
+        return store
+    }
+
+    public func snapshot() -> DiscoveryFilterPreferencesSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshotWithoutLock()
+    }
+
+    @discardableResult
+    public func setPhotoSourceID(_ sourceID: PhotoSourceID?) -> DiscoveryFilterPreferencesSnapshot {
+        mutate { current in
+            DiscoveryFilterPreferencesSnapshot(
+                revision: Self.nextRevision(after: current.revision),
+                photoSourceID: sourceID,
+                avatarTypes: current.avatarTypes,
+                giphyContentTypes: current.giphyContentTypes
+            )
+        }
+    }
+
+    @discardableResult
+    public func setAvatarTypes(_ types: Set<AvatarType>) -> DiscoveryFilterPreferencesSnapshot {
+        mutate { current in
+            DiscoveryFilterPreferencesSnapshot(
+                revision: Self.nextRevision(after: current.revision),
+                photoSourceID: current.photoSourceID,
+                avatarTypes: types,
+                giphyContentTypes: current.giphyContentTypes
+            )
+        }
+    }
+
+    @discardableResult
+    public func setGiphyContentTypes(
+        _ types: Set<GiphyContentType>
+    ) -> DiscoveryFilterPreferencesSnapshot {
+        mutate { current in
+            DiscoveryFilterPreferencesSnapshot(
+                revision: Self.nextRevision(after: current.revision),
+                photoSourceID: current.photoSourceID,
+                avatarTypes: current.avatarTypes,
+                giphyContentTypes: types
+            )
+        }
+    }
+
+    private func mutate(
+        _ update: (DiscoveryFilterPreferencesSnapshot) -> DiscoveryFilterPreferencesSnapshot
+    ) -> DiscoveryFilterPreferencesSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = snapshotWithoutLock()
+        let updated = update(current)
+        guard updated.photoSourceID != current.photoSourceID
+                || updated.avatarTypes != current.avatarTypes
+                || updated.giphyContentTypes != current.giphyContentTypes else {
+            return current
+        }
+        persistWithoutLock(updated)
+        return updated
+    }
+
+    private func snapshotWithoutLock() -> DiscoveryFilterPreferencesSnapshot {
+        let revision = defaults.string(forKey: Self.revisionKey).flatMap(UInt64.init) ?? 1
+        let photoSourceID = defaults.string(forKey: Self.photoSourceKey).flatMap(PhotoSourceID.init)
+        let avatarTypes = Set(
+            defaults.stringArray(forKey: Self.avatarTypesKey)?.compactMap(AvatarType.init) ?? []
+        )
+        let giphyContentTypes = Set(
+            defaults.stringArray(forKey: Self.giphyContentTypesKey)?
+                .compactMap(GiphyContentType.init) ?? []
+        )
+        return DiscoveryFilterPreferencesSnapshot(
+            revision: revision,
+            photoSourceID: photoSourceID,
+            avatarTypes: avatarTypes,
+            giphyContentTypes: giphyContentTypes
+        )
+    }
+
+    private func persistWithoutLock(_ snapshot: DiscoveryFilterPreferencesSnapshot) {
+        defaults.set(String(snapshot.revision), forKey: Self.revisionKey)
+        defaults.set(snapshot.photoSourceID?.rawValue ?? "all", forKey: Self.photoSourceKey)
+        defaults.set(
+            AvatarType.allCases.filter(snapshot.avatarTypes.contains).map(\.rawValue),
+            forKey: Self.avatarTypesKey
+        )
+        defaults.set(
+            GiphyContentType.allCases.filter(snapshot.giphyContentTypes.contains).map(\.rawValue),
+            forKey: Self.giphyContentTypesKey
+        )
+    }
+
+    private func migrateMissingValues(from legacyDefaults: UserDefaults) {
+        guard defaults !== legacyDefaults else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        let keys = [Self.photoSourceKey, Self.avatarTypesKey, Self.giphyContentTypesKey]
+        var migrated = false
+        for key in keys where defaults.object(forKey: key) == nil {
+            guard let value = legacyDefaults.object(forKey: key) else { continue }
+            defaults.set(value, forKey: key)
+            migrated = true
+        }
+        guard migrated else { return }
+        let current = snapshotWithoutLock()
+        defaults.set(
+            String(Self.nextRevision(after: current.revision)),
+            forKey: Self.revisionKey
+        )
+    }
+
+    private static func nextRevision(after revision: UInt64) -> UInt64 {
+        revision == .max ? 1 : revision + 1
+    }
+}

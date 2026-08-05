@@ -43,12 +43,21 @@ public struct AvatarGenerationDay: Hashable, Sendable {
 public typealias DiceBearGenerationDay = AvatarGenerationDay
 
 public protocol AvatarProviding: Sendable {
-    /// 生成稳定、无个人信息的头像元数据，不发起网络请求。
+    /// 生成无个人信息的头像元数据；动态来源会在此阶段先冻结远程内容。
     func avatars(
         query: String,
         offset: Int,
         count: Int,
         generationDay: AvatarGenerationDay
+    ) async -> [RemoteImageRecord]
+
+    /// 按内容类型在生成边界选源，避免先生成混合目录再过滤出稀疏、不可续页的结果。
+    func avatars(
+        query: String,
+        offset: Int,
+        count: Int,
+        generationDay: AvatarGenerationDay,
+        allowedTypes: Set<AvatarType>
     ) async -> [RemoteImageRecord]
 
     /// 获取当前生成日，供跨分页调用在开始时冻结同一日批次。
@@ -59,6 +68,25 @@ public protocol AvatarProviding: Sendable {
 public typealias DiceBearProviding = AvatarProviding
 
 public extension AvatarProviding {
+    /// 旧供应商默认保持兼容；统一目录会覆盖此入口，在生成前完成类型约束。
+    func avatars(
+        query: String,
+        offset: Int,
+        count: Int,
+        generationDay: AvatarGenerationDay,
+        allowedTypes: Set<AvatarType>
+    ) async -> [RemoteImageRecord] {
+        let supportedTypes = allowedTypes.intersection(Set(AvatarType.allCases))
+        guard !supportedTypes.isEmpty else { return [] }
+        return await avatars(
+            query: query,
+            offset: offset,
+            count: count,
+            generationDay: generationDay
+        )
+        .filter { $0.matchesAvatarTypes(supportedTypes) }
+    }
+
     /// 旧调用入口每次只读取一次日期，再交给显式生成方法。
     func avatars(query: String, offset: Int = 0, count: Int) async -> [RemoteImageRecord] {
         let generationDay = await currentGenerationDay()
@@ -67,6 +95,23 @@ public extension AvatarProviding {
             offset: offset,
             count: count,
             generationDay: generationDay
+        )
+    }
+
+    /// 类型筛选调用同样只读取一次日期，保证首批内部使用同一个 UTC 生成日。
+    func avatars(
+        query: String,
+        offset: Int = 0,
+        count: Int,
+        allowedTypes: Set<AvatarType>
+    ) async -> [RemoteImageRecord] {
+        let generationDay = await currentGenerationDay()
+        return await avatars(
+            query: query,
+            offset: offset,
+            count: count,
+            generationDay: generationDay,
+            allowedTypes: allowedTypes
         )
     }
 
@@ -103,20 +148,30 @@ public struct DiceBearClient: AvatarProviding, AvatarSourceGenerating, Sendable 
         count: Int,
         generationDay: AvatarGenerationDay
     ) async -> [RemoteImageRecord] {
-        AvatarSeed.batch(
+        var records: [RemoteImageRecord] = []
+        for seed in AvatarSeed.batch(
             query: query,
             offset: offset,
             count: count,
             generationDay: generationDay
-        ).compactMap { avatar(seedMaterial: $0.material, generationDay: generationDay) }
+        ) {
+            if let record = await avatar(
+                seedMaterial: seed.material,
+                generationDay: generationDay
+            ) {
+                records.append(record)
+            }
+        }
+        return records
     }
 
     let avatarCatalogIdentifier = ImageSource.diceBear.rawValue
+    let supportedAvatarTypes: Set<AvatarType> = [.cartoonCharacter]
 
     func avatar(
         seedMaterial: String,
         generationDay: AvatarGenerationDay
-    ) -> RemoteImageRecord? {
+    ) async -> RemoteImageRecord? {
         let seedHash = StableImageID.seedHash("mirage-dicebear-seed-v1|\(seedMaterial)")
         let style = selectedStyle(seedMaterial: seedMaterial)
         guard let url = imageURL(style: style, seed: seedHash) else { return nil }
@@ -128,6 +183,7 @@ public struct DiceBearClient: AvatarProviding, AvatarSourceGenerating, Sendable 
             ),
             title: "\(style.displayName) avatar",
             source: .diceBear,
+            avatarType: .cartoonCharacter,
             imageURL: url,
             thumbnailURL: url,
             sourcePageURL: URL(string: "https://www.dicebear.com/styles/\(style.rawValue)/"),

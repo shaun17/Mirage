@@ -48,16 +48,15 @@ extension FileProviderExtension {
                     throw ProviderError.versionNoLongerAvailable()
                 }
                 guard let manager else { throw ProviderError.serverUnreachable("File Provider 域不可用。") }
-                let data = try await BoundedDownloader(
-                    url: record.imageURL,
+                let data = try await repository.imageData(
+                    at: record.imageURL,
                     maximumBytes: ImageTranscoder.defaultMaximumBytes
-                ).download()
+                )
                 try Task.checkCancellation()
                 let directory = try manager.temporaryDirectoryURL()
                 let outputURL = directory.appendingPathComponent(UUID().uuidString + ".png")
                 do {
-                    // Openverse 的 filetype 只是源站元数据提示，CDN 可能合法协商为 WebP；
-                    // 安全边界以 ImageTranscoder 的魔数白名单、像素上限和实际解码结果为准。
+                    // 远端 filetype 只是提示，CDN 可能合法协商为 WebP；安全边界以实际解码为准。
                     try ImageTranscoder().transcode(data, writingTo: outputURL)
                     let outputValues = try outputURL.resourceValues(forKeys: [.fileSizeKey])
                     guard let byteCount = outputValues.fileSize,
@@ -132,10 +131,10 @@ extension FileProviderExtension {
                         throw ProviderError.noSuchItem(identifier)
                     }
                     try Task.checkCancellation()
-                    let data = try await BoundedDownloader(
-                        url: record.thumbnailURL,
+                    let data = try await repository.imageData(
+                        at: record.thumbnailURL,
                         maximumBytes: 5 * 1024 * 1024
-                    ).download()
+                    )
                     try Task.checkCancellation()
                     return try Self.thumbnailData(from: data, requestedSize: size)
                 },

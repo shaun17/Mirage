@@ -100,6 +100,59 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(itemIDs, [first.id, second.id])
     }
 
+    /// GIPHY 收藏只能落盘对象 ID 和内部引用，媒体 URL 不得进入收藏或 items 快照。
+    func testGiphyFavoritePersistsIdentifierWithoutMediaURLs() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let giphyID = "favorite123"
+        let record = RemoteImageRecord(
+            id: StableImageID.giphy(id: giphyID),
+            title: "Favorite GIF",
+            source: .giphy,
+            giphyContentType: .gif,
+            giphyID: giphyID,
+            imageURL: URL(string: "https://media1.giphy.com/media/favorite123/giphy.gif")!,
+            thumbnailURL: URL(string: "https://media1.giphy.com/media/favorite123/200w.gif")!,
+            sourcePageURL: URL(string: "https://giphy.com/gifs/favorite123")!,
+            license: .giphy,
+            mimeType: "image/gif"
+        )
+
+        let snapshot = try await storage.toggleFavorite(record)
+        let persisted = try XCTUnwrap(snapshot.favorites.first)
+        let loadedItem = try await storage.readItem(id: record.id)
+        let storedItem = try XCTUnwrap(loadedItem)
+        let rawFavorites = try String(
+            contentsOf: temporaryURL.appendingPathComponent("favorites.json"),
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(persisted.giphyID, giphyID)
+        XCTAssertTrue(persisted.isGiphyFavoriteReference)
+        XCTAssertEqual(storedItem, persisted)
+        XCTAssertFalse(rawFavorites.contains("media1.giphy.com"))
+        XCTAssertFalse(rawFavorites.contains("giphy.gif"))
+        XCTAssertFalse(rawFavorites.contains("200w.gif"))
+    }
+
+    func testGiphyFavoriteWithoutPublicIdentifierIsRejected() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let record = RemoteImageRecord(
+            id: "giphy:legacy",
+            title: "Legacy GIF",
+            source: .giphy,
+            imageURL: URL(string: "https://media1.giphy.com/media/legacy/giphy.gif")!,
+            thumbnailURL: URL(string: "https://media1.giphy.com/media/legacy/200w.gif")!,
+            license: .giphy
+        )
+
+        do {
+            _ = try await storage.toggleFavorite(record)
+            XCTFail("缺少 GIPHY ID 的记录不应落盘")
+        } catch {
+            XCTAssertEqual(error as? FavoriteStorageError, .missingGiphyIdentifier)
+        }
+    }
+
     /// 两个 storage 实例并发切换收藏也必须共享同一事务锁，不能丢失任何一次新增。
     func testConcurrentFavoriteTransactionsDoNotLoseUpdates() async throws {
         let firstStorage = try AppGroupStorage(baseURL: temporaryURL)

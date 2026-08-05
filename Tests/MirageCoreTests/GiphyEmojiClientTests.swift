@@ -65,6 +65,8 @@ final class GiphyEmojiClientTests: XCTestCase {
         XCTAssertEqual(record.id, StableImageID.giphy(id: "emoji123"))
         XCTAssertEqual(record.title, "A colorful blob celebrates")
         XCTAssertEqual(record.source, .giphy)
+        XCTAssertEqual(record.giphyContentType, .gif)
+        XCTAssertEqual(record.giphyID, "emoji123")
         XCTAssertEqual(record.license, .giphy)
         XCTAssertEqual(
             record.imageURL.absoluteString,
@@ -87,6 +89,48 @@ final class GiphyEmojiClientTests: XCTestCase {
         XCTAssertEqual(record.height, 480)
         XCTAssertEqual(record.mimeType, "image/gif")
         XCTAssertEqual(page.nextCursor?.rawValue, "23")
+    }
+
+    /// 收藏恢复只提交对象 ID 到官方批量端点，不复用或持久化旧媒体 URL。
+    func testLookupRecordsUsesOfficialIDsEndpoint() async throws {
+        GiphyEmojiURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/gifs")
+            let values = try Self.queryValues(for: request)
+            XCTAssertEqual(Set(values.keys), ["api_key", "ids"])
+            XCTAssertEqual(values["api_key"], "test-key")
+            XCTAssertEqual(values["ids"], "first,second")
+            return (
+                Self.response(for: request, status: 200),
+                Self.envelope(
+                    data: "[\(Self.emojiObject(id: "first", type: "gif")),\(Self.emojiObject(id: "second", type: "gif"))]",
+                    offset: 0,
+                    totalCount: 2,
+                    count: 2
+                )
+            )
+        }
+
+        let records = try await makeClient().records(ids: ["first", "second"])
+
+        XCTAssertEqual(records.map(\.giphyID), ["first", "second"])
+        XCTAssertEqual(records.map(\.id), [
+            StableImageID.giphy(id: "first"),
+            StableImageID.giphy(id: "second")
+        ])
+    }
+
+    func testLookupRejectsInvalidOrOversizedIdentifiersBeforeNetwork() async {
+        GiphyEmojiURLProtocol.handler = { _ in
+            XCTFail("无效标识不应发起请求")
+            throw URLError(.badURL)
+        }
+
+        do {
+            _ = try await makeClient().records(ids: ["invalid/id"])
+            XCTFail("无效标识应被拒绝")
+        } catch {
+            XCTAssertEqual(error as? GiphyEmojiError, .invalidIdentifier)
+        }
     }
 
     /// fixed_width 缺失或不安全时只降级到 fixed_height；没有安全小图时跳过记录。
@@ -770,7 +814,8 @@ final class GiphyEmojiClientTests: XCTestCase {
             "original": {
               "url": "https://media2.giphy.com/media/emoji123/giphy.gif?cid=client-id&rid=giphy.gif&ct=s",
               "width": "480",
-              "height": "480"
+              "height": "480",
+              "size": "345678"
             }
           },
           "user": {
