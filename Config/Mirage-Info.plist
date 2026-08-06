@@ -26,5 +26,19 @@
 	<string>Mirage 需要在系统文件选择器中提供可浏览和选择的头像与图片。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/shaun17/Mirage/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ZFNKnYFxseZp3racb1Mngcd9DiAtY+KgVy3qYpZs4fo=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

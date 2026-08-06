@@ -14,8 +14,13 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     CLANG_ENABLE_MODULES: YES
-    CURRENT_PROJECT_VERSION: "33"
-    MARKETING_VERSION: "0.3.1"
+    CURRENT_PROJECT_VERSION: "34"
+    MARKETING_VERSION: "0.4.0"
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.4
 
 targets:
   MirageCore:
@@ -85,6 +90,13 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         NSFileProviderDomainUsageDescription: Mirage 需要在系统文件选择器中提供可浏览和选择的头像与图片。
         NSPrincipalClass: NSApplication
+        SUAutomaticallyUpdate: false
+        SUEnableAutomaticChecks: true
+        SUEnableInstallerLauncherService: true
+        SUFeedURL: https://github.com/shaun17/Mirage/releases/latest/download/appcast.xml
+        SUPublicEDKey: ZFNKnYFxseZp3racb1Mngcd9DiAtY+KgVy3qYpZs4fo=
+        SURequireSignedFeed: true
+        SUVerifyUpdateBeforeExtraction: true
     entitlements:
       path: Config/Mirage.entitlements
       properties:
@@ -92,6 +104,9 @@ targets:
         com.apple.security.network.client: true
         com.apple.security.application-groups:
           - N4TQ2P9B46.group.com.wenren.Mirage
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.wenren.Mirage
@@ -100,6 +115,7 @@ targets:
     dependencies:
       - target: MirageCore
       - target: MirageDetailWindow
+      - package: Sparkle
       - target: MirageFileProvider
         embed: true
         codeSign: true

@@ -1,11 +1,18 @@
 import MirageDetailWindow
+import Sparkle
 import SwiftUI
 
 /// Mirage 的应用入口；应用只维护一个主窗口和一份共享状态。
 @main
+@MainActor
 struct MirageApp: App {
     /// 单一主窗口持有唯一模型，避免窗口之间出现彼此独立的资料库状态。
     @StateObject private var model = AppModel()
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     /// 使用 `Window` 限制主界面为单实例，并集中注册资料库快捷键。
     var body: some Scene {
@@ -19,6 +26,10 @@ struct MirageApp: App {
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
+            CommandGroup(after: .appInfo) {
+                SoftwareUpdateView(updater: updaterController.updater)
+            }
+
             CommandMenu("资料库") {
                 Button("发现") { model.selection = .discover }
                     .keyboardShortcut("1", modifiers: .command)

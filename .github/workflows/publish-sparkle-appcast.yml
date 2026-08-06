@@ -1,0 +1,133 @@
+name: Publish Sparkle appcast
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sparkle-appcast-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-appcast:
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      REPOSITORY: ${{ github.repository }}
+      SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      SPARKLE_VERSION: 2.9.4
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download the notarized release
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          mkdir -p build/release-assets build/SparkleTools
+          gh release download "${RELEASE_TAG}" \
+            --repo "${REPOSITORY}" \
+            --dir build/release-assets \
+            --pattern 'Mirage-*.dmg'
+
+          release_body_path="build/release-assets/release-notes.md"
+          gh release view "${RELEASE_TAG}" \
+            --repo "${REPOSITORY}" \
+            --json body \
+            --jq .body \
+            > "${release_body_path}"
+
+      - name: Validate the notarized release
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          archive_paths=(build/release-assets/Mirage-*.dmg(N))
+          (( ${#archive_paths[@]} == 1 )) \
+            || { print -u2 -- "错误：Release 必须且只能包含一个 Mirage DMG"; exit 1; }
+
+          archive_path="${archive_paths[1]}"
+          mount_path="$(mktemp -d "${RUNNER_TEMP}/mirage-release.XXXXXX")"
+          cleanup_mount() {
+            hdiutil detach "${mount_path}" >/dev/null 2>&1 || true
+            rmdir "${mount_path}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_mount EXIT
+
+          hdiutil verify "${archive_path}"
+          xcrun stapler validate "${archive_path}"
+          codesign --verify --verbose=2 "${archive_path}"
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=2 \
+            "${archive_path}"
+
+          hdiutil attach \
+            -readonly \
+            -noverify \
+            -noautoopen \
+            -mountpoint "${mount_path}" \
+            "${archive_path}" \
+            >/dev/null
+
+          app_path="${mount_path}/Mirage.app"
+          [[ -d "${app_path}" ]] || { print -u2 -- "错误：DMG 中未找到 Mirage.app"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          spctl --assess --type execute --verbose=2 "${app_path}"
+
+          signature_details="$(codesign -dv --verbose=4 "${app_path}" 2>&1)"
+          [[ "${signature_details}" == *"Authority=Developer ID Application:"* ]] \
+            || { print -u2 -- "错误：Mirage.app 不是 Developer ID 发布签名"; exit 1; }
+          [[ "${signature_details}" == *"TeamIdentifier=N4TQ2P9B46"* ]] \
+            || { print -u2 -- "错误：Mirage.app 签名团队不匹配"; exit 1; }
+
+          expected_version="${RELEASE_TAG#v}"
+          actual_version="$(plutil -extract CFBundleShortVersionString raw "${app_path}/Contents/Info.plist")"
+          actual_build="$(plutil -extract CFBundleVersion raw "${app_path}/Contents/Info.plist")"
+          [[ "${actual_version}" == "${expected_version}" ]] \
+            || { print -u2 -- "错误：DMG 版本 ${actual_version} 与 ${RELEASE_TAG} 不匹配"; exit 1; }
+          [[ "${actual_build}" =~ '^[0-9]+$' ]] \
+            || { print -u2 -- "错误：CFBundleVersion 必须为整数"; exit 1; }
+
+      - name: Download Sparkle release tools
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          gh release download "${SPARKLE_VERSION}" \
+            --repo sparkle-project/Sparkle \
+            --dir build/SparkleTools \
+            --pattern "Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xJf "build/SparkleTools/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+            -C build/SparkleTools
+
+      - name: Generate and verify signed appcast
+        shell: zsh {0}
+        env:
+          SPARKLE_GENERATE_APPCAST: ${{ github.workspace }}/build/SparkleTools/bin/generate_appcast
+          SPARKLE_RELEASE_NOTES_PATH: ${{ github.workspace }}/build/release-assets/release-notes.md
+          SPARKLE_SIGN_UPDATE: ${{ github.workspace }}/build/SparkleTools/bin/sign_update
+        run: |
+          set -euo pipefail
+          [[ -n "${SPARKLE_ED_PRIVATE_KEY}" ]] \
+            || { print -u2 -- "错误：未配置 SPARKLE_ED_PRIVATE_KEY"; exit 1; }
+          archive_paths=(build/release-assets/Mirage-*.dmg(N))
+          (( ${#archive_paths[@]} == 1 )) \
+            || { print -u2 -- "错误：Release 必须且只能包含一个 Mirage DMG"; exit 1; }
+
+          ./Scripts/generate_appcast.sh \
+            "${archive_paths[1]}" \
+            "${RELEASE_TAG}" \
+            "${PWD}/build/release-assets/appcast.xml"
+
+      - name: Upload appcast to the release
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          gh release upload "${RELEASE_TAG}" \
+            "build/release-assets/appcast.xml#Sparkle signed update feed" \
+            --repo "${REPOSITORY}" \
+            --clobber

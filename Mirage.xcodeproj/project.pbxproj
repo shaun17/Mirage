@@ -21,6 +21,7 @@
 		166E6FBDE37DDD509C8798F3 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
 		16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */; };
 		1A08F66A8FDFA65017F213E5 /* DiscoveryFeedRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */; };
+		1C430E5A835AE2BE7B1410CA /* SoftwareUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */; };
 		1C8AF389EE4655A8882C8938 /* DetailWindowReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A96510E9F960BAD5C8FAA3CF /* DetailWindowReader.swift */; };
 		1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91490DF02E6BF161DA088775 /* OpenverseClient.swift */; };
 		23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
@@ -40,6 +41,7 @@
 		3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */; };
 		4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */; };
 		4AB55F4BCEF3FEF8EA8034E1 /* DetailWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */; };
+		4B51E2C9DAA080EF89B09D51 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4F081ABAA781E0D912A6E94 /* Sparkle */; };
 		4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */; };
 		4D1C1DFF1F15D855BB8E4879 /* PhotoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD59051C53C7E99FE6187AD /* PhotoSource.swift */; };
 		4DC1042CB44FE1C0264AB243 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86D01A404320AA471FC8774F /* Assets.xcassets */; };
@@ -215,6 +217,7 @@
 		157A7276FBF8E70C249F1F16 /* PhotoSourceProviderSettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceProviderSettingsPane.swift; sourceTree = "<group>"; };
 		15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRepository.swift; sourceTree = "<group>"; };
 		1C6C69679E9E199FAAA71800 /* DiceBearStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceBearStyle.swift; sourceTree = "<group>"; };
+		1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoftwareUpdateView.swift; sourceTree = "<group>"; };
 		1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mirage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderIdentifiers.swift; sourceTree = "<group>"; };
 		20D1B9C3614AE9AFFBCC30FD /* ProviderSourcePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSourcePolicyTests.swift; sourceTree = "<group>"; };
@@ -324,6 +327,7 @@
 			files = (
 				2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */,
 				F15712F6A60954A508100221 /* libMirageDetailWindow.a in Frameworks */,
+				4B51E2C9DAA080EF89B09D51 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,6 +400,7 @@
 				7E4E3AD2696EE63C6EF73DAB /* PhotoSourceSettingsView.swift */,
 				D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */,
 				8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */,
+				1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */,
 				E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */,
 			);
 			path = MirageApp;
@@ -615,6 +620,7 @@
 			);
 			name = Mirage;
 			packageProductDependencies = (
+				E4F081ABAA781E0D912A6E94 /* Sparkle */,
 			);
 			productName = Mirage;
 			productReference = 1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */;
@@ -660,6 +666,9 @@
 			);
 			mainGroup = CA1F54A8C4CAA0117425397F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0AEB33E0B2069747EAC62D6B /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3E514C3C34FE85763C0BDEC4 /* Products */;
 			projectDirPath = "";
@@ -740,6 +749,7 @@
 				D2491415F9117E7509B0F280 /* PhotoSourceSettingsView.swift in Sources */,
 				EDB3BA583A5A44126DA4A601 /* SearchModel.swift in Sources */,
 				16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */,
+				1C430E5A835AE2BE7B1410CA /* SoftwareUpdateView.swift in Sources */,
 				AE4445BE8F6DD1D0A6667564 /* ThumbnailLoader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1064,7 +1074,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1085,7 +1095,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1153,7 +1163,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1168,7 +1178,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1286,6 +1296,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0AEB33E0B2069747EAC62D6B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E4F081ABAA781E0D912A6E94 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0AEB33E0B2069747EAC62D6B /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
 }

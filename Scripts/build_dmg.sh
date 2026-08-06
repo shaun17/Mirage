@@ -15,6 +15,7 @@ DMG_BACKGROUND_SOURCE="${PROJECT_DIRECTORY}/Branding/DmgBackground.svg"
 DMG_LAYOUT_SCRIPT="${SCRIPT_DIRECTORY}/layout_dmg.applescript"
 BUILD_DIRECTORY="${PROJECT_DIRECTORY}/build"
 BUILD_TMP_DIRECTORY="${BUILD_DIRECTORY}/tmp"
+SOURCE_PACKAGES_DIRECTORY="${BUILD_DIRECTORY}/SourcePackages"
 DIST_DIRECTORY="${PROJECT_DIRECTORY}/dist"
 RELEASE_MODE="${RELEASE_MODE:-development}"
 
@@ -175,6 +176,7 @@ xcodebuild \
   -scheme Mirage \
   -configuration Release \
   -destination "generic/platform=macOS" \
+  -clonedSourcePackagesDirPath "${SOURCE_PACKAGES_DIRECTORY}" \
   -derivedDataPath "${ARCHIVE_DERIVED_DATA_PATH}" \
   -archivePath "${ARCHIVE_PATH}" \
   "${PROVISIONING_ARGUMENTS[@]}" \
@@ -384,3 +386,12 @@ mv -f -- "${WORK_DMG_PATH}" "${DMG_PATH}"
 
 print "DMG 已生成：${DMG_PATH}"
 print "SHA-256 已生成：${SHA256_PATH}"
+
+if [[ "${RELEASE_MODE}" == "developer-id" ]]; then
+  APPCAST_PATH="${DIST_DIRECTORY}/appcast.xml"
+  "${SCRIPT_DIRECTORY}/generate_appcast.sh" \
+    "${DMG_PATH}" \
+    "v${MARKETING_VERSION}" \
+    "${APPCAST_PATH}"
+  print "Sparkle appcast 已生成：${APPCAST_PATH}"
+fi
