@@ -68,8 +68,8 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
         XCTAssertEqual(probe.requests, [.metMuseum, .nasa])
     }
 
-    /// Met 与 NASA 当前只响应用户交互搜索，不能进入后台推荐快照。
-    func testRecommendationDoesNotBuildMetOrNASA() async throws {
+    /// Met 与 NASA 启用后同时参与 App 与 Finder 共用的推荐来源范围。
+    func testRecommendationBuildsMetAndNASA() async throws {
         let preferences = makePreferences()
         _ = try await preferences.saveConfiguration(for: .metMuseum, enabledSurfaces: [.app])
         _ = try await preferences.saveConfiguration(for: .nasa, enabledSurfaces: [.app])
@@ -88,8 +88,8 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
 
         let page = try await searcher.search(query: "space art", cursor: nil, pageSize: 3)
 
-        XCTAssertEqual(page.records.map(\.source), [.openverse])
-        XCTAssertTrue(probe.requests.isEmpty)
+        XCTAssertEqual(page.records.map(\.source), [.openverse, .metMuseum, .nasa])
+        XCTAssertEqual(probe.requests, [.metMuseum, .nasa])
     }
 
     /// App 启用 Pixabay 后应从独立凭据创建适配器，并与 Openverse 进入同一聚合页。
@@ -150,8 +150,8 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
         ])
     }
 
-    /// Finder 快照会过滤 App-only Pixabay，因此不能构造客户端或读取其内容。
-    func testFileProviderDoesNotBuildAppOnlyPixabay() async throws {
+    /// Finder 读取 App 的统一启用来源，即使旧快照尚未写入独立 Finder 列表也能构造 Pixabay。
+    func testFileProviderBuildsPixabayFromAppSourceSettings() async throws {
         let preferences = makePreferences()
         _ = try await preferences.saveConfiguration(for: .pixabay, enabledSurfaces: [.app])
         let probe = CredentialedSourceFactoryProbe()
@@ -168,12 +168,14 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
 
         let page = try await searcher.search(query: "nature", cursor: nil, pageSize: 2)
 
-        XCTAssertEqual(page.records.map(\.source), [.openverse])
-        XCTAssertTrue(probe.requests.isEmpty)
+        XCTAssertEqual(Set(page.records.map(\.source)), [.openverse, .pixabay])
+        XCTAssertEqual(probe.requests, [
+            .init(sourceID: .pixabay, credential: "pixabay-test-key")
+        ])
     }
 
-    /// Pixabay 只处理用户明确发起的搜索，不能进入会持久化 URL 的自动推荐流。
-    func testRecommendationPurposeDoesNotBuildPixabay() async throws {
+    /// Pixabay 启用后可以进入由用户打开 Finder 根目录触发的推荐流。
+    func testRecommendationPurposeBuildsPixabay() async throws {
         let preferences = makePreferences()
         _ = try await preferences.saveConfiguration(for: .pixabay, enabledSurfaces: [.app])
         let probe = CredentialedSourceFactoryProbe()
@@ -191,8 +193,10 @@ final class ConfiguredPhotoSearcherTests: XCTestCase {
 
         let page = try await searcher.search(query: "nature", cursor: nil, pageSize: 2)
 
-        XCTAssertEqual(page.records.map(\.source), [.openverse])
-        XCTAssertTrue(probe.requests.isEmpty)
+        XCTAssertEqual(Set(page.records.map(\.source)), [.openverse, .pixabay])
+        XCTAssertEqual(probe.requests, [
+            .init(sourceID: .pixabay, credential: "pixabay-test-key")
+        ])
     }
 
     /// GIPHY 只能从 App 交互 GIF 范围进入；普通图片、推荐与 Finder 都不得构造它。

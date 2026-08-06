@@ -17,6 +17,7 @@
 		11347E44DB49B28C351FD56A /* SearchEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B056F3E07F529D27482171E /* SearchEnumerator.swift */; };
 		13E68A4236820719F19F8B19 /* ThumbnailLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530F268BF1CEC1F159A04831 /* ThumbnailLoaderTests.swift */; };
 		149DBC44BEDF226B92940B2A /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
+		14C5DBECCA69B43B107FEB45 /* SettingsWindowTitleConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F53CB3247991492A8B82297 /* SettingsWindowTitleConfigurator.swift */; };
 		15220F9D9D4587AE7B8AF69A /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		166E6FBDE37DDD509C8798F3 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
 		16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */; };
@@ -105,6 +106,7 @@
 		C4E64B0F4968CAAA1551C856 /* ProviderDiscoveryTreePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98561077AE0D1A0D4B1C484 /* ProviderDiscoveryTreePlannerTests.swift */; };
 		C7E7A302CB037338DE9CF5B3 /* PhotoSourcePreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D1E3A33B8070DCB2EA93A3 /* PhotoSourcePreferencesStore.swift */; };
 		C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
+		C9CBD997652ABA6A3FDB4FD0 /* PhotoSourceCredentialSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD41AE38F84800E50411153 /* PhotoSourceCredentialSettingsSection.swift */; };
 		CCBBA0227B1E053F67CC5821 /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		CE626F554C731E200D9E98D1 /* PhotoSourceCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08209B3D2F6AABD808F0B2A8 /* PhotoSourceCredentialStoreTests.swift */; };
 		CF56E5284DA114983E00D94E /* SearchEnumeratorPaginationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7DF5AD60A0A51B3A50FE58 /* SearchEnumeratorPaginationTests.swift */; };
@@ -125,6 +127,7 @@
 		E6DD43D57B5965751A166648 /* SearchModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB194ABED4EB0692CAD44C3 /* SearchModelTests.swift */; };
 		E7541DB1400BD83BF1F7206A /* ProviderDiscoveryTreePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */; };
 		E76E32A6DCC59D70A8C928C9 /* PhotoSourceSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69BF7C96AF68F9EFE65696D1 /* PhotoSourceSettingsModel.swift */; };
+		E97006221506256F1D873F1B /* PhotoSourceSettingsSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B8B1FA9AE0D2068D6BDBDC /* PhotoSourceSettingsSidebar.swift */; };
 		EAE7A4ACE4EAA6E0B2F4802E /* AvatarTypeFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81379BA791528A9095F62205 /* AvatarTypeFilterBar.swift */; };
 		EDB3BA583A5A44126DA4A601 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
 		EE027D49229C2E2DF045D94F /* BoundedDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 415AB11933DD2B9F0AE077D4 /* BoundedDownloader.swift */; };
@@ -210,6 +213,7 @@
 		0827DC89AD583FFC552FFC9E /* PixabayClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixabayClient.swift; sourceTree = "<group>"; };
 		0836ABD0D493F8072DA82EFE /* NASAImagesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NASAImagesClient.swift; sourceTree = "<group>"; };
 		08CAA8BA1110803C8944E0A2 /* MetMuseumClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetMuseumClientTests.swift; sourceTree = "<group>"; };
+		09B8B1FA9AE0D2068D6BDBDC /* PhotoSourceSettingsSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceSettingsSidebar.swift; sourceTree = "<group>"; };
 		0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchPaginationCursor.swift; sourceTree = "<group>"; };
 		0EDAB962A83006A1EA2D47A8 /* PhotoSourceCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceCredentialStore.swift; sourceTree = "<group>"; };
 		140B821A1AC6C207DB74AF4D /* ThisPersonDoesNotExistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThisPersonDoesNotExistClient.swift; sourceTree = "<group>"; };
@@ -228,6 +232,7 @@
 		32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchServiceTests.swift; sourceTree = "<group>"; };
 		323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryFeedSnapshotMutationNotifier.swift; sourceTree = "<group>"; };
 		3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchCache.swift; sourceTree = "<group>"; };
+		3F53CB3247991492A8B82297 /* SettingsWindowTitleConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowTitleConfigurator.swift; sourceTree = "<group>"; };
 		4136DEAEF791EE9942C29E33 /* DetailDrawerMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailDrawerMetrics.swift; sourceTree = "<group>"; };
 		415AB11933DD2B9F0AE077D4 /* BoundedDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDownloader.swift; sourceTree = "<group>"; };
 		4317C2B9AEBF745304572E2B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -303,6 +308,7 @@
 		E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSearchResultStoring.swift; sourceTree = "<group>"; };
 		E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailLoader.swift; sourceTree = "<group>"; };
 		EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		EDD41AE38F84800E50411153 /* PhotoSourceCredentialSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceCredentialSettingsSection.swift; sourceTree = "<group>"; };
 		EE02568E93053F434F591C23 /* MirageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirageApp.swift; sourceTree = "<group>"; };
 		EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileProviderExtension+Content.swift"; sourceTree = "<group>"; };
 		EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailWindowCoordinator.swift; sourceTree = "<group>"; };
@@ -395,10 +401,13 @@
 				4BA52EF87F1F723064DA348D /* LibraryGridView.swift */,
 				EE02568E93053F434F591C23 /* MirageApp.swift */,
 				ABE78B29069C55E789E46142 /* MirageDomainManager.swift */,
+				EDD41AE38F84800E50411153 /* PhotoSourceCredentialSettingsSection.swift */,
 				157A7276FBF8E70C249F1F16 /* PhotoSourceProviderSettingsPane.swift */,
 				69BF7C96AF68F9EFE65696D1 /* PhotoSourceSettingsModel.swift */,
+				09B8B1FA9AE0D2068D6BDBDC /* PhotoSourceSettingsSidebar.swift */,
 				7E4E3AD2696EE63C6EF73DAB /* PhotoSourceSettingsView.swift */,
 				D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */,
+				3F53CB3247991492A8B82297 /* SettingsWindowTitleConfigurator.swift */,
 				8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */,
 				1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */,
 				E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */,
@@ -744,10 +753,13 @@
 				95C654E1F2BC055482310595 /* LibraryGridView.swift in Sources */,
 				F14EDABAF01604AC0C9D0CB5 /* MirageApp.swift in Sources */,
 				B0CFF1592C3D28FE35C328BC /* MirageDomainManager.swift in Sources */,
+				C9CBD997652ABA6A3FDB4FD0 /* PhotoSourceCredentialSettingsSection.swift in Sources */,
 				A4D101E7B0EACE499A2DAB29 /* PhotoSourceProviderSettingsPane.swift in Sources */,
 				E76E32A6DCC59D70A8C928C9 /* PhotoSourceSettingsModel.swift in Sources */,
+				E97006221506256F1D873F1B /* PhotoSourceSettingsSidebar.swift in Sources */,
 				D2491415F9117E7509B0F280 /* PhotoSourceSettingsView.swift in Sources */,
 				EDB3BA583A5A44126DA4A601 /* SearchModel.swift in Sources */,
+				14C5DBECCA69B43B107FEB45 /* SettingsWindowTitleConfigurator.swift in Sources */,
 				16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */,
 				1C430E5A835AE2BE7B1410CA /* SoftwareUpdateView.swift in Sources */,
 				AE4445BE8F6DD1D0A6667564 /* ThumbnailLoader.swift in Sources */,
@@ -1074,7 +1086,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1095,7 +1107,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.1;
+				MARKETING_VERSION = 0.5.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1163,7 +1175,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = N4TQ2P9B46;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1178,7 +1190,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.1;
+				MARKETING_VERSION = 0.5.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

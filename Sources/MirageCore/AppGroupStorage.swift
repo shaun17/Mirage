@@ -31,6 +31,8 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     public let generation: UInt64
     public let refreshedAt: Date
     public let records: [RemoteImageRecord]
+    /// 已从远端或共享批次取回、但尚未归入完整逻辑页的记录；下一页必须优先消费它们。
+    public let pendingRecords: [RemoteImageRecord]
     public let source: DiscoveryFeedSource
     public let catalogKey: String
     public let queryKey: String
@@ -42,6 +44,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         generation: UInt64,
         refreshedAt: Date,
         records: [RemoteImageRecord],
+        pendingRecords: [RemoteImageRecord] = [],
         source: DiscoveryFeedSource,
         catalogKey: String,
         queryKey: String,
@@ -52,6 +55,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         self.generation = generation
         self.refreshedAt = refreshedAt
         self.records = records
+        self.pendingRecords = pendingRecords
         self.source = source
         self.catalogKey = catalogKey
         self.queryKey = queryKey
@@ -61,7 +65,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case generation, refreshedAt, records, source, catalogKey, queryKey, pageSize, nextPage
+        case generation, refreshedAt, records, pendingRecords, source, catalogKey, queryKey, pageSize, nextPage
         case remoteCursor
     }
 
@@ -71,6 +75,10 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         generation = try container.decode(UInt64.self, forKey: .generation)
         refreshedAt = try container.decode(Date.self, forKey: .refreshedAt)
         records = try container.decode([RemoteImageRecord].self, forKey: .records)
+        pendingRecords = try container.decodeIfPresent(
+            [RemoteImageRecord].self,
+            forKey: .pendingRecords
+        ) ?? []
         source = try container.decode(DiscoveryFeedSource.self, forKey: .source)
         catalogKey = try container.decode(String.self, forKey: .catalogKey)
         queryKey = try container.decode(String.self, forKey: .queryKey)
@@ -86,6 +94,7 @@ public struct DiscoveryFeedSnapshot: Codable, Equatable, Sendable {
         try container.encode(generation, forKey: .generation)
         try container.encode(refreshedAt, forKey: .refreshedAt)
         try container.encode(records, forKey: .records)
+        try container.encode(pendingRecords, forKey: .pendingRecords)
         try container.encode(source, forKey: .source)
         try container.encode(catalogKey, forKey: .catalogKey)
         try container.encode(queryKey, forKey: .queryKey)
@@ -498,6 +507,7 @@ public actor AppGroupStorage {
     @discardableResult
     public func commitDiscoveryFeed(
         records: [RemoteImageRecord],
+        pendingRecords: [RemoteImageRecord] = [],
         refreshedAt: Date,
         source: DiscoveryFeedSource,
         catalogKey: String,
@@ -509,6 +519,7 @@ public actor AppGroupStorage {
         try withExclusiveFileLock(named: "discovery-feed") {
             try commitDiscoveryFeedUnlocked(
                 records: records,
+                pendingRecords: pendingRecords,
                 refreshedAt: refreshedAt,
                 source: source,
                 catalogKey: catalogKey,
@@ -524,6 +535,7 @@ public actor AppGroupStorage {
     public func commitDiscoveryFeedIfCurrent(
         expectedGeneration: UInt64?,
         records: [RemoteImageRecord],
+        pendingRecords: [RemoteImageRecord] = [],
         refreshedAt: Date,
         source: DiscoveryFeedSource,
         catalogKey: String,
@@ -539,6 +551,7 @@ public actor AppGroupStorage {
             }
             let committed = try commitDiscoveryFeedUnlocked(
                 records: records,
+                pendingRecords: pendingRecords,
                 refreshedAt: refreshedAt,
                 source: source,
                 catalogKey: catalogKey,
@@ -558,6 +571,7 @@ public actor AppGroupStorage {
         expectedNextPage requestedPage: Int,
         expectedRecordCount: Int,
         records: [RemoteImageRecord],
+        pendingRecords: [RemoteImageRecord] = [],
         nextPage: Int?,
         remoteCursor: DiscoveryRemoteCursor? = nil
     ) throws -> DiscoveryFeedSnapshot {
@@ -574,10 +588,12 @@ public actor AppGroupStorage {
             }
             var seen = Set<String>()
             let merged = (base.records + records).filter { seen.insert($0.id).inserted }
+            let normalizedPending = pendingRecords.filter { seen.insert($0.id).inserted }
             let updated = DiscoveryFeedSnapshot(
                 generation: base.generation,
                 refreshedAt: base.refreshedAt,
                 records: merged,
+                pendingRecords: normalizedPending,
                 source: base.source,
                 catalogKey: base.catalogKey,
                 queryKey: base.queryKey,
@@ -1068,6 +1084,7 @@ public actor AppGroupStorage {
     /// 调用方持有 discovery-feed 锁时分配唯一 generation，并提交首页及当前指针。
     private func commitDiscoveryFeedUnlocked(
         records: [RemoteImageRecord],
+        pendingRecords: [RemoteImageRecord],
         refreshedAt: Date,
         source: DiscoveryFeedSource,
         catalogKey: String,
@@ -1078,10 +1095,13 @@ public actor AppGroupStorage {
     ) throws -> DiscoveryFeedSnapshot {
         let nextGeneration = try allocateDiscoveryGenerationUnlocked()
         var seen = Set<String>()
+        let normalizedRecords = records.filter { seen.insert($0.id).inserted }
+        let normalizedPending = pendingRecords.filter { seen.insert($0.id).inserted }
         let snapshot = DiscoveryFeedSnapshot(
             generation: nextGeneration,
             refreshedAt: refreshedAt,
-            records: records.filter { seen.insert($0.id).inserted },
+            records: normalizedRecords,
+            pendingRecords: normalizedPending,
             source: source,
             catalogKey: catalogKey,
             queryKey: queryKey,

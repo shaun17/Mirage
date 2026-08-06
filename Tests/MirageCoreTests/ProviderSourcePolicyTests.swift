@@ -17,7 +17,7 @@ final class ProviderSourcePolicyTests: XCTestCase {
         XCTAssertFalse(PhotoSourceRegistry.descriptor(for: .giphy)?.supports(.fileProvider) == true)
     }
 
-    func testFinderRejectsPicrewPreviewFromLegacyStorage() async throws {
+    func testFinderShowsPicrewFavoriteWithoutApplyingSourcePolicy() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MirageProviderSourcePolicy-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -44,8 +44,8 @@ final class ProviderSourcePolicyTests: XCTestCase {
         let library = try await storage.readLibrarySnapshot()
         XCTAssertTrue(library.favoriteIDs.contains(picrew.id))
         XCTAssertTrue(picrew.source.allowsPersistentLibraryStorage)
-        XCTAssertTrue(favorites.isEmpty)
-        XCTAssertNil(occurrence)
+        XCTAssertEqual(favorites.map(\.itemIdentifier), [identifier])
+        XCTAssertEqual(occurrence?.record, picrew)
     }
 
     func testFinderHidesIDOnlyGiphyFavorite() async throws {
@@ -111,7 +111,7 @@ final class ProviderSourcePolicyTests: XCTestCase {
         XCTAssertNil(fallback?.nextPage)
     }
 
-    func testFinderHidesPexelsFromFavoritesAndDirectOccurrence() async throws {
+    func testFinderFavoritesIgnoreDisabledPhotoSourceSettings() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MirageProviderSourcePolicy-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -121,8 +121,14 @@ final class ProviderSourcePolicyTests: XCTestCase {
         let storage = try AppGroupStorage(baseURL: directory)
         let openverse = Self.record(id: "ov:allowed", source: .openverse)
         let pexels = Self.record(id: "px:blocked", source: .pexels)
+        let metMuseum = Self.record(id: "met:allowed", source: .metMuseum)
+        let nasa = Self.record(id: "nasa:allowed", source: .nasa)
+        let pixabay = Self.record(id: "pb:allowed", source: .pixabay)
         _ = try await storage.toggleFavorite(openverse)
         _ = try await storage.toggleFavorite(pexels)
+        _ = try await storage.toggleFavorite(metMuseum)
+        _ = try await storage.toggleFavorite(nasa)
+        _ = try await storage.toggleFavorite(pixabay)
 
         let repository = ProviderRepository(
             manager: nil,
@@ -133,15 +139,27 @@ final class ProviderSourcePolicyTests: XCTestCase {
 
         let favorites = try await repository.favoriteItems()
         XCTAssertEqual(favorites.map(\.itemIdentifier), [
-            RecordReference(recordID: openverse.id, view: .favorite).itemIdentifier
+            RecordReference(recordID: openverse.id, view: .favorite).itemIdentifier,
+            RecordReference(recordID: pexels.id, view: .favorite).itemIdentifier,
+            RecordReference(recordID: metMuseum.id, view: .favorite).itemIdentifier,
+            RecordReference(recordID: nasa.id, view: .favorite).itemIdentifier,
+            RecordReference(recordID: pixabay.id, view: .favorite).itemIdentifier,
         ])
 
         let blockedIdentifier = RecordReference(
             recordID: pexels.id,
             view: .favorite
         ).itemIdentifier
-        let blockedOccurrence = try await repository.occurrence(for: blockedIdentifier)
-        XCTAssertNil(blockedOccurrence)
+        let pexelsOccurrence = try await repository.occurrence(for: blockedIdentifier)
+        XCTAssertEqual(pexelsOccurrence?.record, pexels)
+        for record in [metMuseum, nasa, pixabay] {
+            let identifier = RecordReference(
+                recordID: record.id,
+                view: .favorite
+            ).itemIdentifier
+            let occurrence = try await repository.occurrence(for: identifier)
+            XCTAssertEqual(occurrence?.record, record)
+        }
     }
 
     func testFinderShowsPexelsWhenEnabledForFileProvider() async throws {
@@ -172,8 +190,8 @@ final class ProviderSourcePolicyTests: XCTestCase {
         XCTAssertEqual(occurrence?.record, pexels)
     }
 
-    /// Pixabay 当前只有 App 搜索能力；即使旧配置请求 Finder，也必须在快照归一化时过滤。
-    func testFinderHidesAppOnlyPixabay() async throws {
+    /// 收藏目录不受普通来源启用状态影响，Pixabay 记录必须保持可见且可回查。
+    func testFinderShowsPixabayFavoriteWithoutSourceFiltering() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MirageProviderSourcePolicy-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -196,8 +214,8 @@ final class ProviderSourcePolicyTests: XCTestCase {
         let library = try await storage.readLibrarySnapshot()
         XCTAssertTrue(library.favoriteIDs.contains(pixabay.id))
         XCTAssertTrue(pixabay.source.allowsPersistentLibraryStorage)
-        XCTAssertTrue(favorites.isEmpty)
-        XCTAssertNil(occurrence)
+        XCTAssertEqual(favorites.map(\.itemIdentifier), [identifier])
+        XCTAssertEqual(occurrence?.record, pixabay)
     }
 
     private static func record(id: String, source: ImageSource) -> RemoteImageRecord {

@@ -93,7 +93,7 @@ public struct PhotoSearchEnvironment: Sendable {
 
     public func recommendationCatalogKey(for surface: PhotoSourceSurface) async -> String {
         let snapshot = await preferences.snapshot()
-        let sourceIDs = snapshot.sourceIDs(for: surface)
+        let sourceIDs = snapshot.sourceIDs(for: Self.preferenceSurface(for: surface))
             .filter {
                 PhotoSourceRegistry.descriptor(for: $0)?.supportsAggregatedSearch(
                     on: surface,
@@ -102,9 +102,15 @@ public struct PhotoSearchEnvironment: Sendable {
             }
             .map(\.rawValue)
             .joined(separator: ",")
-        // App 与 Finder 仅在有效来源及请求策略都相同时共享同一 generation。
+        // Finder 跟随 App 的统一来源开关；有效来源与请求策略一致时可复用同一推荐键。
         return "\(DiscoveryRecommendation.catalogKey):photo-sources:\(snapshot.revision):\(sourceIDs)"
             + ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
+    }
+
+    private static func preferenceSurface(
+        for surface: PhotoSourceSurface
+    ) -> PhotoSourceSurface {
+        surface == .fileProvider ? .app : surface
     }
 
     /// GIPHY 收藏只保存公开对象 ID；每次打开资料库时通过官方批量端点恢复临时媒体 URL。
@@ -225,9 +231,10 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
     }
 
     public func configurationKey() async -> String {
-        let base = await preferences.configurationKey(for: surface)
+        let preferenceSurface = surface == .fileProvider ? PhotoSourceSurface.app : surface
+        let base = await preferences.configurationKey(for: preferenceSurface)
         let selection = selectedSourceID.map { ":selection:\($0.rawValue)" } ?? ""
-        return "\(base):purpose:\(purpose.rawValue)\(selection)"
+        return "\(base):surface:\(surface.rawValue):purpose:\(purpose.rawValue)\(selection)"
             + ":request-policy:\(PhotoSourceRequestPolicies.catalogVersion)"
     }
 
@@ -323,11 +330,12 @@ public struct ConfiguredPhotoSearcher: PhotoSearching, Sendable {
         )
     }
 
-    /// 指定来源必须同时存在于当前设置快照中；停用状态不会被筛选操作绕过。
+    /// Finder 与 App 共用 App 侧的统一来源开关；指定来源仍不能绕过停用状态。
     private func selectedSourceIDs(
         from snapshot: PhotoSourcePreferencesSnapshot
     ) -> [PhotoSourceID] {
-        let enabledSourceIDs = snapshot.sourceIDs(for: surface)
+        let preferenceSurface = surface == .fileProvider ? PhotoSourceSurface.app : surface
+        let enabledSourceIDs = snapshot.sourceIDs(for: preferenceSurface)
         guard let selectedSourceID else { return enabledSourceIDs }
         return enabledSourceIDs.contains(selectedSourceID) ? [selectedSourceID] : []
     }

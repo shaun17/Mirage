@@ -2,7 +2,7 @@ import FinderSync
 import MirageCore
 import SwiftUI
 
-/// 横向切换供应商，并在页面底部统一保存所有供应商草稿。
+/// 左侧切换供应商、右侧编辑详情，并在页面底部统一保存所有供应商草稿。
 struct PhotoSourceSettingsView: View {
     @ObservedObject var model: PhotoSourceSettingsModel
     let providerState: ProviderState
@@ -16,27 +16,33 @@ struct PhotoSourceSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            providerPicker
-            Divider()
-            if let providerStatus {
-                providerStatusSection(providerStatus)
-                Divider()
-            }
-            if let selectedDescriptor {
-                PhotoSourceProviderSettingsPane(
-                    model: model,
-                    descriptor: selectedDescriptor,
-                    isTesting: testingSourceID == selectedDescriptor.id,
-                    onTestConnection: testConnection
+            HStack(spacing: 0) {
+                PhotoSourceSettingsSidebar(
+                    descriptors: providerDescriptors,
+                    selection: $selectedSourceID,
+                    isDisabled: providerSwitchingIsDisabled
                 )
-            } else {
-                ContentUnavailableView("数据源不可用", systemImage: "exclamationmark.triangle")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                detailArea
             }
+
             Divider()
             actionBar
         }
-        .frame(width: 620, height: 350)
+        .frame(width: 720, height: 520)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            SettingsWindowTitleConfigurator(title: "数据源设置")
+                .allowsHitTesting(false)
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("数据源设置")
+                    .font(.headline)
+            }
+        }
         .onAppear {
             selectedSourceID = .openverse
         }
@@ -64,20 +70,26 @@ struct PhotoSourceSettingsView: View {
         }
     }
 
-    private var providerPicker: some View {
-        Picker("内容供应商", selection: $selectedSourceID) {
-            ForEach(providerDescriptors) { descriptor in
-                Text(providerPickerTitle(for: descriptor)).tag(descriptor.id)
+    private var detailArea: some View {
+        VStack(spacing: 0) {
+            if let providerStatus {
+                providerStatusSection(providerStatus)
+                Divider()
+            }
+
+            if let selectedDescriptor {
+                PhotoSourceProviderSettingsPane(
+                    model: model,
+                    descriptor: selectedDescriptor,
+                    isTesting: testingSourceID == selectedDescriptor.id,
+                    onTestConnection: testConnection
+                )
+            } else {
+                ContentUnavailableView("数据源不可用", systemImage: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(minWidth: 0, maxWidth: .infinity)
-        .accessibilityLabel("内容供应商")
-        .disabled(providerSwitchingIsDisabled)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 20)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// 正常状态不占设置页空间；检查中或异常时才呈现 Finder 状态与处理入口。
@@ -101,12 +113,13 @@ struct PhotoSourceSettingsView: View {
             .accessibilityLabel("Finder 状态：\(status.title)")
             .accessibilityValue(status.detail ?? "")
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
             providerStatusAction
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(status.color.opacity(0.055))
     }
 
     @ViewBuilder
@@ -141,7 +154,6 @@ struct PhotoSourceSettingsView: View {
         }
     }
 
-    /// Finder 已可用时不显示冗余说明，其他状态保留必要反馈与处理入口。
     private var providerStatus: ProviderStatusPresentation? {
         switch providerState {
         case .checking:
@@ -174,6 +186,7 @@ struct PhotoSourceSettingsView: View {
         HStack(spacing: 12) {
             SoftwareUpdateView(controller: softwareUpdateController)
                 .buttonStyle(.bordered)
+                .controlSize(.large)
 
             if model.hasUnsavedChanges {
                 Text("已修改 \(model.unsavedSourceIDs.count) 个数据源")
@@ -192,32 +205,30 @@ struct PhotoSourceSettingsView: View {
             Button("保存") {
                 model.scheduleSaveAllConfigurations()
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             .keyboardShortcut(.defaultAction)
             .disabled(isBusy || !model.hasUnsavedChanges)
             .accessibilityLabel("保存所有内容数据源设置")
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.vertical, 16)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.18))
     }
 
     private var selectedDescriptor: PhotoSourceDescriptor? {
-        return PhotoSourceRegistry.descriptor(for: selectedSourceID)
+        PhotoSourceRegistry.descriptor(for: selectedSourceID)
     }
 
     private var providerDescriptors: [PhotoSourceDescriptor] {
         PhotoSourceRegistry.descriptors
     }
 
-    /// “Default” 是设置入口名称；供应商详情仍保留 Openverse 的真实品牌与条款。
-    private func providerPickerTitle(for descriptor: PhotoSourceDescriptor) -> String {
-        descriptor.id == .openverse ? "Default" : descriptor.displayName
-    }
-
     private var isBusy: Bool {
         model.isLoading || !model.workingSourceIDs.isEmpty || !model.scheduledSourceIDs.isEmpty
     }
 
-    /// 连接测试允许切换供应商并由 `onChange` 取消；只有加载与持久化操作锁定分段选择。
+    /// 连接测试允许切换供应商并由 `onChange` 取消；只有加载与持久化操作锁定侧栏。
     private var providerSwitchingIsDisabled: Bool {
         model.isLoading
             || !model.scheduledSourceIDs.isEmpty

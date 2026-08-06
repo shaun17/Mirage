@@ -83,8 +83,10 @@ struct SoftwareUpdateView: View {
     }
 
     var body: some View {
-        Button("检查更新…") {
+        Button {
             controller.checkForUpdates()
+        } label: {
+            Label("检查更新…", systemImage: "arrow.clockwise")
         }
         .disabled(!viewModel.canCheckForUpdates)
         .help("检查 Mirage 是否有可用的新版本")

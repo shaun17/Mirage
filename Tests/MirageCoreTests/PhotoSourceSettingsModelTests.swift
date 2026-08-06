@@ -84,7 +84,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let storedPexelsKey = try await credentials.credential(for: .pexels)
         let storedPixabayKey = try await credentials.credential(for: .pixabay)
         XCTAssertEqual(snapshot.appSourceIDs, [.openverse, .pexels, .pixabay])
-        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels])
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels, .pixabay])
         XCTAssertEqual(storedPexelsKey, "pexels-key")
         XCTAssertEqual(storedPixabayKey, "pixabay-key")
         XCTAssertFalse(model.hasUnsavedChanges)
@@ -111,8 +111,8 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         XCTAssertNil(model.notice)
     }
 
-    /// Pixabay 使用独立 Key 与草稿，只能启用到主 App，不会越过 registry 写入 Finder。
-    func testSavesPixabayForAppWithoutEnablingFinder() async throws {
+    /// Pixabay 使用独立 Key 与统一开关，保存后同时进入 App 与 Finder 来源范围。
+    func testSavesPixabayForAppAndFinder() async throws {
         let preferences = makePreferences()
         let credentials = InMemoryPhotoSourceCredentialStore()
         var changedSourceIDs: [PhotoSourceID] = []
@@ -130,7 +130,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let snapshot = await preferences.snapshot()
         let storedKey = try await credentials.credential(for: .pixabay)
         XCTAssertEqual(snapshot.appSourceIDs, [.openverse, .pixabay])
-        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse])
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pixabay])
         XCTAssertEqual(storedKey, "pixabay-key")
         XCTAssertEqual(model.connectionMessages[.pixabay], "设置已保存")
         XCTAssertTrue(model.isEnabled(.pixabay))

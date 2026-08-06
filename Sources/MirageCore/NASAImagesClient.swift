@@ -43,10 +43,10 @@ extension NASAImagesError: PhotoSourceFailure {
     }
 }
 
-/// NASA Image and Video Library 的主 App 搜索适配器。
+/// NASA Image and Video Library 的图片搜索适配器。
 ///
-/// 当前产品策略只在 App 中展示搜索预览，因此使用响应中的 HTTPS preview 同时作为主图和缩略图。
-/// 如果未来开放给 Finder，原图必须在真正读取内容时通过 `/asset/{nasa_id}` 懒解析，不能把搜索预览冒充原图。
+/// 搜索响应提供的官方 HTTPS preview 同时用于 App 预览与 Finder 图片物化；详情页仍保留
+/// `nasa_id` 对应入口，避免把当前交付尺寸描述成 NASA 原始母版。
 public struct NASAImagesClient: PhotoSourceSearching, Sendable {
     public static let defaultEndpoint = URL(string: "https://images-api.nasa.gov/search")!
     public let sourceID = PhotoSourceID.nasa

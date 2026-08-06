@@ -4,15 +4,15 @@ import XCTest
 
 @MainActor
 final class AvatarTypeFilterTests: XCTestCase {
-    func testFinderPhotoFilterProjectsAppOnlyAndDisabledSourcesToCompatibleRange() {
-        let enabled: Set<PhotoSourceID> = [.openverse, .pexels]
+    func testFinderPhotoFilterSupportsEveryEnabledAppPhotoSource() {
+        let enabled: Set<PhotoSourceID> = [.openverse, .metMuseum, .nasa, .pexels, .pixabay]
 
         for sourceID in [PhotoSourceID.metMuseum, .nasa, .pixabay] {
             let snapshot = DiscoveryFilterPreferencesSnapshot(photoSourceID: sourceID)
-            XCTAssertNil(snapshot.fileProviderPhotoSourceID(enabledSourceIDs: enabled))
+            XCTAssertEqual(snapshot.fileProviderPhotoSourceID(enabledSourceIDs: enabled), sourceID)
             XCTAssertEqual(
                 snapshot.fileProviderPhotoCatalogKey(enabledSourceIDs: enabled),
-                "provider-photo-filter-v2:all"
+                "provider-photo-filter-v3:\(sourceID.rawValue)"
             )
         }
 
@@ -23,7 +23,7 @@ final class AvatarTypeFilterTests: XCTestCase {
         )
         XCTAssertEqual(
             pexels.fileProviderPhotoCatalogKey(enabledSourceIDs: enabled),
-            "provider-photo-filter-v2:pexels"
+            "provider-photo-filter-v3:pexels"
         )
         XCTAssertNil(
             pexels.fileProviderPhotoSourceID(enabledSourceIDs: [.openverse])

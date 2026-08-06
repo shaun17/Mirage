@@ -56,7 +56,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, [1, 2])
     }
 
-    /// Finder 跟随兼容来源筛选；App 专属来源回退到全部兼容照片，且头像和 GIF 不得混入。
+    /// Finder 严格跟随 App 图片来源筛选，所有普通图片来源都可显示，头像和 GIF 不得混入。
     func testRootTracksSharedPhotoSourceSelectionAndExcludesNonPhotoRecords() async throws {
         let suiteName = "MirageProviderPageTests.PhotoFilters.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -66,7 +66,10 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         filters.setPhotoSourceID(.pexels)
 
         let openverse = Self.record(id: "openverse", source: .openverse)
+        let metMuseum = Self.record(id: "met", source: .metMuseum)
+        let nasa = Self.record(id: "nasa", source: .nasa)
         let pexels = Self.record(id: "pexels", source: .pexels)
+        let pixabay = Self.record(id: "pixabay", source: .pixabay)
         let avatar = RemoteImageRecord(
             id: "db:v13:2025-08-03:avatar",
             title: "Avatar",
@@ -82,7 +85,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             manager: nil,
             storage: storage,
             discoveryFeed: ProviderStaticDiscoveryFeed(
-                records: [openverse, pexels, avatar, giphy]
+                records: [openverse, metMuseum, nasa, pexels, pixabay, avatar, giphy]
             ),
             filterPreferences: filters
         )
@@ -110,18 +113,23 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             Self.images(in: allSourcesRoot).compactMap {
                 ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
             },
-            [openverse.id, pexels.id]
+            [openverse.id, metMuseum.id, nasa.id, pexels.id, pixabay.id]
         )
 
+        let recordsBySourceID: [PhotoSourceID: RemoteImageRecord] = [
+            .metMuseum: metMuseum,
+            .nasa: nasa,
+            .pixabay: pixabay,
+        ]
         for sourceID in [PhotoSourceID.metMuseum, .nasa, .pixabay] {
             filters.setPhotoSourceID(sourceID)
-            let unsupportedSourceRoot = try await ProviderCatalog(repository: repository)
+            let selectedSourceRoot = try await ProviderCatalog(repository: repository)
                 .preparedItems(for: .root)
             XCTAssertEqual(
-                Self.images(in: unsupportedSourceRoot).compactMap {
+                Self.images(in: selectedSourceRoot).compactMap {
                     ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
                 },
-                [openverse.id, pexels.id]
+                [recordsBySourceID[sourceID]?.id].compactMap { $0 }
             )
             let workingSet = try await ProviderCatalog(repository: repository)
                 .preparedItems(for: .workingSet)
@@ -129,7 +137,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
                 Self.images(in: workingSet).compactMap {
                     ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
                 },
-                [openverse.id, pexels.id]
+                [recordsBySourceID[sourceID]?.id].compactMap { $0 }
             )
         }
     }

@@ -201,7 +201,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             at: Self.remoteCursor(for: snapshot),
             logicalPage: requestedPage,
             pageSize: pageSize,
-            excluding: Set(snapshot.records.map(\.id))
+            excluding: Set(snapshot.records.map(\.id)),
+            prefetched: snapshot.pendingRecords
         )
         try Task.checkCancellation()
         let updated = try await storage.appendDiscoveryFeed(
@@ -209,7 +210,8 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             expectedNextPage: requestedPage,
             expectedRecordCount: offset,
             records: loaded.records,
-            nextPage: Self.logicalNextPage(after: requestedPage, hasMore: loaded.nextCursor != nil),
+            pendingRecords: loaded.pendingRecords,
+            nextPage: Self.logicalNextPage(after: requestedPage, hasMore: loaded.hasMore),
             remoteCursor: loaded.nextCursor
         )
         let didMutateSnapshot = updated != snapshot
@@ -248,18 +250,20 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             at: DiscoveryRemoteCursor(queryIndex: 0, remotePage: 1),
             logicalPage: 1,
             pageSize: pageSize,
-            excluding: []
+            excluding: [],
+            prefetched: []
         )
         try Task.checkCancellation()
         let result = try await storage.commitDiscoveryFeedIfCurrent(
             expectedGeneration: observed?.generation,
             records: loaded.records,
+            pendingRecords: loaded.pendingRecords,
             refreshedAt: now(),
             source: loaded.source,
             catalogKey: expectedCatalogKey,
             queryKey: DiscoveryRecommendation.query,
             pageSize: pageSize,
-            nextPage: Self.logicalNextPage(after: 1, hasMore: loaded.nextCursor != nil),
+            nextPage: Self.logicalNextPage(after: 1, hasMore: loaded.hasMore),
             remoteCursor: loaded.nextCursor
         )
         switch result {
@@ -284,23 +288,37 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     /// 网络页必须在调用方预算内完成；只有混合推荐允许用头像补齐或兜底。
     /// 游标决定「向哪个关键词的第几页」抓取；逻辑页只用于混合流的稳定 seed 区间。
     private func loadPage(
-        at cursor: DiscoveryRemoteCursor,
+        at cursor: DiscoveryRemoteCursor?,
         logicalPage: Int,
         pageSize: Int,
-        excluding existingIDs: Set<String>
+        excluding existingIDs: Set<String>,
+        prefetched prefetchedRecords: [RemoteImageRecord]
     ) async throws -> LoadedDiscoveryPage {
+        if contentScope == .photos {
+            return try await loadPhotoPage(
+                at: cursor,
+                pageSize: pageSize,
+                excluding: existingIDs,
+                prefetched: prefetchedRecords
+            )
+        }
+
         let catalog = DiscoveryRecommendation.queries
-        guard catalog.indices.contains(cursor.queryIndex), cursor.remotePage >= 1 else {
-            guard contentScope == .mixed else {
-                throw DiscoveryFeedError.snapshotExpired
-            }
+        guard let cursor,
+              catalog.indices.contains(cursor.queryIndex),
+              cursor.remotePage >= 1 else {
             // 目录跨版本收缩或游标损坏：用兜底头像收满本页并终结推荐流，而不是崩溃或重放。
             let records = await fallbackRecords(
                 page: logicalPage,
                 pageSize: pageSize,
                 excluding: existingIDs
             )
-            return LoadedDiscoveryPage(records: records, nextCursor: nil, source: .fallback)
+            return LoadedDiscoveryPage(
+                records: records,
+                pendingRecords: [],
+                nextCursor: nil,
+                source: .fallback
+            )
         }
         do {
             let response = try await Self.searchWithTimeout(
@@ -317,30 +335,90 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
                 pageSize: pageSize,
                 excluding: existingIDs
             )
-            let nextCursor = contentScope == .photos && records.count < pageSize
-                ? nil
-                : Self.advancedCursor(
+            return LoadedDiscoveryPage(
+                records: records,
+                pendingRecords: [],
+                nextCursor: Self.advancedCursor(
                     after: cursor,
                     nextImageCursor: response.nextCursor,
                     catalogCount: catalog.count
-                )
-            return LoadedDiscoveryPage(
-                records: records,
-                nextCursor: nextCursor,
+                ),
                 source: .network
             )
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error {
-            guard contentScope == .mixed else { throw error }
+        } catch {
             // 远端失败只影响本逻辑页：兜底头像保持流动，远端位置不被消费，下一页原地重试。
             let records = await fallbackRecords(
                 page: logicalPage,
                 pageSize: pageSize,
                 excluding: existingIDs
             )
-            return LoadedDiscoveryPage(records: records, nextCursor: cursor, source: .fallback)
+            return LoadedDiscoveryPage(
+                records: records,
+                pendingRecords: [],
+                nextCursor: cursor,
+                source: .fallback
+            )
         }
+    }
+
+    /// Finder 图片页先消费上次预取余量；去重后不足 20 张时继续查询，远端真正耗尽才发布短页。
+    private func loadPhotoPage(
+        at initialCursor: DiscoveryRemoteCursor?,
+        pageSize: Int,
+        excluding existingIDs: Set<String>,
+        prefetched prefetchedRecords: [RemoteImageRecord]
+    ) async throws -> LoadedDiscoveryPage {
+        let catalog = DiscoveryRecommendation.queries
+        var seen = existingIDs
+        var candidates: [RemoteImageRecord] = []
+        for record in prefetchedRecords
+        where !record.source.isAvatarSource
+            && record.source != .giphy
+            && seen.insert(record.id).inserted {
+            candidates.append(record)
+        }
+
+        var nextCursor = initialCursor
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: networkTimeout)
+        while candidates.count < pageSize, let cursor = nextCursor {
+            guard catalog.indices.contains(cursor.queryIndex), cursor.remotePage >= 1 else {
+                throw DiscoveryFeedError.snapshotExpired
+            }
+            let remaining = clock.now.duration(to: deadline)
+            guard remaining > .zero else { throw DiscoveryFeedNetworkError.timedOut }
+            let response = try await Self.searchWithTimeout(
+                service: service,
+                query: serviceQuery(for: catalog[cursor.queryIndex]),
+                cursor: cursor,
+                pageSize: pageSize,
+                timeout: remaining
+            )
+            try Task.checkCancellation()
+            for record in response.records
+            where !record.source.isAvatarSource
+                && record.source != .giphy
+                && seen.insert(record.id).inserted {
+                candidates.append(record)
+            }
+            let advanced = Self.advancedCursor(
+                after: cursor,
+                nextImageCursor: response.nextCursor,
+                catalogCount: catalog.count
+            )
+            guard advanced != cursor else { throw DiscoveryFeedNetworkError.stalledCursor }
+            nextCursor = advanced
+        }
+
+        let committedCount = min(candidates.count, pageSize)
+        return LoadedDiscoveryPage(
+            records: Array(candidates.prefix(committedCount)),
+            pendingRecords: Array(candidates.dropFirst(committedCount)),
+            nextCursor: nextCursor,
+            source: .network
+        )
     }
 
     /// 当前关键词还有远端续页就前进一页，否则切到下一关键词的第一页；目录耗尽即整条流耗尽。
@@ -362,9 +440,11 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     }
 
     /// v3 及更早的快照没有游标；退化为「单关键词、逻辑页=远端页」的旧语义继续续读。
-    private static func remoteCursor(for snapshot: DiscoveryFeedSnapshot) -> DiscoveryRemoteCursor {
-        snapshot.remoteCursor
-            ?? DiscoveryRemoteCursor(queryIndex: 0, remotePage: snapshot.nextPage ?? 1)
+    private static func remoteCursor(for snapshot: DiscoveryFeedSnapshot) -> DiscoveryRemoteCursor? {
+        if let remoteCursor = snapshot.remoteCursor { return remoteCursor }
+        // 新快照可能已耗尽远端，但仍有预取余量；此时只能消费余量，不能重放旧页。
+        guard snapshot.pendingRecords.isEmpty, let nextPage = snapshot.nextPage else { return nil }
+        return DiscoveryRemoteCursor(queryIndex: 0, remotePage: nextPage)
     }
 
     /// 安全过滤或跨页重复造成不足时，用不同 seed 区间补齐到 20 条。
@@ -445,6 +525,7 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
             && snapshot.queryKey == DiscoveryRecommendation.query
             && snapshot.pageSize == pageSize
             && !snapshot.records.isEmpty
+            && hasValidPageLayout(snapshot)
             && age >= -30
             && age < DiscoveryRecommendation.refreshInterval
     }
@@ -457,10 +538,28 @@ public actor DiscoveryFeedRepository: DiscoveryFeedProviding {
     ) throws -> DiscoveryFeedSnapshot {
         guard snapshot.catalogKey == expectedCatalogKey,
               snapshot.queryKey == DiscoveryRecommendation.query,
-              snapshot.pageSize == pageSize else {
+              snapshot.pageSize == pageSize,
+              hasValidPageLayout(snapshot) else {
             throw DiscoveryFeedError.snapshotExpired
         }
         return snapshot
+    }
+
+    /// 有续页时已发布记录必须恰好落在完整页边界；预取余量不得与可见记录重复。
+    private static func hasValidPageLayout(_ snapshot: DiscoveryFeedSnapshot) -> Bool {
+        guard snapshot.pageSize > 0,
+              Set(snapshot.records.map(\.id)).count == snapshot.records.count,
+              Set(snapshot.pendingRecords.map(\.id)).count == snapshot.pendingRecords.count else {
+            return false
+        }
+        let visibleIDs = Set(snapshot.records.map(\.id))
+        guard snapshot.pendingRecords.allSatisfy({ !visibleIDs.contains($0.id) }) else {
+            return false
+        }
+        if snapshot.nextPage != nil {
+            return snapshot.records.count.isMultiple(of: snapshot.pageSize)
+        }
+        return snapshot.pendingRecords.isEmpty
     }
 
     /// 计算页在累计记录中的绝对偏移，拒绝整数溢出。
@@ -527,12 +626,16 @@ private struct DiscoveryFeedRequestKey: Hashable, Sendable {
 /// 仓库内部保留本页来源与下一次远端抓取位置；游标为空表示整个关键词目录耗尽。
 private struct LoadedDiscoveryPage {
     let records: [RemoteImageRecord]
+    let pendingRecords: [RemoteImageRecord]
     let nextCursor: DiscoveryRemoteCursor?
     let source: DiscoveryFeedSource
+
+    var hasMore: Bool { !pendingRecords.isEmpty || nextCursor != nil }
 }
 
 /// 远端请求在推荐流的有界时间内未给出可用响应。
 private enum DiscoveryFeedNetworkError: Error {
     case timedOut
     case emptyResponse
+    case stalledCursor
 }

@@ -111,8 +111,8 @@ public enum PhotoSourceRegistry {
             summary: "无需密钥的博物馆 CC0 公版艺术作品",
             availability: .available,
             credentialRequirement: .none,
-            supportedSurfaces: [.app],
-            allowsAutomatedRecommendations: false,
+            supportedSurfaces: [.app, .fileProvider],
+            allowsAutomatedRecommendations: true,
             allowsPersistentLibraryStorage: true,
             allowsMediaCaching: true,
             resultPresentation: .aggregated,
@@ -122,7 +122,7 @@ public enum PhotoSourceRegistry {
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Images provided by The Metropolitan Museum of Art",
                 url: URL(string: "https://www.metmuseum.org")!,
-                note: "仅展示开放获取（CC0）作品；暂不用于 Finder 或自动推荐"
+                note: "仅展示开放获取（CC0）作品；支持 App、Finder 与自动推荐"
             )
         ),
         PhotoSourceDescriptor(
@@ -131,8 +131,8 @@ public enum PhotoSourceRegistry {
             summary: "无需密钥的 NASA Image and Video Library 图片",
             availability: .available,
             credentialRequirement: .none,
-            supportedSurfaces: [.app],
-            allowsAutomatedRecommendations: false,
+            supportedSurfaces: [.app, .fileProvider],
+            allowsAutomatedRecommendations: true,
             allowsPersistentLibraryStorage: true,
             allowsMediaCaching: true,
             resultPresentation: .aggregated,
@@ -142,7 +142,7 @@ public enum PhotoSourceRegistry {
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Images provided by NASA Image and Video Library",
                 url: URL(string: "https://images.nasa.gov")!,
-                note: "使用前请核对 NASA Media Usage Guidelines；可在 App 内收藏，暂不用于 Finder"
+                note: "使用前请核对 NASA Media Usage Guidelines；支持 App、Finder 与自动推荐"
             )
         ),
         PhotoSourceDescriptor(
@@ -167,11 +167,11 @@ public enum PhotoSourceRegistry {
         PhotoSourceDescriptor(
             id: .pixabay,
             displayName: "Pixabay",
-            summary: "使用你自己的 Pixabay API Key（App 搜索，普通权限最高 1280px）",
+            summary: "使用你自己的 Pixabay API Key（普通权限最高 1280px）",
             availability: .available,
             credentialRequirement: .apiKey,
-            supportedSurfaces: [.app],
-            allowsAutomatedRecommendations: false,
+            supportedSurfaces: [.app, .fileProvider],
+            allowsAutomatedRecommendations: true,
             allowsPersistentLibraryStorage: true,
             allowsMediaCaching: true,
             resultPresentation: .aggregated,
@@ -181,7 +181,7 @@ public enum PhotoSourceRegistry {
             searchResultAttribution: PhotoSourceAttribution(
                 text: "Images provided by Pixabay",
                 url: URL(string: "https://pixabay.com")!,
-                note: "可在 App 内收藏，暂不用于 Finder 或自动推荐"
+                note: "支持 App 收藏、Finder 与自动推荐"
             )
         ),
         PhotoSourceDescriptor(

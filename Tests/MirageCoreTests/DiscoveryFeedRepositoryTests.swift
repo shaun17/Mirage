@@ -106,6 +106,59 @@ final class DiscoveryFeedRepositoryTests: XCTestCase {
         })
     }
 
+    /// 共享批次与上一页重叠时，Finder 必须继续查询补满逻辑页，并把多取记录留给下一页。
+    func testPhotoScopeContinuesAfterDeduplicationAndPersistsPrefetchedOverflow() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let openverse = OverlappingPhotoDiscoveryOpenverse()
+        let diceBear = DiceBearClient(styles: [.pixelArt])
+        let repository = DiscoveryFeedRepository(
+            storage: storage,
+            service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+            diceBear: diceBear,
+            catalogKey: { "finder-photo-overlap-test-v1" },
+            contentScope: .photos
+        )
+
+        let first = try await repository.page(
+            generation: nil,
+            page: 1,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+        let second = try await repository.page(
+            generation: first.generation,
+            page: 2,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+
+        // 模拟 File Provider 进程重启，验证未发布余量来自持久快照而非 actor 内存。
+        let resumedRepository = DiscoveryFeedRepository(
+            storage: try AppGroupStorage(baseURL: temporaryURL),
+            service: ImageSearchService(openverse: openverse, diceBear: diceBear),
+            diceBear: diceBear,
+            catalogKey: { "finder-photo-overlap-test-v1" },
+            contentScope: .photos
+        )
+        let third = try await resumedRepository.page(
+            generation: first.generation,
+            page: 3,
+            pageSize: DiscoveryRecommendation.pageSize
+        )
+
+        XCTAssertEqual(first.records.map(\.id), (0..<20).map { "overlap-\($0)" })
+        XCTAssertEqual(second.records.map(\.id), (20..<40).map { "overlap-\($0)" })
+        XCTAssertEqual(third.records.map(\.id), (40..<60).map { "overlap-\($0)" })
+        XCTAssertEqual(Set((first.records + second.records + third.records).map(\.id)).count, 60)
+        XCTAssertEqual(second.nextPage, 3)
+        XCTAssertEqual(third.nextPage, 4)
+
+        let snapshot = try await storage.readDiscoveryFeedSnapshot(generation: first.generation)
+        XCTAssertEqual(snapshot?.records.count, 60)
+        XCTAssertEqual(snapshot?.pendingRecords.map(\.id), (60..<78).map { "overlap-\($0)" })
+        XCTAssertEqual(snapshot?.nextPage, 4)
+        let requestedPages = await openverse.pages()
+        XCTAssertEqual(requestedPages, [1, 2, 3, 4])
+    }
+
     /// 当前推荐刷新后，旧 Finder token 仍须续读旧 generation 且不能覆盖当前指针。
     func testFrozenGenerationSurvivesCurrentSnapshotRefresh() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
@@ -566,8 +619,34 @@ private struct PartialPhotoDiscoveryOpenverse: OpenverseSearching {
     func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
         ImageSearchPage(
             records: DiscoveryFeedRepositoryTests.records(prefix: "photo-only", count: 12),
-            nextPage: 2
+            nextPage: nil
         )
+    }
+}
+
+/// 第二页与首页重叠两条；后续页连续，精确复现 Finder 的 20 变 18 场景。
+private actor OverlappingPhotoDiscoveryOpenverse: OpenverseSearching {
+    private var requestedPages: [Int] = []
+
+    func search(query: String, page: Int, pageSize: Int) async throws -> ImageSearchPage {
+        requestedPages.append(page)
+        let lowerBound = page == 1 ? 0 : 18 + ((page - 2) * pageSize)
+        let records = (lowerBound..<(lowerBound + pageSize)).map { index in
+            let url = URL(string: "https://example.com/overlap-\(index).png")!
+            return RemoteImageRecord(
+                id: "overlap-\(index)",
+                title: "Overlap \(index)",
+                source: .openverse,
+                imageURL: url,
+                thumbnailURL: url,
+                license: .cc0
+            )
+        }
+        return ImageSearchPage(records: records, nextPage: page + 1)
+    }
+
+    func pages() -> [Int] {
+        requestedPages
     }
 }
 

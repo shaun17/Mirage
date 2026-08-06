@@ -271,7 +271,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         let storage = try requireStorage()
         let photoFilter = await currentFileProviderPhotoFilter()
-        let sourceKey = await sourcePreferences?.configurationKey(for: .fileProvider)
+        let sourceKey = await sourcePreferences?.configurationKey(for: .app)
             ?? "photo-sources:test"
         let catalogKey = "provider-fixed-root-fallback-v1:\(sourceKey):\(photoFilter.key)"
         if let current = try await storage.readDiscoveryFeedSnapshot(),
@@ -652,6 +652,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
         try Task.checkCancellation()
         guard let occurrence else { return nil }
+        if reference.view == .favorite {
+            return await isAvailableFavoriteInFileProvider(occurrence.record) ? occurrence : nil
+        }
         guard await isAllowedInFileProvider(occurrence.record) else { return nil }
         if occurrence.record.source == .thisPersonDoesNotExist {
             guard (try? await hasAvailableAvatarContent(occurrence.record, in: storage)) == true else {
@@ -675,7 +678,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         let records = try await requireStorage().readRecent()
         try Task.checkCancellation()
-        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        let enabledSourceIDs = await enabledFinderPhotoSourceIDs()
         var items: [ProviderItem] = []
         for record in records {
             guard Self.isAllowed(record.image, enabledSourceIDs: enabledSourceIDs) else { continue }
@@ -690,24 +693,28 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return items
     }
 
-    /// 收藏顺序和内容都来自 favorites 内嵌快照，不再回退到可被其他视图改写的全局 items。
+    /// 收藏不再受来源开关过滤；只排除无法在 Finder 中合法、稳定物化的内容。
     func favoriteItems() async throws -> [ProviderItem] {
         try Task.checkCancellation()
         let records = try await requireStorage().readFavoriteRecords()
         try Task.checkCancellation()
-        let allowed = await allowedFileProviderRecords(records)
-        return allowed.map { ProviderItem(record: $0, view: .favorite) }
+        var available: [RemoteImageRecord] = []
+        available.reserveCapacity(records.count)
+        for record in records where await isAvailableFavoriteInFileProvider(record) {
+            available.append(record)
+        }
+        return available.map { ProviderItem(record: $0, view: .favorite) }
     }
 
     /// 测试注入未提供设置时保持历史语义；生产环境严格隐藏未获 File Provider 授权的来源。
     private func isAllowedInFileProvider(_ record: RemoteImageRecord) async -> Bool {
-        Self.isAllowed(record, enabledSourceIDs: await enabledFileProviderSourceIDs())
+        Self.isAllowed(record, enabledSourceIDs: await enabledFinderPhotoSourceIDs())
     }
 
     private func allowedFileProviderRecords(
         _ records: [RemoteImageRecord]
     ) async -> [RemoteImageRecord] {
-        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        let enabledSourceIDs = await enabledFinderPhotoSourceIDs()
         var allowed: [RemoteImageRecord] = []
         allowed.reserveCapacity(records.count)
         for record in records where Self.isAllowed(record, enabledSourceIDs: enabledSourceIDs) {
@@ -722,10 +729,21 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return allowed
     }
 
-    private func enabledFileProviderSourceIDs() async -> Set<PhotoSourceID>? {
+    /// Finder 图片范围以 App 的统一来源开关为准，不再读取独立的 File Provider 来源列表。
+    private func enabledFinderPhotoSourceIDs() async -> Set<PhotoSourceID>? {
         guard let sourcePreferences else { return nil }
         let snapshot = await sourcePreferences.snapshot()
-        return Set(snapshot.sourceIDs(for: .fileProvider))
+        return Set(snapshot.sourceIDs(for: .app))
+    }
+
+    /// GIPHY 收藏只有对象 ID，且其条款禁止构建 Finder 目录；动态真人头像则必须仍有冻结内容。
+    private func isAvailableFavoriteInFileProvider(
+        _ record: RemoteImageRecord
+    ) async -> Bool {
+        guard record.source != .giphy else { return false }
+        guard record.source == .thisPersonDoesNotExist else { return true }
+        guard let storage else { return false }
+        return (try? await hasAvailableAvatarContent(record, in: storage)) == true
     }
 
     private static func isAllowed(
@@ -1052,13 +1070,13 @@ actor ProviderRepository: ProviderSearchResultStoring {
             storage: storage,
             service: service,
             diceBear: avatarProvider,
-            // 一层最多补 3 个底层页；单页 1.5 秒使 Finder 枚举总等待仍控制在数秒内。
-            networkTimeout: .milliseconds(1_500),
+            // The Met 需要先查 ID、再并发读取作品详情；给单页完整预算，避免合法来源被短超时误判为空。
+            networkTimeout: .seconds(15),
             catalogKey: { [photoEnvironment, filterKey] in
                 let sourceKey = await photoEnvironment.recommendationCatalogKey(
                     for: .fileProvider
                 )
-                return "\(sourceKey):\(filterKey):content-scope:photos-v1"
+                return "\(sourceKey):\(filterKey):content-scope:photos-v2"
             },
             contentScope: .photos
         )
@@ -1070,9 +1088,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
         filterPreferences?.snapshot() ?? DiscoveryFilterPreferencesSnapshot()
     }
 
-    /// App 专属或已禁用来源在 Finder 中投影为“全部兼容来源”，保证枚举与 occurrence 共用同一范围。
+    /// Finder 严格采用 App 图片筛选，并用 App 的统一来源开关校验该筛选仍然可用。
     private func currentFileProviderPhotoFilter() async -> FileProviderPhotoFilter {
-        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        let enabledSourceIDs = await enabledFinderPhotoSourceIDs()
         let snapshot = currentFilterSnapshot()
         return FileProviderPhotoFilter(
             sourceID: snapshot.fileProviderPhotoSourceID(

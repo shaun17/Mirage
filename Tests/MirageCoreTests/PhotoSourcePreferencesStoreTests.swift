@@ -24,7 +24,7 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.appSourceIDs, [.openverse, .pexels, .pixabay])
-        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels])
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels, .pixabay])
     }
 
     /// Settings 按稳定顺序展示六个入口，并明确声明各来源的使用边界。
@@ -43,29 +43,29 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(pexels?.supportedSurfaces, [.app, .fileProvider])
         XCTAssertEqual(pexels?.credentialAcquisitionLabel, freeRegistrationLabel)
         XCTAssertEqual(pixabay?.availability, .available)
-        XCTAssertEqual(pixabay?.supportedSurfaces, [.app])
+        XCTAssertEqual(pixabay?.supportedSurfaces, [.app, .fileProvider])
         XCTAssertEqual(pixabay?.credentialAcquisitionLabel, freeRegistrationLabel)
         XCTAssertNil(openverse?.credentialAcquisitionLabel)
         XCTAssertEqual(metMuseum?.credentialRequirement, PhotoSourceCredentialRequirement.none)
-        XCTAssertEqual(metMuseum?.supportedSurfaces, [.app])
-        XCTAssertFalse(metMuseum?.allowsAutomatedRecommendations ?? true)
+        XCTAssertEqual(metMuseum?.supportedSurfaces, [.app, .fileProvider])
+        XCTAssertTrue(metMuseum?.allowsAutomatedRecommendations ?? false)
         XCTAssertTrue(metMuseum?.allowsPersistentLibraryStorage ?? false)
         XCTAssertEqual(nasa?.credentialRequirement, PhotoSourceCredentialRequirement.none)
-        XCTAssertEqual(nasa?.supportedSurfaces, [.app])
-        XCTAssertFalse(nasa?.allowsAutomatedRecommendations ?? true)
+        XCTAssertEqual(nasa?.supportedSurfaces, [.app, .fileProvider])
+        XCTAssertTrue(nasa?.allowsAutomatedRecommendations ?? false)
         XCTAssertTrue(nasa?.allowsPersistentLibraryStorage ?? false)
         XCTAssertEqual(ImageSource.metMuseum.photoSourceID, .metMuseum)
         XCTAssertTrue(ImageSource.metMuseum.allowsPersistentLibraryStorage)
         XCTAssertEqual(ImageSource.nasa.photoSourceID, .nasa)
         XCTAssertTrue(ImageSource.nasa.allowsPersistentLibraryStorage)
-        XCTAssertEqual(pixabay?.allowsAutomatedRecommendations, false)
+        XCTAssertEqual(pixabay?.allowsAutomatedRecommendations, true)
         XCTAssertEqual(pixabay?.allowsPersistentLibraryStorage, true)
         XCTAssertTrue(ImageSource.pixabay.allowsPersistentLibraryStorage)
         XCTAssertEqual(pixabay?.searchResultAttribution?.text, "Images provided by Pixabay")
         XCTAssertEqual(pixabay?.searchResultAttribution?.url.host, "pixabay.com")
         XCTAssertEqual(
             pixabay?.searchResultAttribution?.note,
-            "可在 App 内收藏，暂不用于 Finder 或自动推荐"
+            "支持 App 收藏、Finder 与自动推荐"
         )
         XCTAssertEqual(giphy?.supportedSurfaces, [.app])
         XCTAssertEqual(
@@ -104,8 +104,8 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         }
     }
 
-    /// Met 与 NASA 都可进入 App 交互搜索，但不能越过政策开启 Finder。
-    func testMetAndNASACanEnableAppButRejectFileProvider() async throws {
+    /// Met 与 NASA 都支持 App 与 Finder，两个范围可由统一开关一次提交。
+    func testMetAndNASACanEnableAppAndFileProvider() async throws {
         let store = makeStore()
 
         _ = try await store.saveConfiguration(for: .metMuseum, enabledSurfaces: [.app])
@@ -114,15 +114,11 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(updated.fileProviderSourceIDs, [.openverse])
 
         for sourceID in [PhotoSourceID.metMuseum, .nasa] {
-            do {
-                _ = try await store.setEnabled(true, sourceID: sourceID, surface: .fileProvider)
-                XCTFail("App-only 来源不能用于 Finder: \(sourceID)")
-            } catch {
-                XCTAssertEqual(error as? PhotoSourcePreferencesError, .unsupportedSurface)
-            }
+            _ = try await store.setEnabled(true, sourceID: sourceID, surface: .fileProvider)
         }
         let snapshot = await store.snapshot()
-        XCTAssertEqual(snapshot, updated)
+        XCTAssertEqual(snapshot.appSourceIDs, updated.appSourceIDs)
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .metMuseum, .nasa])
     }
 
     /// 只有真实设置变化才推进 revision；相同设置写入必须保持游标仍可使用。
@@ -172,8 +168,8 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(invalidated.revision, 3)
     }
 
-    /// Pixabay 可以进入 App 聚合，但不能越过 registry 开启 Finder File Provider。
-    func testPixabayCanEnableAppButRejectsFileProvider() async throws {
+    /// Pixabay 可以进入 App 聚合与 Finder File Provider。
+    func testPixabayCanEnableAppAndFileProvider() async throws {
         let store = makeStore()
 
         let updated = try await store.saveConfiguration(
@@ -183,14 +179,15 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(updated.appSourceIDs, [.openverse, .pixabay])
         XCTAssertEqual(updated.fileProviderSourceIDs, [.openverse])
 
-        do {
-            _ = try await store.setEnabled(true, sourceID: .pixabay, surface: .fileProvider)
-            XCTFail("Pixabay 未获条款确认前不能用于 Finder")
-        } catch {
-            XCTAssertEqual(error as? PhotoSourcePreferencesError, .unsupportedSurface)
-        }
+        let finderEnabled = try await store.setEnabled(
+            true,
+            sourceID: .pixabay,
+            surface: .fileProvider
+        )
         let snapshot = await store.snapshot()
-        XCTAssertEqual(snapshot, updated)
+        XCTAssertEqual(snapshot.appSourceIDs, updated.appSourceIDs)
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pixabay])
+        XCTAssertEqual(snapshot, finderEnabled)
     }
 
     /// Pexels 可以单独启用到 Finder，并按 registry 顺序写入共享配置。
@@ -242,8 +239,8 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         XCTAssertEqual(after, updated)
     }
 
-    /// 推荐流在有效来源相同时继续跨进程共享；App 启用独占来源后才分离快照。
-    func testRecommendationCatalogKeySeparatesOnlyDifferentSourceSets() async throws {
+    /// Finder 跟随 App 的来源开关，因此两端推荐键始终使用同一有效来源集合。
+    func testRecommendationCatalogKeyUsesAppSourceSetForFinder() async throws {
         let store = makeStore()
         let environment = PhotoSearchEnvironment(
             preferences: store,
@@ -260,7 +257,7 @@ final class PhotoSourcePreferencesStoreTests: XCTestCase {
         _ = try await store.setEnabled(true, sourceID: .pexels, surface: .app)
         let configuredAppKey = await environment.recommendationCatalogKey(for: .app)
         let configuredFinderKey = await environment.recommendationCatalogKey(for: .fileProvider)
-        XCTAssertNotEqual(configuredAppKey, configuredFinderKey)
+        XCTAssertEqual(configuredAppKey, configuredFinderKey)
 
         _ = try await store.setEnabled(true, sourceID: .pexels, surface: .fileProvider)
         let sharedAppKey = await environment.recommendationCatalogKey(for: .app)
