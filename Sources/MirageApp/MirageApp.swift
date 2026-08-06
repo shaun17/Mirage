@@ -36,5 +36,6 @@ struct MirageApp: App {
                 onRecheckProvider: model.configureProvider
             )
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
     }
 }

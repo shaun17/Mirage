@@ -72,7 +72,7 @@ struct PhotoSourceSettingsView: View {
         .accessibilityLabel("内容供应商")
         .disabled(providerSwitchingIsDisabled)
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 20)
         .frame(maxWidth: .infinity)
     }
 
