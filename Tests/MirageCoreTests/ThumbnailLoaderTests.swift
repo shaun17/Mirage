@@ -1,5 +1,8 @@
+import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 
 /// 缩略图加载器的缓存、并发去重与失败语义；这些规则决定长列表来回滚动时的流畅度与流量。
@@ -79,6 +82,95 @@ final class ThumbnailLoaderTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(max(image.width, image.height), 128)
         XCTAssertGreaterThan(image.width, 0)
+    }
+
+    /// 复制地址同时声明纯文本与 URL，普通输入框和链接感知应用都能粘贴。
+    @MainActor
+    func testCopyAddressWritesTextAndURLRepresentations() {
+        let pasteboard = Self.makePasteboard()
+        let url = URL(string: "https://images.example.com/photo.png?size=large")!
+
+        XCTAssertTrue(RemoteImagePasteboardWriter.copyAddress(url, to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), url.absoluteString)
+        XCTAssertEqual(pasteboard.string(forType: .URL), url.absoluteString)
+    }
+
+    /// 复制图片必须写入可由 AppKit 重新读取的真实图片对象。
+    @MainActor
+    func testWriteImageProducesReadablePasteboardImage() throws {
+        let pasteboard = Self.makePasteboard()
+        let image = try XCTUnwrap(NSImage(data: Self.pngData()))
+
+        XCTAssertTrue(RemoteImagePasteboardWriter.writeImage(image, to: pasteboard))
+        XCTAssertNotNil(NSImage(pasteboard: pasteboard))
+    }
+
+    /// GIF 必须作为真实文件复制，粘贴端不能再选择 AppKit 派生的单帧 TIFF。
+    @MainActor
+    func testWriteGIFDataCopiesAnimatedFileWithoutStaticTIFF() throws {
+        let pasteboard = Self.makePasteboard()
+        let data = Self.gifData(frameCount: 2)
+
+        XCTAssertTrue(RemoteImagePasteboardWriter.writeGIFData(data, to: pasteboard))
+        XCTAssertEqual(pasteboard.types?.first, .fileURL)
+        XCTAssertNil(pasteboard.data(forType: .tiff))
+
+        let fileURLs = try XCTUnwrap(pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL])
+        let fileURL = try XCTUnwrap(fileURLs.first)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        XCTAssertEqual(fileURL.pathExtension.lowercased(), "gif")
+        let copiedData = try Data(contentsOf: fileURL)
+        XCTAssertEqual(copiedData, data)
+
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(copiedData as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetCount(source), 2)
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.gif.identifier)
+    }
+
+    /// 瞬时下载返回 GIF 原始字节，并继续携带无缓存请求约束。
+    func testTransientGiphyGIFDataPreservesAnimatedBytes() async throws {
+        let expectedData = Self.gifData(frameCount: 2)
+        TransientGiphyURLProtocol.handler = { request in
+            XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+            return (
+                Self.response(for: request.url!, mimeType: "image/gif"),
+                expectedData
+            )
+        }
+
+        let data = try await TransientGiphyMediaLoader.gifData(
+            for: Self.giphyURL,
+            using: Self.transientSession()
+        )
+
+        XCTAssertEqual(data, expectedData)
+    }
+
+    /// 不能只相信响应头；伪装成 image/gif 的 PNG 不得写成 GIF 剪贴板类型。
+    func testTransientGiphyGIFDataRejectsMismatchedImageType() async {
+        TransientGiphyURLProtocol.handler = { request in
+            (
+                Self.response(for: request.url!, mimeType: "image/gif"),
+                Self.pngData()
+            )
+        }
+
+        do {
+            _ = try await TransientGiphyMediaLoader.gifData(
+                for: Self.giphyURL,
+                using: Self.transientSession()
+            )
+            XCTFail("非 GIF 数据不应按 GIF 写入剪贴板")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .cannotDecodeContentData)
+        } catch {
+            XCTFail("错误类型不正确：\(error)")
+        }
     }
 
     /// 所有 GIPHY CDN host 共用同一个许可池，瞬时加载总并发不能超过全局上限。
@@ -199,6 +291,10 @@ final class ThumbnailLoaderTests: XCTestCase {
         URL(string: "https://example.com/thumb-\(index).png")!
     }
 
+    private static func makePasteboard() -> NSPasteboard {
+        NSPasteboard(name: .init("MirageTests.\(UUID().uuidString)"))
+    }
+
     /// 生成一张可被 ImageIO 解码的真实 PNG。
     private static func pngData(width: Int = 40, height: Int = 30) -> Data {
         let context = CGContext(
@@ -221,6 +317,39 @@ final class ThumbnailLoaderTests: XCTestCase {
             nil
         )!
         CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
+        return output as Data
+    }
+
+    /// 生成包含指定帧数的真实 GIF，验证剪贴板复制后动画容器仍然完整。
+    private static func gifData(frameCount: Int) -> Data {
+        let output = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.gif.identifier as CFString,
+            frameCount,
+            nil
+        )!
+        for index in 0..<frameCount {
+            let context = CGContext(
+                data: nil,
+                width: 40,
+                height: 30,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let color = index.isMultiple(of: 2)
+                ? CGColor(red: 0.9, green: 0.2, blue: 0.3, alpha: 1)
+                : CGColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 1)
+            context.setFillColor(color)
+            context.fill(CGRect(x: 0, y: 0, width: 40, height: 30))
+            let properties = [
+                kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]
+            ] as CFDictionary
+            CGImageDestinationAddImage(destination, context.makeImage()!, properties)
+        }
         CGImageDestinationFinalize(destination)
         return output as Data
     }

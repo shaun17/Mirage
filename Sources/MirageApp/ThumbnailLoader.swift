@@ -142,6 +142,7 @@ struct RemoteThumbnailImage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var isVisible = false
+    @State private var copyImageTask: Task<Void, Never>?
 
     var body: some View {
         Group {
@@ -158,8 +159,144 @@ struct RemoteThumbnailImage: View {
                     .accessibilityHidden(true)
             }
         }
+        .contextMenu {
+            Button {
+                copyImage()
+            } label: {
+                Label("复制图片", systemImage: "doc.on.doc")
+            }
+
+            Button {
+                copyImageTask?.cancel()
+                copyImageTask = nil
+                RemoteImagePasteboardWriter.copyAddress(record.imageURL)
+            } label: {
+                Label("复制地址", systemImage: "link")
+            }
+        }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }
+    }
+
+    /// 图片加载完成后才提交剪贴板；新复制动作会取消尚未完成的旧请求。
+    private func copyImage() {
+        copyImageTask?.cancel()
+        copyImageTask = Task { @MainActor in
+            let copied = await RemoteImagePasteboardWriter.copyImage(for: record)
+            guard !Task.isCancelled else { return }
+            copyImageTask = nil
+            if !copied { NSSound.beep() }
+        }
+    }
+}
+
+/// 把图片视图当前对应的媒体或原图地址写入系统剪贴板。
+@MainActor
+enum RemoteImagePasteboardWriter {
+    /// 普通来源复用缩略图缓存；GIPHY 以临时 GIF 文件复制，防止粘贴端选择静态 TIFF。
+    static func copyImage(
+        for record: RemoteImageRecord,
+        to pasteboard: NSPasteboard = .general
+    ) async -> Bool {
+        if record.source.allowsMediaCaching {
+            guard let image = await cachedImage(for: record),
+                  !Task.isCancelled else {
+                return false
+            }
+            return writeImage(image, to: pasteboard)
+        }
+
+        guard record.source == .giphy,
+              let data = try? await TransientGiphyMediaLoader.gifData(
+                  for: record.thumbnailURL
+              ),
+              !Task.isCancelled else {
+            return false
+        }
+        return writeGIFData(data, to: pasteboard)
+    }
+
+    /// 同时提供纯文本和 URL 类型，文本框与识别链接的 App 都能正确粘贴。
+    @discardableResult
+    static func copyAddress(
+        _ url: URL,
+        to pasteboard: NSPasteboard = .general
+    ) -> Bool {
+        let value = url.absoluteString
+        let item = NSPasteboardItem()
+        item.setString(value, forType: .string)
+        item.setString(value, forType: .URL)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+
+    @discardableResult
+    static func writeImage(_ image: NSImage, to pasteboard: NSPasteboard) -> Bool {
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([image])
+    }
+
+    /// 复制真实 GIF 文件 URL；直接写图片数据会被 AppKit 派生出静态 TIFF。
+    @discardableResult
+    static func writeGIFData(
+        _ data: Data,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        guard TransientGiphyMediaLoader.isGIF(data) else { return false }
+        guard let fileURL = try? materializeGIF(data) else {
+            return false
+        }
+
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([fileURL as NSURL]) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return false
+        }
+        removeOldClipboardGIFs(except: fileURL)
+        return true
+    }
+
+    private static func materializeGIF(_ data: Data) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MirageClipboard", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let fileURL = directory
+            .appendingPathComponent("Mirage-\(UUID().uuidString)", isDirectory: false)
+            .appendingPathExtension("gif")
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
+    private static func removeOldClipboardGIFs(except currentURL: URL) {
+        let directory = currentURL.deletingLastPathComponent()
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+        for url in contents
+        where url.lastPathComponent != currentURL.lastPathComponent
+            && url.pathExtension.lowercased() == "gif" {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func cachedImage(for record: RemoteImageRecord) async -> NSImage? {
+        guard let image = await ThumbnailLoader.shared.image(
+            for: record.thumbnailURL,
+            maximumPixelSize: 512
+        ) else {
+            return nil
+        }
+        return NSImage(
+            cgImage: image,
+            size: NSSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        )
     }
 }
 
@@ -212,20 +349,9 @@ private struct TransientAnimatedImage: NSViewRepresentable {
             }
 
             let session = TransientGiphyMediaLoader.sharedSession
-            var request = URLRequest(
-                url: url,
-                cachePolicy: .reloadIgnoringLocalCacheData,
-                timeoutInterval: 20
-            )
-            request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-            request.setValue("image/gif,image/webp,image/png,image/jpeg", forHTTPHeaderField: "Accept")
-
             task = Task { @MainActor [weak self, weak imageView] in
                 do {
-                    let image = try await TransientGiphyMediaLoader.image(
-                        for: request,
-                        using: session
-                    )
+                    let image = try await TransientGiphyMediaLoader.image(for: url, using: session)
                     try Task.checkCancellation()
                     guard let self,
                           self.activeURL == url else { return }
@@ -286,19 +412,74 @@ enum TransientGiphyMediaLoader {
         )
     }()
 
+    /// 所有 GIPHY 展示与复制动作共用同一份无缓存请求配置。
+    nonisolated static func image(
+        for url: URL,
+        using session: URLSession = sharedSession
+    ) async throws -> NSImage {
+        try await image(for: mediaRequest(for: url), using: session)
+    }
+
     nonisolated static func image(
         for request: URLRequest,
         using session: URLSession
     ) async throws -> NSImage {
         try await loadGate.withPermit {
-            try await loadImage(for: request, using: session)
+            let data = try await loadData(for: request, using: session)
+            try Task.checkCancellation()
+            guard let image = NSImage(data: data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            try Task.checkCancellation()
+            return image
         }
     }
 
-    private nonisolated static func loadImage(
+    /// 返回经过同一安全边界校验的 GIF 原始字节，供剪贴板保留动画表示。
+    nonisolated static func gifData(
+        for url: URL,
+        using session: URLSession = sharedSession
+    ) async throws -> Data {
+        try await gifData(for: mediaRequest(for: url), using: session)
+    }
+
+    nonisolated static func gifData(
         for request: URLRequest,
         using session: URLSession
-    ) async throws -> NSImage {
+    ) async throws -> Data {
+        try await loadGate.withPermit {
+            let data = try await loadData(for: request, using: session)
+            guard isGIF(data) else { throw URLError(.cannotDecodeContentData) }
+            return data
+        }
+    }
+
+    nonisolated static func isGIF(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) else {
+            return false
+        }
+        return type as String == UTType.gif.identifier
+    }
+
+    private nonisolated static func mediaRequest(for url: URL) -> URLRequest {
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 20
+        )
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue(
+            "image/gif,image/webp,image/png,image/jpeg",
+            forHTTPHeaderField: "Accept"
+        )
+        return request
+    }
+
+    private nonisolated static func loadData(
+        for request: URLRequest,
+        using session: URLSession
+    ) async throws -> Data {
         guard let requestedURL = request.url,
               GiphyEmojiClient.isAllowedMediaURL(requestedURL) else {
             throw URLError(.unsupportedURL)
@@ -338,10 +519,7 @@ enum TransientGiphyMediaLoader {
         }
 
         try Task.checkCancellation()
-        let image = NSImage(data: data)
-        try Task.checkCancellation()
-        guard let image else { throw URLError(.cannotDecodeContentData) }
-        return image
+        return data
     }
 
     /// 压缩字节数不足以约束动画展开内存；在交给 NSImage 前检查像素和帧数预算。
