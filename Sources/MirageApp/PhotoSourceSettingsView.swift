@@ -6,6 +6,7 @@ import SwiftUI
 struct PhotoSourceSettingsView: View {
     @ObservedObject var model: PhotoSourceSettingsModel
     let providerState: ProviderState
+    let softwareUpdateController: SoftwareUpdateController
     let onRecheckProvider: @MainActor () async -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -36,6 +37,9 @@ struct PhotoSourceSettingsView: View {
             actionBar
         }
         .frame(width: 620, height: 350)
+        .onAppear {
+            selectedSourceID = .openverse
+        }
         .task { await model.load() }
         .task(id: scenePhase) {
             guard scenePhase == .active, !Task.isCancelled else { return }
@@ -168,6 +172,9 @@ struct PhotoSourceSettingsView: View {
 
     private var actionBar: some View {
         HStack(spacing: 12) {
+            SoftwareUpdateView(controller: softwareUpdateController)
+                .buttonStyle(.bordered)
+
             if model.hasUnsavedChanges {
                 Text("已修改 \(model.unsavedSourceIDs.count) 个数据源")
                     .font(.caption)
