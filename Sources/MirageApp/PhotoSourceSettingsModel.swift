@@ -98,8 +98,19 @@ final class PhotoSourceSettingsModel: ObservableObject {
         guard !isLoading else { return }
         guard let descriptor = PhotoSourceRegistry.descriptor(for: sourceID),
               descriptor.availability == .available else { return }
+        guard !enabled || canEnable(sourceID) else { return }
         enabledSurfaceDrafts[sourceID] = enabled ? descriptor.supportedSurfaces : []
         clearStatus(for: sourceID)
+    }
+
+    /// 需要密钥的来源只有在当前草稿非空时才能开启；无密钥来源不受影响。
+    func canEnable(_ sourceID: PhotoSourceID) -> Bool {
+        guard let descriptor = PhotoSourceRegistry.descriptor(for: sourceID) else { return false }
+        return descriptor.credentialRequirement == .none || hasNonemptyCredentialDraft(for: sourceID)
+    }
+
+    func hasNonemptyCredentialDraft(for sourceID: PhotoSourceID) -> Bool {
+        !normalizedCredentialDraft(for: sourceID).isEmpty
     }
 
     func hasUnsavedChanges(for sourceID: PhotoSourceID) -> Bool {
@@ -112,6 +123,21 @@ final class PhotoSourceSettingsModel: ObservableObject {
         // 停用状态下的空输入不代表删除凭据；设置页没有“移除 Key”语义。
         if !isEnabled(sourceID), draft.isEmpty { return false }
         return draft != savedCredentials[sourceID, default: ""]
+    }
+
+    var unsavedSourceIDs: Set<PhotoSourceID> {
+        Set(descriptors.lazy.filter {
+            $0.availability == .available && self.hasUnsavedChanges(for: $0.id)
+        }.map(\.id))
+    }
+
+    var hasUnsavedChanges: Bool {
+        !unsavedSourceIDs.isEmpty
+    }
+
+    /// 页面级保存先校验所有草稿的最终状态，再先启用新来源、后停用旧来源。
+    func saveAllConfigurations() async {
+        await saveConfigurations(for: unsavedSourceIDsInSaveOrder())
     }
 
     /// 一次保存当前供应商的 API Key 与全部使用范围，并只触发一次配置刷新。
@@ -263,14 +289,16 @@ final class PhotoSourceSettingsModel: ObservableObject {
         clearStatus(for: sourceID)
     }
 
-    /// 按钮事件同步登记操作，窗口立即关闭时不会先清空尚待保存的草稿。
-    func scheduleSaveConfiguration(for sourceID: PhotoSourceID) {
+    /// 页面级按钮同步冻结全部待保存来源，窗口立即关闭时也不会先清空草稿。
+    func scheduleSaveAllConfigurations() {
         guard scheduledOperationCount == 0, workingSourceIDs.isEmpty else { return }
+        let sourceIDs = unsavedSourceIDsInSaveOrder()
+        guard !sourceIDs.isEmpty else { return }
         scheduledOperationCount += 1
-        scheduledSourceIDs.insert(sourceID)
+        scheduledSourceIDs.formUnion(sourceIDs)
         Task { [self] in
-            await saveConfiguration(for: sourceID)
-            finishScheduledOperation(for: sourceID)
+            await saveConfigurations(for: sourceIDs)
+            finishScheduledOperation(for: Set(sourceIDs))
         }
     }
 
@@ -312,8 +340,12 @@ final class PhotoSourceSettingsModel: ObservableObject {
     }
 
     private func finishScheduledOperation(for sourceID: PhotoSourceID) {
+        finishScheduledOperation(for: Set([sourceID]))
+    }
+
+    private func finishScheduledOperation(for sourceIDs: Set<PhotoSourceID>) {
         scheduledOperationCount = max(scheduledOperationCount - 1, 0)
-        scheduledSourceIDs.remove(sourceID)
+        scheduledSourceIDs.subtract(sourceIDs)
         discardWhenIdleIfNeeded()
     }
 
@@ -373,6 +405,50 @@ final class PhotoSourceSettingsModel: ObservableObject {
                 throw PhotoSourcePreferencesError.noEnabledSources(surface)
             }
         }
+    }
+
+    private func saveConfigurations(for sourceIDs: [PhotoSourceID]) async {
+        guard !isLoading, workingSourceIDs.isEmpty, !sourceIDs.isEmpty else { return }
+        do {
+            try validateAllDraftConfigurations()
+        } catch {
+            notice = error.localizedDescription
+            return
+        }
+
+        for sourceID in sourceIDs {
+            await saveConfiguration(for: sourceID)
+            guard !hasUnsavedChanges(for: sourceID) else { return }
+        }
+    }
+
+    private func validateAllDraftConfigurations() throws {
+        for descriptor in descriptors
+        where descriptor.availability == .available
+            && descriptor.credentialRequirement == .apiKey
+            && isEnabled(descriptor.id)
+            && !hasNonemptyCredentialDraft(for: descriptor.id) {
+            throw PhotoSourceCredentialError.emptyCredential
+        }
+
+        for surface in PhotoSourceSurface.allCases {
+            let hasEnabledSource = descriptors.contains { descriptor in
+                descriptor.availability == .available
+                    && descriptor.supports(surface)
+                    && self.enabledSurfaceDrafts[descriptor.id, default: []].contains(surface)
+            }
+            guard hasEnabledSource else {
+                throw PhotoSourcePreferencesError.noEnabledSources(surface)
+            }
+        }
+    }
+
+    private func unsavedSourceIDsInSaveOrder() -> [PhotoSourceID] {
+        let changedDescriptors = descriptors.filter {
+            $0.availability == .available && self.hasUnsavedChanges(for: $0.id)
+        }
+        return changedDescriptors.filter { self.isEnabled($0.id) }.map(\.id)
+            + changedDescriptors.filter { !self.isEnabled($0.id) }.map(\.id)
     }
 
     private func normalizedCredentialDraft(for sourceID: PhotoSourceID) -> String {

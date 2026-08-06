@@ -33,6 +33,84 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         XCTAssertEqual(storeCalls, 0)
     }
 
+    /// 需要 Key 的来源必须先填写草稿才能开启；无 Key 来源仍可直接切换。
+    func testCredentialRequirementControlsOnlyTurningSourceOn() async {
+        let preferences = makePreferences()
+        let credentials = InMemoryPhotoSourceCredentialStore()
+        let model = makeModel(preferences: preferences, credentials: credentials)
+        await model.load()
+
+        XCTAssertFalse(model.canEnable(.pexels))
+        model.setEnabled(true, sourceID: .pexels)
+        XCTAssertFalse(model.isEnabled(.pexels))
+
+        model.setEnabled(false, sourceID: .openverse)
+        model.setEnabled(true, sourceID: .openverse)
+        XCTAssertTrue(model.isEnabled(.openverse))
+
+        model.setCredentialDraft("  pexels-key  ", for: .pexels)
+        XCTAssertTrue(model.canEnable(.pexels))
+        model.setEnabled(true, sourceID: .pexels)
+        XCTAssertTrue(model.isEnabled(.pexels))
+
+        model.setCredentialDraft("   ", for: .pexels)
+        XCTAssertFalse(model.canEnable(.pexels))
+        XCTAssertTrue(model.isEnabled(.pexels))
+        model.setEnabled(false, sourceID: .pexels)
+        XCTAssertFalse(model.isEnabled(.pexels))
+    }
+
+    /// 页面级保存一次提交所有供应商草稿，而不是只保存当前标签页。
+    func testSaveAllConfigurationsPersistsEveryModifiedProvider() async throws {
+        let preferences = makePreferences()
+        let credentials = InMemoryPhotoSourceCredentialStore()
+        var changedSourceIDs: [PhotoSourceID] = []
+        let model = makeModel(
+            preferences: preferences,
+            credentials: credentials,
+            configurationDidChange: { changedSourceIDs.append($0) }
+        )
+        await model.load()
+
+        model.setCredentialDraft("pexels-key", for: .pexels)
+        model.setEnabled(true, sourceID: .pexels)
+        model.setCredentialDraft("pixabay-key", for: .pixabay)
+        model.setEnabled(true, sourceID: .pixabay)
+        XCTAssertEqual(model.unsavedSourceIDs, [.pexels, .pixabay])
+
+        await model.saveAllConfigurations()
+
+        let snapshot = await preferences.snapshot()
+        let storedPexelsKey = try await credentials.credential(for: .pexels)
+        let storedPixabayKey = try await credentials.credential(for: .pixabay)
+        XCTAssertEqual(snapshot.appSourceIDs, [.openverse, .pexels, .pixabay])
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pexels])
+        XCTAssertEqual(storedPexelsKey, "pexels-key")
+        XCTAssertEqual(storedPixabayKey, "pixabay-key")
+        XCTAssertFalse(model.hasUnsavedChanges)
+        XCTAssertEqual(changedSourceIDs, [.pexels, .pixabay])
+    }
+
+    /// 替换唯一来源时必须先保存新来源，再停用旧来源，不能被中间空状态拦截。
+    func testSaveAllConfigurationsEnablesReplacementBeforeDisablingCurrentSource() async {
+        let preferences = makePreferences()
+        let credentials = InMemoryPhotoSourceCredentialStore()
+        let model = makeModel(preferences: preferences, credentials: credentials)
+        await model.load()
+
+        model.setCredentialDraft("pexels-key", for: .pexels)
+        model.setEnabled(true, sourceID: .pexels)
+        model.setEnabled(false, sourceID: .openverse)
+
+        await model.saveAllConfigurations()
+
+        let snapshot = await preferences.snapshot()
+        XCTAssertEqual(snapshot.appSourceIDs, [.pexels])
+        XCTAssertEqual(snapshot.fileProviderSourceIDs, [.pexels])
+        XCTAssertFalse(model.hasUnsavedChanges)
+        XCTAssertNil(model.notice)
+    }
+
     /// Pixabay 使用独立 Key 与草稿，只能启用到主 App，不会越过 registry 写入 Finder。
     func testSavesPixabayForAppWithoutEnablingFinder() async throws {
         let preferences = makePreferences()
@@ -257,7 +335,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         await model.load()
         model.setCredentialDraft("new-key", for: .pexels)
 
-        model.scheduleSaveConfiguration(for: .pexels)
+        model.scheduleSaveAllConfigurations()
         model.discardDrafts()
         for _ in 0..<50 {
             let persisted = try await credentials.credential(for: .pexels)
@@ -282,7 +360,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         await model.load()
         model.setCredentialDraft("new-key", for: .pexels)
 
-        model.scheduleSaveConfiguration(for: .pexels)
+        model.scheduleSaveAllConfigurations()
         model.discardDrafts()
         await model.load()
         XCTAssertTrue(model.scheduledSourceIDs.contains(.pexels))

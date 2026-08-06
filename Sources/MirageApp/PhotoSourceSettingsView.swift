@@ -2,7 +2,7 @@ import FinderSync
 import MirageCore
 import SwiftUI
 
-/// 横向切换供应商，并集中展示 Finder 状态与当前供应商的保存操作。
+/// 横向切换供应商，并在页面底部统一保存所有供应商草稿。
 struct PhotoSourceSettingsView: View {
     @ObservedObject var model: PhotoSourceSettingsModel
     let providerState: ProviderState
@@ -15,10 +15,12 @@ struct PhotoSourceSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            providerPicker
             Divider()
-            providerStatusSection
-            Divider()
+            if let providerStatus {
+                providerStatusSection(providerStatus)
+                Divider()
+            }
             if let selectedDescriptor {
                 PhotoSourceProviderSettingsPane(
                     model: model,
@@ -26,14 +28,14 @@ struct PhotoSourceSettingsView: View {
                     isTesting: testingSourceID == selectedDescriptor.id,
                     onTestConnection: testConnection
                 )
-                Divider()
-                actionBar(for: selectedDescriptor)
             } else {
                 ContentUnavailableView("数据源不可用", systemImage: "exclamationmark.triangle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            Divider()
+            actionBar
         }
-        .frame(width: 620, height: 600)
+        .frame(width: 620, height: 350)
         .task { await model.load() }
         .task(id: scenePhase) {
             guard scenePhase == .active, !Task.isCancelled else { return }
@@ -58,37 +60,32 @@ struct PhotoSourceSettingsView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("内容数据源")
-                .font(.title2.weight(.semibold))
-
-            Picker("内容供应商", selection: $selectedSourceID) {
-                ForEach(providerDescriptors) { descriptor in
-                    Text(providerPickerTitle(for: descriptor)).tag(descriptor.id)
-                }
+    private var providerPicker: some View {
+        Picker("内容供应商", selection: $selectedSourceID) {
+            ForEach(providerDescriptors) { descriptor in
+                Text(providerPickerTitle(for: descriptor)).tag(descriptor.id)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .center)
-            .accessibilityLabel("内容供应商")
-            .disabled(providerSwitchingIsDisabled)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .accessibilityLabel("内容供应商")
+        .disabled(providerSwitchingIsDisabled)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
     }
 
-    /// Finder 状态紧跟数据源选择；只有明确异常时才提供下一步操作。
-    private var providerStatusSection: some View {
+    /// 正常状态不占设置页空间；检查中或异常时才呈现 Finder 状态与处理入口。
+    private func providerStatusSection(_ status: ProviderStatusPresentation) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            providerStatusIndicator
+            providerStatusIndicator(status)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(providerStatus.title)
+                Text(status.title)
                     .font(.callout.weight(.medium))
 
-                if let detail = providerStatus.detail {
+                if let detail = status.detail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -97,27 +94,27 @@ struct PhotoSourceSettingsView: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Finder 状态：\(providerStatus.title)")
-            .accessibilityValue(providerStatus.detail ?? "")
+            .accessibilityLabel("Finder 状态：\(status.title)")
+            .accessibilityValue(status.detail ?? "")
 
             Spacer(minLength: 16)
             providerStatusAction
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
-    private var providerStatusIndicator: some View {
+    private func providerStatusIndicator(_ status: ProviderStatusPresentation) -> some View {
         if providerState == .checking {
             ProgressView()
                 .controlSize(.small)
                 .frame(width: 16, height: 16)
                 .accessibilityHidden(true)
         } else {
-            Image(systemName: providerStatus.symbol)
-                .foregroundStyle(providerStatus.color)
+            Image(systemName: status.symbol)
+                .foregroundStyle(status.color)
                 .frame(width: 16, height: 16)
                 .accessibilityHidden(true)
         }
@@ -140,8 +137,8 @@ struct PhotoSourceSettingsView: View {
         }
     }
 
-    /// 状态行只包含面向用户的 Finder 语义，具体系统错误保留原文以便诊断。
-    private var providerStatus: ProviderStatusPresentation {
+    /// Finder 已可用时不显示冗余说明，其他状态保留必要反馈与处理入口。
+    private var providerStatus: ProviderStatusPresentation? {
         switch providerState {
         case .checking:
             return ProviderStatusPresentation(
@@ -151,12 +148,7 @@ struct PhotoSourceSettingsView: View {
                 color: .secondary
             )
         case .ready:
-            return ProviderStatusPresentation(
-                title: "Finder 已可用",
-                detail: nil,
-                symbol: "checkmark.circle.fill",
-                color: .green
-            )
+            return nil
         case .needsActivation:
             return ProviderStatusPresentation(
                 title: "需要启用 Finder 扩展",
@@ -174,26 +166,31 @@ struct PhotoSourceSettingsView: View {
         }
     }
 
-    private func actionBar(for descriptor: PhotoSourceDescriptor) -> some View {
+    private var actionBar: some View {
         HStack(spacing: 12) {
+            if model.hasUnsavedChanges {
+                Text("已修改 \(model.unsavedSourceIDs.count) 个数据源")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
 
             if isBusy, testingSourceID == nil {
                 ProgressView()
                     .controlSize(.small)
-                    .accessibilityLabel("正在处理 \(descriptor.displayName) 设置")
+                    .accessibilityLabel("正在处理内容数据源设置")
             }
 
             Button("保存") {
-                model.scheduleSaveConfiguration(for: descriptor.id)
+                model.scheduleSaveAllConfigurations()
             }
             .keyboardShortcut(.defaultAction)
-            .disabled(!canSave(descriptor))
-            .help(descriptor.availability == .adapting ? "适配完成后可设置" : "")
-            .accessibilityLabel("保存 \(descriptor.displayName) 设置")
+            .disabled(isBusy || !model.hasUnsavedChanges)
+            .accessibilityLabel("保存所有内容数据源设置")
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 14)
+        .padding(.vertical, 12)
     }
 
     private var selectedDescriptor: PhotoSourceDescriptor? {
@@ -218,12 +215,6 @@ struct PhotoSourceSettingsView: View {
         model.isLoading
             || !model.scheduledSourceIDs.isEmpty
             || (testingSourceID == nil && !model.workingSourceIDs.isEmpty)
-    }
-
-    private func canSave(_ descriptor: PhotoSourceDescriptor) -> Bool {
-        descriptor.availability == .available
-            && !isBusy
-            && model.hasUnsavedChanges(for: descriptor.id)
     }
 
     /// 测试使用当前输入草稿；任务结束、切换供应商或关闭窗口时同步清理本地进度状态。

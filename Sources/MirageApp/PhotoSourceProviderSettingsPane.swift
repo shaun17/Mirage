@@ -10,7 +10,7 @@ struct PhotoSourceProviderSettingsPane: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 providerHeader
                 if descriptor.availability == .adapting {
                     adaptingContent
@@ -18,8 +18,9 @@ struct PhotoSourceProviderSettingsPane: View {
                     availableContent
                 }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -49,8 +50,10 @@ struct PhotoSourceProviderSettingsPane: View {
                 Toggle("启用", isOn: enabledBinding)
                     .toggleStyle(.switch)
                     .fixedSize()
-                    .disabled(isWorking)
+                    .disabled(isWorking || enableRequiresCredential)
+                    .help(enableRequiresCredential ? "请先填写 API Key" : "")
                     .accessibilityLabel("\(descriptor.displayName)，启用此数据源")
+                    .accessibilityHint(enableRequiresCredential ? "请先填写 API Key" : "")
             }
         }
     }
@@ -61,15 +64,13 @@ struct PhotoSourceProviderSettingsPane: View {
         } description: {
             Text("\(descriptor.displayName) 已加入供应商入口，搜索和 API 设置将在适配完成后开放。")
         }
-        .frame(maxWidth: .infinity, minHeight: 240)
+        .frame(maxWidth: .infinity, minHeight: 160)
     }
 
     private var availableContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if descriptor.credentialRequirement == .apiKey {
                 credentialControls
-            } else {
-                noCredentialContent
             }
 
             Text(
@@ -81,22 +82,9 @@ struct PhotoSourceProviderSettingsPane: View {
         }
     }
 
-    private var noCredentialContent: some View {
-        GroupBox {
-            Label("无需 API Key，可直接使用", systemImage: "checkmark.shield")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Text("API 访问")
-                .font(.callout.weight(.medium))
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private var credentialControls: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     SecureField("API Key", text: credentialBinding)
                         .textFieldStyle(.roundedBorder)
@@ -112,8 +100,14 @@ struct PhotoSourceProviderSettingsPane: View {
                     Button("测试 API") {
                         onTestConnection(descriptor.id)
                     }
-                    .disabled(isWorking)
+                    .disabled(isWorking || !model.hasNonemptyCredentialDraft(for: descriptor.id))
                     .accessibilityLabel("测试 \(descriptor.displayName) API Key")
+                }
+
+                if !model.hasNonemptyCredentialDraft(for: descriptor.id) {
+                    Text("填写 API Key 后可启用此数据源")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let message = model.connectionMessages[descriptor.id] {
@@ -164,6 +158,10 @@ struct PhotoSourceProviderSettingsPane: View {
             get: { model.isEnabled(descriptor.id) },
             set: { model.setEnabled($0, sourceID: descriptor.id) }
         )
+    }
+
+    private var enableRequiresCredential: Bool {
+        !model.isEnabled(descriptor.id) && !model.canEnable(descriptor.id)
     }
 
     private var credentialBinding: Binding<String> {
