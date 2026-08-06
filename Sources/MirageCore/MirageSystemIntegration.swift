@@ -3,7 +3,7 @@ import Foundation
 /// 主 App 与 File Provider 共用的系统集成身份，避免两个进程各自硬编码后发生漂移。
 public enum MirageSystemIntegration {
     public static let fileProviderExtensionBundleName = "MirageFileProvider.appex"
-    private static let legacyFileProviderDomainIdentifier = "mirage-default"
+    private static let stableFileProviderDomainIdentifier = "mirage-default"
     private static let versionedFileProviderDomainPrefix = "mirage-default-v"
 
     /// CFBundleVersion 仅接受数字和最多三个点分段，避免静默清洗造成两个构建号映射到同一域。
@@ -19,10 +19,10 @@ public enum MirageSystemIntegration {
         return components.joined(separator: ".")
     }
 
-    /// 域版本直接跟随宿主 App 的构建号，避免新 App 继续连接旧 Finder 副本。
+    /// 构建号只用于校验产物有效性；域身份跨版本保持稳定，避免升级时重建 Finder 引用。
     public static func fileProviderDomainIdentifier(buildVersion: String?) -> String? {
-        guard let normalized = normalizedBuildVersion(buildVersion) else { return nil }
-        return versionedFileProviderDomainPrefix + normalized
+        guard normalizedBuildVersion(buildVersion) != nil else { return nil }
+        return stableFileProviderDomainIdentifier
     }
 
     /// 只有宿主与内嵌扩展构建号完全一致时才生成目标域，供注册前的无副作用校验使用。
@@ -35,12 +35,12 @@ public enum MirageSystemIntegration {
               appBuildVersion == fileProviderBuildVersion else {
             return nil
         }
-        return versionedFileProviderDomainPrefix + appBuildVersion
+        return stableFileProviderDomainIdentifier
     }
 
-    /// 识别所有由 Mirage 创建过的域；升级和回退都必须清理与当前构建号不一致的副本。
+    /// 识别稳定域与历史版本域；历史域只在迁移或异常残留清理时删除。
     public static func isManagedFileProviderDomainIdentifier(_ identifier: String) -> Bool {
-        identifier == legacyFileProviderDomainIdentifier
+        identifier == stableFileProviderDomainIdentifier
             || identifier.hasPrefix(versionedFileProviderDomainPrefix)
     }
 }

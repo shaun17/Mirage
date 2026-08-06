@@ -16,6 +16,15 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// Finder 头像分页按绝对 offset 生成；每次调用仍受头像协议单次 20 条限制。
     private static let avatarChunkSize = 20
 
+    /// Finder 自动目录只使用可直接下载、能稳定补满 40 条的确定性来源。
+    /// Picrew 预览仍限 App 展示；动态 AI 真人可作为已冻结收藏读取，但不参与 Finder 批量生成。
+    private static let stableFileProviderAvatarTypes: Set<AvatarType> = [
+        .cartoonCharacter,
+        .robot,
+        .monster,
+        .animal,
+    ]
+
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
         manager: NSFileProviderManager?,
@@ -87,12 +96,13 @@ actor ProviderRepository: ProviderSearchResultStoring {
         for reference: AvatarPageReference
     ) async throws -> ProviderItem? {
         guard try await isAvatarPagePublished(reference) else { return nil }
+        let avatarFilter = currentFileProviderAvatarFilter()
         return try ProviderAvatarTreePlanner.continuationItem(
             after: ProviderAvatarBatch(
                 page: reference.page - 1,
                 records: [],
                 hasMore: true,
-                filterKey: currentFilterSnapshot().avatarCatalogKey
+                filterKey: avatarFilter.key
             )
         )
     }
@@ -100,15 +110,15 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 每个可见目录生成固定 40 个确定性头像，不读取混合推荐流或照片来源。
     private func avatarItems(page: Int) async throws -> [ProviderItem] {
         let storage = try requireStorage()
-        let filters = currentFilterSnapshot()
+        let avatarFilter = currentFileProviderAvatarFilter()
         // 一批头像可能跨越多个 20 条分段；日期必须只捕获一次，避免午夜混入两天 seed。
         let generationDay = await avatarProvider.currentGenerationDay()
         if let cached = try await cachedAvatarItems(
             in: storage,
             page: page,
             generationDay: generationDay,
-            allowedTypes: filters.avatarTypes,
-            filterKey: filters.avatarCatalogKey
+            allowedTypes: avatarFilter.types,
+            filterKey: avatarFilter.key
         ) {
             return cached
         }
@@ -125,10 +135,12 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 query: DiscoveryRecommendation.query,
                 offset: offset,
                 count: count,
-                generationDay: generationDay
+                generationDay: generationDay,
+                allowedTypes: avatarFilter.types
             )
             for record in generated
                 where Self.isCurrentAvatarRecord(record, generationDay: generationDay)
+                    && record.matchesAvatarTypes(avatarFilter.types)
                     && seen.insert(record.id).inserted {
                 generatedRecords.append(record)
             }
@@ -137,18 +149,17 @@ actor ProviderRepository: ProviderSearchResultStoring {
         guard generatedRecords.count == ProviderAvatarTreePlanner.batchSize else {
             throw ProviderError.serverUnreachable("无法生成完整的头像批次。")
         }
-        let records = generatedRecords.filter { $0.matchesAvatarTypes(filters.avatarTypes) }
         try Task.checkCancellation()
-        for record in records {
+        for record in generatedRecords {
             try await storage.writeItem(record)
         }
         try Task.checkCancellation()
         return try ProviderAvatarTreePlanner.items(
             for: ProviderAvatarBatch(
                 page: page,
-                records: records,
+                records: generatedRecords,
                 hasMore: page < AvatarPageReference.maximumPage,
-                filterKey: filters.avatarCatalogKey
+                filterKey: avatarFilter.key
             )
         )
     }
@@ -568,7 +579,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
                Self.isCurrentAvatarRecord(record),
-               record.matchesAvatarTypes(currentFilterSnapshot().avatarTypes),
+               record.matchesAvatarTypes(currentFileProviderAvatarFilter().types),
                try await hasAvailableAvatarContent(record, in: storage) else {
                 return nil
             }
@@ -607,7 +618,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 contains: identifier.rawValue
             ), let record = try await storage.readItem(id: reference.recordID),
                Self.isCurrentAvatarRecord(record),
-               record.matchesAvatarTypes(currentFilterSnapshot().avatarTypes),
+               record.matchesAvatarTypes(currentFileProviderAvatarFilter().types),
                try await hasAvailableAvatarContent(record, in: storage) else {
                 return nil
             }
@@ -1023,6 +1034,28 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private func currentFilterSnapshot() -> DiscoveryFilterPreferencesSnapshot {
         filterPreferences?.snapshot() ?? DiscoveryFilterPreferencesSnapshot()
     }
+
+    /// App 可展示的类型比 Finder 自动目录更宽；若用户只选了 App 专属类型，Finder 回退到稳定目录。
+    private func currentFileProviderAvatarFilter() -> FileProviderAvatarFilter {
+        let requestedTypes = currentFilterSnapshot().avatarTypes
+            .intersection(Self.stableFileProviderAvatarTypes)
+        let effectiveTypes = requestedTypes.isEmpty
+            ? Self.stableFileProviderAvatarTypes
+            : requestedTypes
+        let values = AvatarType.allCases
+            .filter(effectiveTypes.contains)
+            .map(\.rawValue)
+            .joined(separator: ",")
+        return FileProviderAvatarFilter(
+            types: effectiveTypes,
+            key: "provider-avatar-filter-v2:\(values)"
+        )
+    }
+}
+
+private struct FileProviderAvatarFilter: Sendable {
+    let types: Set<AvatarType>
+    let key: String
 }
 
 /// occurrence 的内容与视图元数据来自同一次权威快照读取。

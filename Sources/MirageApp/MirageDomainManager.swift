@@ -23,7 +23,7 @@ struct MirageDomainManager: Sendable {
         case needsActivation
     }
 
-    /// 域标识跟随 App 构建号；每次升级或回退都先移除其他 Mirage 域及其 Finder 副本。
+    /// 域标识跨 App 版本保持稳定；仅在首次迁移时移除历史版本域及其 Finder 副本。
     func registerIfNeeded() async throws -> RegistrationResult {
         // 必须在任何 remove/add 前验证宿主与内嵌扩展来自同一构建，防止混合产物误删有效域。
         let domainIdentifier = try synchronizedDomainIdentifier()
@@ -42,8 +42,11 @@ struct MirageDomainManager: Sendable {
                     guard !hasRequiredCapabilities(existing) else {
                         return repaired ? .repaired : .alreadyInstalled
                     }
-                    try await remove(existing)
-                    repaired = true
+                    Self.logger.notice(
+                        "原位更新 Mirage 文件域：\(domainIdentifier.rawValue, privacy: .public)"
+                    )
+                    try await add(configuredDomain(identifier: domainIdentifier))
+                    return .repaired
                 }
 
                 let resetAnchor = try await resetProviderPublicationState()
@@ -196,6 +199,7 @@ struct MirageDomainManager: Sendable {
             identifier: identifier,
             displayName: Self.displayName
         )
+        domain.isHidden = false
         if #available(macOS 26.0, *) {
             domain.supportsStringSearchRequest = true
         }
@@ -203,9 +207,10 @@ struct MirageDomainManager: Sendable {
         return domain
     }
 
-    /// 名称或能力与当前产品配置不一致时重建域，避免 macOS 长期缓存旧显示名。
+    /// 名称、可见性或能力不一致时原位更新域，保留 Finder 对稳定域的引用。
     private func hasRequiredCapabilities(_ domain: NSFileProviderDomain) -> Bool {
         guard domain.displayName == Self.displayName else { return false }
+        guard !domain.isHidden else { return false }
         guard !domain.supportsSyncingTrash else { return false }
         if #available(macOS 26.0, *) {
             return domain.supportsStringSearchRequest

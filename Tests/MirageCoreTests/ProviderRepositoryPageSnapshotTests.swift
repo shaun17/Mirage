@@ -253,7 +253,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(first.map(\.itemIdentifier), restored.map(\.itemIdentifier))
     }
 
-    /// 头像 scope 每次读取 App Group 筛选；切换类型后旧 occurrence 必须从目录和回查中同时消失。
+    /// Finder 在支持的类型间切换时必须从生成源头筛选，并让旧 occurrence 同步失效。
     func testAvatarFolderTracksSharedTypeSelectionAndInvalidatesCachedScope() async throws {
         let suiteName = "MirageProviderPageTests.Filters.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -263,7 +263,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         filters.setAvatarTypes([.cartoonCharacter])
 
         let storage = try AppGroupStorage(baseURL: temporaryURL)
-        let avatars = ProviderRecordingDiceBear(now: { Self.avatarSeedDate1 })
+        let avatars = Self.deterministicAvatarCatalog(now: { Self.avatarSeedDate1 })
         let repository = ProviderRepository(
             manager: nil,
             storage: storage,
@@ -276,16 +276,62 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let first = try await catalog.preparedItems(for: .avatars)
         let oldIdentifier = try XCTUnwrap(Self.images(in: first).first?.itemIdentifier)
         XCTAssertEqual(Self.images(in: first).count, 40)
+        for item in Self.images(in: first) {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(occurrence?.record.avatarType, .cartoonCharacter)
+        }
 
         filters.setAvatarTypes([.monster])
         let filtered = try await catalog.preparedItems(for: .avatars)
         let removedOccurrence = try await repository.occurrence(for: oldIdentifier)
 
-        XCTAssertTrue(Self.images(in: filtered).isEmpty)
-        XCTAssertEqual(filtered.map(\.filename), ["加载更多"])
+        XCTAssertEqual(Self.images(in: filtered).count, 40)
+        XCTAssertEqual(filtered.last?.filename, "加载更多")
+        for item in Self.images(in: filtered) {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(occurrence?.record.avatarType, .monster)
+        }
         XCTAssertNil(removedOccurrence)
-        let requests = await avatars.requests()
-        XCTAssertEqual(requests.count, 4)
+    }
+
+    /// App 专属的二次元与动态 AI 真人筛选不能把 Finder 头像树变成只有“加载更多”的空链。
+    func testAppOnlyAvatarTypesFallBackToStableFinderCatalog() async throws {
+        let suiteName = "MirageProviderPageTests.AppOnlyFilters.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: Self.deterministicAvatarCatalog(now: { Self.avatarSeedDate1 }),
+            filterPreferences: filters
+        )
+        let catalog = ProviderCatalog(repository: repository)
+        let secondPage = try XCTUnwrap(AvatarPageReference(page: 2))
+
+        for selectedType in [AvatarType.anime, .aiRealistic] {
+            filters.setAvatarTypes([selectedType])
+            let items = try await catalog.preparedItems(for: .avatars)
+            let images = Self.images(in: items)
+            let moreItems = try await catalog.preparedItems(for: .avatarPage(secondPage))
+            let moreImages = Self.images(in: moreItems)
+
+            XCTAssertEqual(images.count, 40)
+            XCTAssertEqual(items.last?.filename, "加载更多")
+            XCTAssertEqual(moreImages.count, 40)
+            XCTAssertEqual(moreItems.last?.filename, "加载更多")
+            for item in images + moreImages {
+                let resolved = try await repository.occurrence(for: item.itemIdentifier)
+                let occurrence = try XCTUnwrap(resolved)
+                XCTAssertTrue(
+                    [.cartoonCharacter, .robot, .monster, .animal]
+                        .contains(occurrence.record.avatarType)
+                )
+            }
+        }
     }
 
     /// 打开头像第 2 层只生成 offsets 40...79，并发布指向第 3 层的稳定入口。

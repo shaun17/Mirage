@@ -214,15 +214,15 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertEqual(freeUse.license.url?.host, "www.dicebear.com")
     }
 
-    /// Finder 域必须由 App 构建号生成，防止新构建继续复用旧目录副本。
-    func testFileProviderDomainFollowsAppBuildVersion() {
+    /// 构建号只校验 App/扩展产物；有效升级必须复用稳定 Finder 域。
+    func testFileProviderDomainRemainsStableAcrossAppBuildVersions() {
         XCTAssertEqual(
             MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "16"),
-            "mirage-default-v16"
+            "mirage-default"
         )
         XCTAssertEqual(
             MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: " 16.2 "),
-            "mirage-default-v16.2"
+            "mirage-default"
         )
         XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: nil))
         XCTAssertNil(MirageSystemIntegration.fileProviderDomainIdentifier(buildVersion: "16 beta"))
@@ -233,7 +233,14 @@ final class QueryAndIdentifierTests: XCTestCase {
                 appBuildVersion: "16",
                 fileProviderBuildVersion: "16"
             ),
-            "mirage-default-v16"
+            "mirage-default"
+        )
+        XCTAssertEqual(
+            MirageSystemIntegration.synchronizedFileProviderDomainIdentifier(
+                appBuildVersion: "17",
+                fileProviderBuildVersion: "17"
+            ),
+            "mirage-default"
         )
         XCTAssertNil(
             MirageSystemIntegration.synchronizedFileProviderDomainIdentifier(
