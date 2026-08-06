@@ -3,6 +3,8 @@ import Foundation
 /// 主 App 与 File Provider 共用的系统集成身份，避免两个进程各自硬编码后发生漂移。
 public enum MirageSystemIntegration {
     public static let fileProviderExtensionBundleName = "MirageFileProvider.appex"
+    public static let fileProviderAvatarsContainerIdentifier = "avatars"
+    public static let fileProviderAvatarPageIdentifierPrefix = "avatar-page:v2:"
     private static let stableFileProviderDomainIdentifier = "mirage-default"
     private static let versionedFileProviderDomainPrefix = "mirage-default-v"
 

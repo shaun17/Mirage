@@ -15,7 +15,9 @@ struct MirageDomainManager: Sendable {
 
     private static let maximumRegistrationAttempts = 5
     static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
-    private static let avatarsIdentifier = NSFileProviderItemIdentifier("avatars")
+    private static let avatarsIdentifier = NSFileProviderItemIdentifier(
+        MirageSystemIntegration.fileProviderAvatarsContainerIdentifier
+    )
 
     /// 只把用户明确关闭扩展归为待启用，其余异常保留为可诊断错误。
     enum Availability: Sendable {
@@ -141,14 +143,27 @@ struct MirageDomainManager: Sendable {
         try await signalWorkingSet()
     }
 
-    /// 图片来源变化同时唤醒根目录和 working set，旧来源 occurrence 才能及时删除。
+    /// 图片来源变化先让在途旧枚举失效，再同步唤醒根目录和 working set。
     func signalPhotoFilterChanged() async throws {
-        try await signalEnumerators([.rootContainer, .workingSet])
+        let manager = try await currentManager()
+        let storage = try AppGroupStorage()
+        _ = try await storage.advanceProviderPublicationEpoch()
+        try await signalEnumerators(
+            [.rootContainer, .workingSet],
+            using: manager
+        )
     }
 
-    /// 头像类型变化只重枚举头像容器，并同步唤醒 working set 的全局变更入口。
+    /// 头像类型变化同时刷新首页和所有已经打开的分页目录，避免旧 occurrence 被新筛选拒绝后显示空白。
     func signalAvatarFilterChanged() async throws {
-        try await signalEnumerators([Self.avatarsIdentifier, .workingSet])
+        let manager = try await currentManager()
+        let storage = try AppGroupStorage()
+        _ = try await storage.advanceProviderPublicationEpoch()
+        let pageIdentifiers = try await publishedAvatarPageIdentifiers(in: storage)
+        try await signalEnumerators(
+            [Self.avatarsIdentifier] + pageIdentifiers + [.workingSet],
+            using: manager
+        )
     }
 
     /// 其他 App 侧变更沿用 working set 全局刷新入口。
@@ -160,15 +175,44 @@ struct MirageDomainManager: Sendable {
     private func signalEnumerators(
         _ identifiers: [NSFileProviderItemIdentifier]
     ) async throws {
+        let manager = try await currentManager()
+        try await signalEnumerators(identifiers, using: manager)
+    }
+
+    private func signalEnumerators(
+        _ identifiers: [NSFileProviderItemIdentifier],
+        using manager: NSFileProviderManager
+    ) async throws {
+        for identifier in identifiers {
+            try await manager.signalEnumerator(for: identifier)
+        }
+    }
+
+    private func currentManager() async throws -> NSFileProviderManager {
         let domainIdentifier = try synchronizedDomainIdentifier()
         guard let domain = try await installedDomains().first(where: {
             $0.identifier == domainIdentifier
         }), let manager = NSFileProviderManager(for: domain) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        for identifier in identifiers {
-            try await manager.signalEnumerator(for: identifier)
-        }
+        return manager
+    }
+
+    /// 只通知已经进入系统发布树的 canonical 分页，并按页码排序保证父目录先于子目录刷新。
+    private func publishedAvatarPageIdentifiers(
+        in storage: AppGroupStorage
+    ) async throws -> [NSFileProviderItemIdentifier] {
+        let prefix = MirageSystemIntegration.fileProviderAvatarPageIdentifierPrefix
+        return try await storage.providerItemIdentifiers(matchingPrefix: prefix)
+            .compactMap { rawValue -> (page: Int, identifier: NSFileProviderItemIdentifier)? in
+                let suffix = String(rawValue.dropFirst(prefix.count))
+                guard let page = Int(suffix), page >= 2, String(page) == suffix else {
+                    return nil
+                }
+                return (page, NSFileProviderItemIdentifier(rawValue))
+            }
+            .sorted { $0.page < $1.page }
+            .map(\.identifier)
     }
 
     /// 先读取系统公开的启用/断开状态，再以 URL 与 signal 验证完整运行链路。

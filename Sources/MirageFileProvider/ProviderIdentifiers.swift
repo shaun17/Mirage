@@ -4,11 +4,13 @@ import Foundation
 
 /// File Provider 公开树中的稳定目录标识。
 enum ProviderIdentifiers {
-    static let avatars = NSFileProviderItemIdentifier("avatars")
+    static let avatars = NSFileProviderItemIdentifier(
+        MirageSystemIntegration.fileProviderAvatarsContainerIdentifier
+    )
     static let recent = NSFileProviderItemIdentifier("recent")
     static let favorites = NSFileProviderItemIdentifier("favorites")
     static let searchBacking = NSFileProviderItemIdentifier("_search-backing")
-    static let avatarPagePrefix = "avatar-page:v2:"
+    static let avatarPagePrefix = MirageSystemIntegration.fileProviderAvatarPageIdentifierPrefix
     private static let avatarPageItemPrefix = "avatar-page-item:v2:"
     static let discoveryPagePrefix = "discover-page:v3:"
     private static let discoveryPageItemPrefix = "discover-page-item:v3:"

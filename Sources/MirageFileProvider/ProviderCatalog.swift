@@ -174,7 +174,10 @@ struct ProviderCatalog: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            // 普通照片暂不可用不能连带隐藏头像、最近使用和收藏等独立资料库。
+            // 首次启动仍要公开固定资料库；已经发布过图片后则保留旧快照，避免瞬时失败权威清空 Finder。
+            if try await repository.hasPublishedDiscoveryItemsInRootAuthorityScopes() {
+                throw error
+            }
             batch = try await repository.fallbackDiscoveryRootBatch()
         }
         try Task.checkCancellation()

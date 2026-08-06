@@ -302,7 +302,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 设置保存后重启主 App 搜索；只有 Finder 支持的来源才通知扩展刷新。
+    /// 设置保存后重启主 App 搜索；Finder 来源配置变化按筛选级别完整失效并重新发布。
     private func photoSourceConfigurationDidChange(sourceID: PhotoSourceID) async {
         let snapshot = await photoEnvironment.preferences.snapshot()
         searchModel.sourceConfigurationDidChange(sourceID: sourceID, snapshot: snapshot)
@@ -310,7 +310,7 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            try await domainManager.signalDiscoveryChanged()
+            try await domainManager.signalPhotoFilterChanged()
         } catch {
             libraryNotice = "图片数据源设置已保存，但文件面板暂未刷新：\(error.localizedDescription)"
         }

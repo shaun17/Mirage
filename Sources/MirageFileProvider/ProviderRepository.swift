@@ -270,10 +270,10 @@ actor ProviderRepository: ProviderSearchResultStoring {
     func fallbackDiscoveryRootBatch() async throws -> ProviderDiscoveryBatch {
         try Task.checkCancellation()
         let storage = try requireStorage()
-        let filters = currentFilterSnapshot()
+        let photoFilter = await currentFileProviderPhotoFilter()
         let sourceKey = await sourcePreferences?.configurationKey(for: .fileProvider)
             ?? "photo-sources:test"
-        let catalogKey = "provider-fixed-root-fallback-v1:\(sourceKey):\(filters.photoCatalogKey)"
+        let catalogKey = "provider-fixed-root-fallback-v1:\(sourceKey):\(photoFilter.key)"
         if let current = try await storage.readDiscoveryFeedSnapshot(),
            current.source == .fallback,
            current.catalogKey == catalogKey,
@@ -372,9 +372,16 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
         let upperBound = min(bounds.upperBound, snapshot.records.count)
         let slicedRecords = Array(snapshot.records[bounds.lowerBound..<upperBound])
-        let records = filterPreferences == nil
-            ? slicedRecords
-            : slicedRecords.filter(isAllowedInCurrentDiscoveryFilter)
+        let records: [RemoteImageRecord]
+        if filterPreferences == nil {
+            // 测试可注入历史混合推荐流；生产扩展始终具备共享筛选并严格投影 Finder 能力。
+            records = slicedRecords
+        } else {
+            let photoFilter = await currentFileProviderPhotoFilter()
+            records = slicedRecords.filter {
+                Self.isAllowedDiscoveryPhoto($0, filter: photoFilter)
+            }
+        }
         let hasMore = upperBound < snapshot.records.count || snapshot.nextPage != nil
         return ProviderDiscoveryBatch(
             page: page,
@@ -596,7 +603,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
             let record = try await storage.readDiscoveryRecord(id: reference.recordID)
             try Task.checkCancellation()
-            guard let record, isAllowedInCurrentDiscoveryFilter(record),
+            guard let record, await isAllowedInCurrentDiscoveryFilter(record),
                   await isAllowedInFileProvider(record) else { return nil }
             return ProviderOccurrence(
                 reference: reference,
@@ -607,10 +614,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
         let occurrence: ProviderOccurrence?
         switch reference.view {
         case .discover:
-            occurrence = try await storage.readDiscoveryRecord(id: reference.recordID).flatMap {
-                isAllowedInCurrentDiscoveryFilter($0)
-                    ? ProviderOccurrence(reference: reference, record: $0)
-                    : nil
+            let record = try await storage.readDiscoveryRecord(id: reference.recordID)
+            if let record, await isAllowedInCurrentDiscoveryFilter(record) {
+                occurrence = ProviderOccurrence(reference: reference, record: record)
+            } else {
+                occurrence = nil
             }
         case .avatar:
             guard try await storage.providerScope(
@@ -732,10 +740,23 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return enabledSourceIDs?.contains(sourceID) ?? true
     }
 
-    /// 根推荐严格属于图片视图，并进一步匹配 App 当前选中的单一图片来源。
-    private func isAllowedInCurrentDiscoveryFilter(_ record: RemoteImageRecord) -> Bool {
-        guard !record.source.isAvatarSource, record.source != .giphy else { return false }
-        guard let selectedSourceID = currentFilterSnapshot().photoSourceID else { return true }
+    /// 根推荐严格属于 Finder 图片能力的交集，并匹配当前实际可生效的单一来源。
+    private func isAllowedInCurrentDiscoveryFilter(_ record: RemoteImageRecord) async -> Bool {
+        Self.isAllowedDiscoveryPhoto(
+            record,
+            filter: await currentFileProviderPhotoFilter()
+        )
+    }
+
+    private static func isAllowedDiscoveryPhoto(
+        _ record: RemoteImageRecord,
+        filter: FileProviderPhotoFilter
+    ) -> Bool {
+        guard !record.source.isAvatarSource, record.source != .giphy,
+              isAllowed(record, enabledSourceIDs: filter.enabledSourceIDs) else {
+            return false
+        }
+        guard let selectedSourceID = filter.sourceID else { return true }
         return record.source.photoSourceID == selectedSourceID
     }
 
@@ -983,6 +1004,20 @@ actor ProviderRepository: ProviderSearchResultStoring {
         return epoch
     }
 
+    /// root 与 working set 任一权威范围已经发布过照片时，联网失败都必须保留旧快照。
+    /// File Provider 可能先提交 working set，因此不能只检查 root scope。
+    func hasPublishedDiscoveryItemsInRootAuthorityScopes() async throws -> Bool {
+        let storage = try requireStorage()
+        let prefix = ProviderView.discover.rawValue + ":"
+        for scope in Self.rootAuthorityScopes {
+            let snapshot = try await storage.providerScopeSnapshot(scope)
+            if snapshot?.contains(where: { $0.identifier.hasPrefix(prefix) }) == true {
+                return true
+            }
+        }
+        return false
+    }
+
     /// 查询 key 只用于恢复顺序，不保留无意义的空白与大小写差异。
     private static func normalizedQuery(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1003,14 +1038,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
             throw ProviderError.serverUnreachable("无法访问 Mirage 推荐存储。")
         }
 
-        let filters = currentFilterSnapshot()
-        let filterKey = filters.photoCatalogKey
+        let photoFilter = await currentFileProviderPhotoFilter()
+        let filterKey = photoFilter.key
         if let cached = filteredDiscoveryFeeds[filterKey] { return cached }
 
         let service = photoEnvironment.imageSearchService(
             for: .fileProvider,
             purpose: .recommendation,
-            selectedSourceID: filters.photoSourceID,
+            selectedSourceID: photoFilter.sourceID,
             diceBear: avatarProvider
         )
         let feed = DiscoveryFeedRepository(
@@ -1035,6 +1070,21 @@ actor ProviderRepository: ProviderSearchResultStoring {
         filterPreferences?.snapshot() ?? DiscoveryFilterPreferencesSnapshot()
     }
 
+    /// App 专属或已禁用来源在 Finder 中投影为“全部兼容来源”，保证枚举与 occurrence 共用同一范围。
+    private func currentFileProviderPhotoFilter() async -> FileProviderPhotoFilter {
+        let enabledSourceIDs = await enabledFileProviderSourceIDs()
+        let snapshot = currentFilterSnapshot()
+        return FileProviderPhotoFilter(
+            sourceID: snapshot.fileProviderPhotoSourceID(
+                enabledSourceIDs: enabledSourceIDs
+            ),
+            enabledSourceIDs: enabledSourceIDs,
+            key: snapshot.fileProviderPhotoCatalogKey(
+                enabledSourceIDs: enabledSourceIDs
+            )
+        )
+    }
+
     /// App 可展示的类型比 Finder 自动目录更宽；若用户只选了 App 专属类型，Finder 回退到稳定目录。
     private func currentFileProviderAvatarFilter() -> FileProviderAvatarFilter {
         let requestedTypes = currentFilterSnapshot().avatarTypes
@@ -1051,6 +1101,12 @@ actor ProviderRepository: ProviderSearchResultStoring {
             key: "provider-avatar-filter-v2:\(values)"
         )
     }
+}
+
+private struct FileProviderPhotoFilter: Sendable {
+    let sourceID: PhotoSourceID?
+    let enabledSourceIDs: Set<PhotoSourceID>?
+    let key: String
 }
 
 private struct FileProviderAvatarFilter: Sendable {

@@ -278,6 +278,32 @@ public struct DiscoveryFilterPreferencesSnapshot: Equatable, Sendable {
         "discover-photo-filter-v1:\(photoSourceID?.rawValue ?? "all")"
     }
 
+    /// Finder 只能跟随同时支持自动推荐与 File Provider 的来源。
+    /// App 专属来源或已在 Finder 设置中关闭的来源回退为 Finder 的全部可用来源，不能发布空目录。
+    public func fileProviderPhotoSourceID(
+        enabledSourceIDs: Set<PhotoSourceID>? = nil
+    ) -> PhotoSourceID? {
+        guard let photoSourceID,
+              let descriptor = PhotoSourceRegistry.descriptor(for: photoSourceID),
+              descriptor.availability == .available,
+              descriptor.supportsAggregatedSearch(
+                  on: .fileProvider,
+                  purpose: .recommendation
+              ),
+              enabledSourceIDs?.contains(photoSourceID) ?? true else {
+            return nil
+        }
+        return photoSourceID
+    }
+
+    /// Finder 的缓存只按实际生效的来源隔离，不让 App 专属筛选制造无效 generation。
+    public func fileProviderPhotoCatalogKey(
+        enabledSourceIDs: Set<PhotoSourceID>? = nil
+    ) -> String {
+        let sourceID = fileProviderPhotoSourceID(enabledSourceIDs: enabledSourceIDs)
+        return "provider-photo-filter-v2:\(sourceID?.rawValue ?? "all")"
+    }
+
     /// 头像目录缓存按有序类型集合隔离，切换后不会复用上一个范围的 occurrence。
     public var avatarCatalogKey: String {
         let values = AvatarType.allCases.filter(avatarTypes.contains).map(\.rawValue)

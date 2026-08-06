@@ -780,6 +780,23 @@ public actor AppGroupStorage {
         }
     }
 
+    /// 筛选变化时保留已发布 scope，但推进发布边界，拒绝变化前已经开始的异步枚举迟到回填。
+    /// generation 同步推进以维持 provider 锚点与 publicationEpoch 的持久化边界约束。
+    @discardableResult
+    public func advanceProviderPublicationEpoch() throws -> UInt64 {
+        try withExclusiveFileLock(named: "provider-publication") {
+            var state = try readProviderStateUnlocked()
+            guard state.generation < UInt64.max else {
+                throw ProviderChangeStorageError.anchorExhausted
+            }
+            let boundary = state.generation + 1
+            state.publicationEpoch = boundary
+            state.generation = boundary
+            try writeProviderStateUnlocked(state)
+            return boundary
+        }
+    }
+
     /// 系统文件域不存在或即将重建时丢弃仅对旧域有效的发布索引。
     ///
     /// 图片缓存、推荐快照、收藏和最近使用均存放在其他文件中，不受本操作影响。
@@ -1856,7 +1873,7 @@ private struct DiscoveryGenerationState: Codable {
 /// 所有 scope 共享一个单调 generation，每个 scope 独立保留差异历史。
 private struct ProviderPersistentState: Codable {
     var schemaVersion: Int
-    /// 文件域发布边界；只在重建或恢复时推进，普通 scope 提交保持不变。
+    /// 文件域发布边界；域重建、恢复或筛选失效时推进，普通 scope 提交保持不变。
     var publicationEpoch: UInt64
     var generation: UInt64
     var minimumValidAnchor: UInt64

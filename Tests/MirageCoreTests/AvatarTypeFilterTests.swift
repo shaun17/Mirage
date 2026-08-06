@@ -4,6 +4,32 @@ import XCTest
 
 @MainActor
 final class AvatarTypeFilterTests: XCTestCase {
+    func testFinderPhotoFilterProjectsAppOnlyAndDisabledSourcesToCompatibleRange() {
+        let enabled: Set<PhotoSourceID> = [.openverse, .pexels]
+
+        for sourceID in [PhotoSourceID.metMuseum, .nasa, .pixabay] {
+            let snapshot = DiscoveryFilterPreferencesSnapshot(photoSourceID: sourceID)
+            XCTAssertNil(snapshot.fileProviderPhotoSourceID(enabledSourceIDs: enabled))
+            XCTAssertEqual(
+                snapshot.fileProviderPhotoCatalogKey(enabledSourceIDs: enabled),
+                "provider-photo-filter-v2:all"
+            )
+        }
+
+        let pexels = DiscoveryFilterPreferencesSnapshot(photoSourceID: .pexels)
+        XCTAssertEqual(
+            pexels.fileProviderPhotoSourceID(enabledSourceIDs: enabled),
+            .pexels
+        )
+        XCTAssertEqual(
+            pexels.fileProviderPhotoCatalogKey(enabledSourceIDs: enabled),
+            "provider-photo-filter-v2:pexels"
+        )
+        XCTAssertNil(
+            pexels.fileProviderPhotoSourceID(enabledSourceIDs: [.openverse])
+        )
+    }
+
     func testAppSelectionAdaptersPersistOneSharedFinderSnapshot() {
         let suiteName = "MirageCoreTests.DiscoveryFilterPreferences.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

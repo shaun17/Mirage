@@ -601,6 +601,56 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(committedWorkingSet?.map(\.identifier), ["late-working"])
     }
 
+    /// 筛选失效只推进发布边界并拒绝迟到提交，既有 scope 在新枚举成功前仍作为 Finder 旧快照保留。
+    func testAdvanceProviderPublicationEpochPreservesScopesAndRejectsLateCommit() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let root = ProviderStoredItemState(identifier: "discover:retained", fingerprint: "v1")
+        let avatarPage = ProviderStoredItemState(
+            identifier: "avatar-page:v2:2",
+            fingerprint: "filter:old"
+        )
+        let initialAnchor = try await storage.commitProviderScopes([
+            ProviderStoredScopeCommit(scope: "root", items: [root]),
+            ProviderStoredScopeCommit(scope: "avatars:v4", items: [avatarPage]),
+        ])
+        let staleEpoch = try await storage.currentProviderPublicationEpoch()
+
+        let advancedEpoch = try await storage.advanceProviderPublicationEpoch()
+        let advancedAnchor = try await storage.currentProviderAnchor()
+        XCTAssertGreaterThan(advancedEpoch, staleEpoch)
+        XCTAssertGreaterThan(advancedAnchor, initialAnchor)
+        XCTAssertEqual(advancedEpoch, advancedAnchor)
+        let retainedRoot = try await storage.providerScopeSnapshot("root")
+        let retainedAvatars = try await storage.providerScopeSnapshot("avatars:v4")
+        XCTAssertEqual(retainedRoot, [root])
+        XCTAssertEqual(retainedAvatars, [avatarPage])
+
+        do {
+            _ = try await storage.commitProviderScope(
+                "root",
+                items: [ProviderStoredItemState(identifier: "discover:late", fingerprint: "v1")],
+                expectedPublicationEpoch: staleEpoch
+            )
+            XCTFail("筛选变化前开始的枚举不应覆盖保留快照")
+        } catch let error as ProviderPublicationError {
+            XCTAssertEqual(error, .stalePublicationEpoch)
+        }
+        let rootAfterRejectedCommit = try await storage.providerScopeSnapshot("root")
+        XCTAssertEqual(rootAfterRejectedCommit, [root])
+
+        let replacement = ProviderStoredItemState(
+            identifier: "discover:current",
+            fingerprint: "v2"
+        )
+        _ = try await storage.commitProviderScope(
+            "root",
+            items: [replacement],
+            expectedPublicationEpoch: advancedEpoch
+        )
+        let currentRoot = try await storage.providerScopeSnapshot("root")
+        XCTAssertEqual(currentRoot, [replacement])
+    }
+
     /// scope 成员查询只能命中已提交快照中的稳定 ID。
     func testProviderScopeContainsOnlyCommittedMembers() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)

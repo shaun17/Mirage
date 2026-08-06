@@ -56,7 +56,7 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, [1, 2])
     }
 
-    /// Finder 根目录读取共享图片来源筛选，同时拒绝头像和 GIF 记录混入图片流。
+    /// Finder 跟随兼容来源筛选；App 专属来源回退到全部兼容照片，且头像和 GIF 不得混入。
     func testRootTracksSharedPhotoSourceSelectionAndExcludesNonPhotoRecords() async throws {
         let suiteName = "MirageProviderPageTests.PhotoFilters.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -113,22 +113,25 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             [openverse.id, pexels.id]
         )
 
-        filters.setPhotoSourceID(.metMuseum)
-        let unsupportedSourceRoot = try await ProviderCatalog(repository: repository)
-            .preparedItems(for: .root)
-        XCTAssertTrue(Self.images(in: unsupportedSourceRoot).isEmpty)
-        XCTAssertEqual(
-            Set(unsupportedSourceRoot.map(\.itemIdentifier)),
-            [
-                ProviderIdentifiers.avatars,
-                ProviderIdentifiers.recent,
-                ProviderIdentifiers.favorites,
-                ProviderIdentifiers.searchBacking,
-            ]
-        )
-        let workingSet = try await ProviderCatalog(repository: repository)
-            .preparedItems(for: .workingSet)
-        XCTAssertTrue(Self.images(in: workingSet).isEmpty)
+        for sourceID in [PhotoSourceID.metMuseum, .nasa, .pixabay] {
+            filters.setPhotoSourceID(sourceID)
+            let unsupportedSourceRoot = try await ProviderCatalog(repository: repository)
+                .preparedItems(for: .root)
+            XCTAssertEqual(
+                Self.images(in: unsupportedSourceRoot).compactMap {
+                    ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
+                },
+                [openverse.id, pexels.id]
+            )
+            let workingSet = try await ProviderCatalog(repository: repository)
+                .preparedItems(for: .workingSet)
+            XCTAssertEqual(
+                Self.images(in: workingSet).compactMap {
+                    ProviderIdentifiers.recordReference(from: $0.itemIdentifier)?.recordID
+                },
+                [openverse.id, pexels.id]
+            )
+        }
     }
 
     /// 无结果的纯图片快照仍必须发布根目录固定入口，不能将整个域误报为过期页。
@@ -153,6 +156,74 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(root.count, 4)
         XCTAssertEqual(Set(root.map(\.discoveryGeneration)), [1])
         XCTAssertEqual(Set(workingSet.map(\.itemIdentifier)), Set(root.map(\.itemIdentifier)))
+    }
+
+    /// 已发布照片遇到瞬时读取失败时必须返回错误让系统重试，不能把有效根快照覆盖成空目录。
+    func testTransientRootFailurePreservesPreviouslyPublishedSnapshot() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let initialRepository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderStaticDiscoveryFeed(
+                records: [Self.record(id: "retained", source: .openverse)]
+            )
+        )
+        _ = try await ProviderCatalog(repository: initialRepository)
+            .preparedItems(for: .root)
+        let before = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.root.storageKey
+        )
+
+        let failingRepository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderFailingDiscoveryFeed()
+        )
+        await XCTAssertThrowsErrorAsync(
+            try await ProviderCatalog(repository: failingRepository)
+                .preparedItems(for: .root)
+        )
+
+        let after = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.root.storageKey
+        )
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(after?.filter { $0.identifier.hasPrefix("discover:") }.count, 1)
+    }
+
+    /// 系统可能先提交 working set；即使 root 尚未包含照片，瞬时失败也不能回退为空根目录。
+    func testTransientRootFailurePreservesWorkingSetOnlyPublication() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        _ = try await storage.commitProviderScope(
+            ProviderEnumerationScope.workingSet.storageKey,
+            items: [
+                ProviderStoredItemState(
+                    identifier: "discover:retained-working-set",
+                    fingerprint: "v1"
+                ),
+            ]
+        )
+
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderFailingDiscoveryFeed()
+        )
+        await XCTAssertThrowsErrorAsync(
+            try await ProviderCatalog(repository: repository)
+                .preparedItems(for: .root)
+        )
+        let rootSnapshot = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.root.storageKey
+        )
+        XCTAssertNil(rootSnapshot)
+        let workingSetSnapshot = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.workingSet.storageKey
+        )
+        XCTAssertEqual(
+            workingSetSnapshot?.map(\.identifier),
+            ["discover:retained-working-set"]
+        )
     }
 
     /// “头像”首页生成 40 个稳定 occurrence，并在末尾发布唯一“加载更多”目录。
@@ -1229,6 +1300,16 @@ private struct ProviderEmptyDiscoveryFeed: DiscoveryFeedProviding {
             nextPage: nil,
             didMutateSnapshot: false
         )
+    }
+}
+
+private enum ProviderDiscoveryFeedFixtureError: Error {
+    case unavailable
+}
+
+private struct ProviderFailingDiscoveryFeed: DiscoveryFeedProviding {
+    func page(generation: UInt64?, page: Int, pageSize: Int) async throws -> DiscoveryFeedPage {
+        throw ProviderDiscoveryFeedFixtureError.unavailable
     }
 }
 
