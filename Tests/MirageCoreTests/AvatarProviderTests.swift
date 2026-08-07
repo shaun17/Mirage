@@ -123,7 +123,8 @@ final class AvatarProviderTests: XCTestCase {
         XCTAssertEqual(record.sourcePageURL?.path, "/en/image_maker/2000000")
         XCTAssertEqual(record.license.identifier, "picrew-maker-specific")
         XCTAssertTrue(record.source.allowsPersistentLibraryStorage)
-        XCTAssertNil(StableImageID.avatarSource(from: record.id))
+        XCTAssertEqual(StableImageID.avatarSource(from: record.id), .picrew)
+        XCTAssertNil(StableImageID.avatarGenerationDay(from: record.id))
 
         let catalog = AvatarCatalogClient(
             providers: [DiceBearClient(styles: [.micah], now: { Self.fixedNow }), client],

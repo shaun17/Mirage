@@ -143,6 +143,7 @@ struct ProviderCatalog: Sendable {
         async let recent = repository.recentItems()
         async let favorites = repository.favoriteItems()
         async let search = repository.cachedSearchItems()
+        async let avatars = repository.rebuiltPublishedAvatarScopes()
         let root = try await rootItems()
         guard let rootGeneration = root.compactMap(\.discoveryGeneration).first else {
             throw ProviderError.expiredDiscoveryPage()
@@ -158,10 +159,10 @@ struct ProviderCatalog: Sendable {
         } else {
             recursive = ProviderRecursiveWorkingSetSnapshot(items: [], scopes: [])
         }
-        let values = try await (recent, favorites, search)
+        let values = try await (recent, favorites, search, avatars)
         return ProviderWorkingSetSnapshot(
-            items: root + recursive.items + values.0 + values.1 + values.2,
-            recursiveScopes: recursive.scopes,
+            items: root + recursive.items + values.3.items + values.0 + values.1 + values.2,
+            recursiveScopes: recursive.scopes + values.3.scopes,
             rootGeneration: rootGeneration
         )
     }
@@ -234,7 +235,7 @@ struct ProviderCatalog: Sendable {
 /// 一次 working-set 枚举及其要原子更新的逐目录 scope。
 private struct ProviderWorkingSetSnapshot: Sendable {
     let items: [ProviderItem]
-    let recursiveScopes: [ProviderDiscoveryScopeSnapshot]
+    let recursiveScopes: [ProviderScopeSnapshot]
     let rootGeneration: UInt64
 }
 

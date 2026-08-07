@@ -283,7 +283,18 @@ public enum StableImageID {
 
     /// 从当前头像 ID 恢复来源，用于拒绝来源字段与命名空间不一致的损坏缓存。
     public static func avatarSource(from identifier: String) -> ImageSource? {
-        avatarIdentifierComponents(from: identifier)?.source
+        if isPicrewDiscovery(identifier) { return .picrew }
+        return avatarIdentifierComponents(from: identifier)?.source
+    }
+
+    /// Picrew Discovery 没有每日 seed，但公开缩略图路径摘要仍能验证当前命名空间。
+    private static func isPicrewDiscovery(_ identifier: String) -> Bool {
+        let fields = identifier.split(separator: ":", omittingEmptySubsequences: false)
+        return fields.count == 4
+            && fields[0] == "picrew"
+            && fields[1] == "discovery"
+            && fields[2] == "v1"
+            && isSHA256(fields[3])
     }
 
     private static func avatarIdentifierComponents(

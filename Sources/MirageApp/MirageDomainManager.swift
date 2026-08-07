@@ -7,6 +7,9 @@ import OSLog
 struct MirageDomainManager: Sendable {
     private static let logger = Logger(subsystem: "com.wenren.Mirage", category: "Domain")
     private static let displayName = "Mirage"
+    private static let avatarCatalogRefreshVersion = 3
+    private static let avatarCatalogRefreshVersionKey =
+        "finder-avatar-catalog-refresh-version-v1"
     enum RegistrationResult: Sendable {
         case installed
         case alreadyInstalled
@@ -15,9 +18,6 @@ struct MirageDomainManager: Sendable {
 
     private static let maximumRegistrationAttempts = 5
     static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
-    private static let avatarsIdentifier = NSFileProviderItemIdentifier(
-        MirageSystemIntegration.fileProviderAvatarsContainerIdentifier
-    )
 
     /// 只把用户明确关闭扩展归为待启用，其余异常保留为可诊断错误。
     enum Availability: Sendable {
@@ -154,15 +154,27 @@ struct MirageDomainManager: Sendable {
         )
     }
 
-    /// 头像类型变化同时刷新首页和所有已经打开的分页目录，避免旧 occurrence 被新筛选拒绝后显示空白。
+    /// Replicated File Provider 只接受 working set signal；扩展会在该快照中原子重建已发布头像 scope。
     func signalAvatarFilterChanged() async throws {
         let manager = try await currentManager()
         let storage = try AppGroupStorage()
         _ = try await storage.advanceProviderPublicationEpoch()
-        let pageIdentifiers = try await publishedAvatarPageIdentifiers(in: storage)
-        try await signalEnumerators(
-            [Self.avatarsIdentifier] + pageIdentifiers + [.workingSet],
-            using: manager
+        try await manager.signalEnumerator(for: .workingSet)
+    }
+
+    /// 首次运行支持完整头像类型的版本时主动淘汰旧 Finder 树；成功后不再重复刷新。
+    func refreshAvatarCatalogAfterUpgradeIfNeeded() async throws {
+        guard let defaults = UserDefaults(suiteName: AppGroupStorage.appGroupIdentifier) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        guard defaults.integer(forKey: Self.avatarCatalogRefreshVersionKey)
+                < Self.avatarCatalogRefreshVersion else {
+            return
+        }
+        try await signalAvatarFilterChanged()
+        defaults.set(
+            Self.avatarCatalogRefreshVersion,
+            forKey: Self.avatarCatalogRefreshVersionKey
         )
     }
 
@@ -196,23 +208,6 @@ struct MirageDomainManager: Sendable {
             throw CocoaError(.fileNoSuchFile)
         }
         return manager
-    }
-
-    /// 只通知已经进入系统发布树的 canonical 分页，并按页码排序保证父目录先于子目录刷新。
-    private func publishedAvatarPageIdentifiers(
-        in storage: AppGroupStorage
-    ) async throws -> [NSFileProviderItemIdentifier] {
-        let prefix = MirageSystemIntegration.fileProviderAvatarPageIdentifierPrefix
-        return try await storage.providerItemIdentifiers(matchingPrefix: prefix)
-            .compactMap { rawValue -> (page: Int, identifier: NSFileProviderItemIdentifier)? in
-                let suffix = String(rawValue.dropFirst(prefix.count))
-                guard let page = Int(suffix), page >= 2, String(page) == suffix else {
-                    return nil
-                }
-                return (page, NSFileProviderItemIdentifier(rawValue))
-            }
-            .sorted { $0.page < $1.page }
-            .map(\.identifier)
     }
 
     /// 先读取系统公开的启用/断开状态，再以 URL 与 signal 验证完整运行链路。

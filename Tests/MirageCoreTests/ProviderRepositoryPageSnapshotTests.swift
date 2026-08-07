@@ -373,44 +373,128 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertNil(removedOccurrence)
     }
 
-    /// App 专属的二次元与动态 AI 真人筛选不能把 Finder 头像树变成只有“加载更多”的空链。
-    func testAppOnlyAvatarTypesFallBackToStableFinderCatalog() async throws {
-        let suiteName = "MirageProviderPageTests.AppOnlyFilters.\(UUID().uuidString)"
+    /// Finder 必须按共享筛选发布二次元与 AI 肖像，且枚举出的 Picrew 条目能够被 occurrence 回查。
+    func testFinderPublishesSelectedAnimeAndAIAvatarTypesAcrossPages() async throws {
+        let suiteName = "MirageProviderPageTests.AnimeAndAIFilters.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        filters.setAvatarTypes([.anime, .aiRealistic])
         let storage = try AppGroupStorage(baseURL: temporaryURL)
         let repository = ProviderRepository(
             manager: nil,
             storage: storage,
             discoveryFeed: ProviderEmptyDiscoveryFeed(),
-            diceBear: Self.deterministicAvatarCatalog(now: { Self.avatarSeedDate1 }),
+            diceBear: Self.filteredAvatarCatalog(now: { Self.avatarSeedDate1 }),
             filterPreferences: filters
         )
         let catalog = ProviderCatalog(repository: repository)
         let secondPage = try XCTUnwrap(AvatarPageReference(page: 2))
 
-        for selectedType in [AvatarType.anime, .aiRealistic] {
-            filters.setAvatarTypes([selectedType])
-            let items = try await catalog.preparedItems(for: .avatars)
-            let images = Self.images(in: items)
-            let moreItems = try await catalog.preparedItems(for: .avatarPage(secondPage))
-            let moreImages = Self.images(in: moreItems)
+        let items = try await catalog.preparedItems(for: .avatars)
+        let images = Self.images(in: items)
+        let moreItems = try await catalog.preparedItems(for: .avatarPage(secondPage))
+        let moreImages = Self.images(in: moreItems)
+        var resolvedRecords: [RemoteImageRecord] = []
 
-            XCTAssertEqual(images.count, 40)
-            XCTAssertEqual(items.last?.filename, "加载更多")
-            XCTAssertEqual(moreImages.count, 40)
-            XCTAssertEqual(moreItems.last?.filename, "加载更多")
-            for item in images + moreImages {
-                let resolved = try await repository.occurrence(for: item.itemIdentifier)
-                let occurrence = try XCTUnwrap(resolved)
-                XCTAssertTrue(
-                    [.cartoonCharacter, .robot, .monster, .animal]
-                        .contains(occurrence.record.avatarType)
-                )
+        XCTAssertEqual(images.count, 40)
+        XCTAssertEqual(items.last?.filename, "加载更多")
+        XCTAssertEqual(moreImages.count, 40)
+        XCTAssertEqual(moreItems.last?.filename, "加载更多")
+        for item in images + moreImages {
+            let resolved = try await repository.occurrence(for: item.itemIdentifier)
+            resolvedRecords.append(try XCTUnwrap(resolved).record)
+        }
+        XCTAssertEqual(Set(resolvedRecords.compactMap(\.avatarType)), [.anime, .aiRealistic])
+        XCTAssertEqual(Set(resolvedRecords.map(\.source)), [.picrew, .diceBear])
+    }
+
+    /// AI 动态来源按低频配额返回不足 40 条时，Finder 仍发布已有图片和下一页入口。
+    func testAIRealisticOnlyPublishesAvailablePartialAvatarBatch() async throws {
+        let suiteName = "MirageProviderPageTests.AIOnlyFilter.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        filters.setAvatarTypes([.aiRealistic])
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: Self.filteredAvatarCatalog(now: { Self.avatarSeedDate1 }),
+            filterPreferences: filters
+        )
+        let catalog = ProviderCatalog(repository: repository)
+
+        let items = try await catalog.preparedItems(for: .avatars)
+        let images = Self.images(in: items)
+
+        XCTAssertEqual(images.count, 10)
+        XCTAssertEqual(items.last?.filename, "加载更多")
+        for item in images {
+            let resolved = try await repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(resolved?.record.avatarType, .aiRealistic)
+        }
+    }
+
+    /// working set 刷新必须重建已发布头像 scope，系统才能把筛选差异投影到 Finder 目录。
+    func testWorkingSetRebuildsPublishedAvatarScopeAfterFilterChange() async throws {
+        let suiteName = "MirageProviderPageTests.WorkingSetAvatarFilter.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let filters = DiscoveryFilterPreferencesStore(userDefaults: defaults)
+        filters.setAvatarTypes([.anime, .aiRealistic])
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderEmptyDiscoveryFeed(),
+            diceBear: Self.filteredAvatarCatalog(now: { Self.avatarSeedDate1 }),
+            filterPreferences: filters
+        )
+        let catalog = ProviderCatalog(repository: repository)
+
+        let initial = try await catalog.preparedItems(for: .avatars)
+        var removedIdentifier: NSFileProviderItemIdentifier?
+        for item in Self.images(in: initial) {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            if occurrence?.record.avatarType == .aiRealistic {
+                removedIdentifier = item.itemIdentifier
+                break
             }
         }
+        let oldAIIdentifier = try XCTUnwrap(removedIdentifier)
+        let anchorBeforeFilterChange = try await repository.currentAnchor()
+
+        filters.setAvatarTypes([.anime])
+        let workingSet = try await catalog.preparedItems(for: .workingSet)
+        let avatarImages = workingSet.filter {
+            $0.parentItemIdentifier == ProviderIdentifiers.avatars && $0.contentType == .png
+        }
+        let storedAvatarIdentifiers = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.avatars.storageKey
+        )?.map(\.identifier)
+
+        XCTAssertEqual(avatarImages.count, 40)
+        XCTAssertEqual(Set(storedAvatarIdentifiers ?? []), Set(
+            workingSet
+                .filter { $0.parentItemIdentifier == ProviderIdentifiers.avatars }
+                .map { $0.itemIdentifier.rawValue }
+        ))
+        for item in avatarImages {
+            let occurrence = try await repository.occurrence(for: item.itemIdentifier)
+            XCTAssertEqual(occurrence?.record.avatarType, .anime)
+        }
+        let removedOccurrence = try await repository.occurrence(for: oldAIIdentifier)
+        let workingSetChanges = try await repository.changes(
+            in: ProviderEnumerationScope.workingSet.storageKey,
+            after: anchorBeforeFilterChange
+        )
+        XCTAssertNil(removedOccurrence)
+        XCTAssertTrue(workingSetChanges.deletedIdentifiers.contains(oldAIIdentifier.rawValue))
     }
 
     /// 打开头像第 2 层只生成 offsets 40...79，并发布指向第 3 层的稳定入口。
@@ -1230,6 +1314,22 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         )
     }
 
+    private static func filteredAvatarCatalog(
+        now: @escaping @Sendable () -> Date
+    ) -> AvatarCatalogClient {
+        AvatarCatalogClient(
+            providers: [
+                ProviderAvatarTypeGenerator(type: .anime, source: .picrew),
+                ProviderAvatarTypeGenerator(
+                    type: .aiRealistic,
+                    source: .diceBear,
+                    eligibilityDivisor: 4
+                ),
+            ],
+            now: now
+        )
+    }
+
     private static func discoveryDirectories(in items: [ProviderItem]) -> [ProviderItem] {
         let fixed: Set<NSFileProviderItemIdentifier> = [
             ProviderIdentifiers.avatars,
@@ -1330,6 +1430,67 @@ private struct ProviderStaticDiscoveryFeed: DiscoveryFeedProviding {
             records: page == 1 ? Array(records.prefix(pageSize)) : [],
             nextPage: nil,
             didMutateSnapshot: false
+        )
+    }
+}
+
+private struct ProviderAvatarTypeGenerator: AvatarSourceGenerating {
+    let type: AvatarType
+    let source: ImageSource
+    let eligibilityDivisor: UInt64
+
+    init(
+        type: AvatarType,
+        source: ImageSource,
+        eligibilityDivisor: UInt64 = 1
+    ) {
+        self.type = type
+        self.source = source
+        self.eligibilityDivisor = eligibilityDivisor
+    }
+
+    var avatarCatalogIdentifier: String { "provider-fixture-\(type.rawValue)" }
+    var avatarCatalogEligibilityDivisor: UInt64 { eligibilityDivisor }
+    var supportedAvatarTypes: Set<AvatarType> { [type] }
+
+    func avatar(
+        seedMaterial: String,
+        generationDay: AvatarGenerationDay
+    ) async -> RemoteImageRecord? {
+        guard let index = AvatarSeed.absoluteIndex(from: seedMaterial) else { return nil }
+        let id: String
+        let url: URL
+        let license: LicenseInfo
+        if source == .picrew {
+            let path = "shareImg/thumb/202608/provider-\(index).png"
+            id = StableImageID.picrewDiscovery(
+                makerID: String(2_000_000 + index),
+                thumbnailPath: path
+            )
+            guard let value = URL(string: "https://cdn.picrew.me/\(path)") else { return nil }
+            url = value
+            license = .picrewUsage
+        } else {
+            id = StableImageID.dailyDiceBear(
+                style: "provider-fixture",
+                generationDay: generationDay,
+                seedMaterial: seedMaterial
+            )
+            guard let value = URL(string: "https://example.com/avatar/\(index).png") else {
+                return nil
+            }
+            url = value
+            license = .cc0
+        }
+        return RemoteImageRecord(
+            id: id,
+            title: type.displayName,
+            source: source,
+            avatarType: type,
+            imageURL: url,
+            thumbnailURL: url,
+            license: license,
+            mimeType: "image/png"
         )
     }
 }

@@ -16,20 +16,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// Finder 头像分页按绝对 offset 生成；每次调用仍受头像协议单次 20 条限制。
     private static let avatarChunkSize = 20
 
-    /// Finder 自动目录只使用可直接下载、能稳定补满 40 条的确定性来源。
-    /// Picrew 预览仍限 App 展示；动态 AI 真人可作为已冻结收藏读取，但不参与 Finder 批量生成。
-    private static let stableFileProviderAvatarTypes: Set<AvatarType> = [
-        .cartoonCharacter,
-        .robot,
-        .monster,
-        .animal,
-    ]
-
     /// App Group 不可用时保留实例，具体请求再返回稳定错误而不是让扩展崩溃。
     init(
         manager: NSFileProviderManager?,
         environment: PhotoSearchEnvironment = .production(),
-        diceBear: any AvatarProviding = AvatarCatalogClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(includesPicrewDiscovery: true),
         filterPreferences: DiscoveryFilterPreferencesStore = .production()
     ) {
         let storage = try? AppGroupStorage()
@@ -47,7 +38,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         manager: NSFileProviderManager?,
         storage: AppGroupStorage,
         discoveryFeed: any DiscoveryFeedProviding,
-        diceBear: any AvatarProviding = AvatarCatalogClient(),
+        diceBear: any AvatarProviding = AvatarCatalogClient(includesPicrewDiscovery: true),
         sourcePreferences: (any PhotoSourcePreferencesReading)? = nil,
         filterPreferences: DiscoveryFilterPreferencesStore? = nil
     ) {
@@ -107,7 +98,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
-    /// 每个可见目录生成固定 40 个确定性头像，不读取混合推荐流或照片来源。
+    /// 每个可见目录最多生成 40 个头像；低频动态来源不足一页时仍发布可用结果。
     private func avatarItems(page: Int) async throws -> [ProviderItem] {
         let storage = try requireStorage()
         let avatarFilter = currentFileProviderAvatarFilter()
@@ -146,8 +137,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
             }
             offset += count
         }
-        guard generatedRecords.count == ProviderAvatarTreePlanner.batchSize else {
-            throw ProviderError.serverUnreachable("无法生成完整的头像批次。")
+        guard !generatedRecords.isEmpty else {
+            throw ProviderError.serverUnreachable("当前头像类型暂时没有可用图片。")
         }
         try Task.checkCancellation()
         for record in generatedRecords {
@@ -482,7 +473,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
 
         var flattened: [ProviderItem] = []
-        var scopes: [ProviderDiscoveryScopeSnapshot] = []
+        var scopes: [ProviderScopeSnapshot] = []
         for page in 2...min(maximumPage, ProviderDiscoveryTreePlanner.maximumPage) {
             try Task.checkCancellation()
             let reference = try DiscoveryPageReference(validating: page)
@@ -493,8 +484,46 @@ actor ProviderRepository: ProviderSearchResultStoring {
             try Task.checkCancellation()
             let items = try ProviderDiscoveryTreePlanner.items(for: batch)
             flattened.append(contentsOf: items)
-            scopes.append(ProviderDiscoveryScopeSnapshot(reference: reference, items: items))
+            scopes.append(
+                ProviderScopeSnapshot(
+                    storageKey: ProviderEnumerationScope.discoveryPage(reference).storageKey,
+                    items: items
+                )
+            )
             guard batch.hasMore else { break }
+        }
+        return ProviderRecursiveWorkingSetSnapshot(items: flattened, scopes: scopes)
+    }
+
+    /// Replicated File Provider 只消费 working set 通知；重建已发布头像 scope 才能把筛选差异投影到 Finder。
+    func rebuiltPublishedAvatarScopes() async throws -> ProviderRecursiveWorkingSetSnapshot {
+        let storage = try requireStorage()
+        let rootKey = ProviderEnumerationScope.avatars.storageKey
+        guard try await storage.providerScopeSnapshot(rootKey) != nil else {
+            return ProviderRecursiveWorkingSetSnapshot(items: [], scopes: [])
+        }
+
+        let rootItems = try await avatarItems(page: 1)
+        var flattened = rootItems
+        var scopes = [ProviderScopeSnapshot(storageKey: rootKey, items: rootItems)]
+        let pageIdentifiers = try await storage.providerItemIdentifiers(
+            matchingPrefix: MirageSystemIntegration.fileProviderAvatarPageIdentifierPrefix
+        )
+        let references = pageIdentifiers
+            .compactMap {
+                ProviderIdentifiers.avatarPageReference(
+                    from: NSFileProviderItemIdentifier($0)
+                )
+            }
+            .sorted { $0.page < $1.page }
+
+        for reference in references {
+            try Task.checkCancellation()
+            let scopeKey = ProviderEnumerationScope.avatarPage(reference).storageKey
+            guard try await storage.providerScopeSnapshot(scopeKey) != nil else { continue }
+            let items = try await avatarItems(page: reference.page)
+            flattened.append(contentsOf: items)
+            scopes.append(ProviderScopeSnapshot(storageKey: scopeKey, items: items))
         }
         return ProviderRecursiveWorkingSetSnapshot(items: flattened, scopes: scopes)
     }
@@ -655,7 +684,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
         if reference.view == .favorite {
             return await isAvailableFavoriteInFileProvider(occurrence.record) ? occurrence : nil
         }
-        guard await isAllowedInFileProvider(occurrence.record) else { return nil }
+        // 头像 scope 已由当前筛选、来源命名空间和已发布成员共同授权；Picrew 仍不进入
+        // 普通图片、搜索或最近使用目录。
+        if reference.view != .avatar {
+            guard await isAllowedInFileProvider(occurrence.record) else { return nil }
+        }
         if occurrence.record.source == .thisPersonDoesNotExist {
             guard (try? await hasAvailableAvatarContent(occurrence.record, in: storage)) == true else {
                 return nil
@@ -784,8 +817,12 @@ actor ProviderRepository: ProviderSearchResultStoring {
         generationDay expectedGenerationDay: AvatarGenerationDay? = nil
     ) -> Bool {
         guard record.source.isAvatarSource,
-              StableImageID.avatarSource(from: record.id) == record.source,
-              let generationDay = StableImageID.avatarGenerationDay(from: record.id) else {
+              StableImageID.avatarSource(from: record.id) == record.source else {
+            return false
+        }
+        // Picrew 的公开作品 ID 绑定 Maker 与缩略图路径，不属于每日生成命名空间。
+        if record.source == .picrew { return true }
+        guard let generationDay = StableImageID.avatarGenerationDay(from: record.id) else {
             return false
         }
         return expectedGenerationDay.map { $0 == generationDay } ?? true
@@ -903,7 +940,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 当前代次的递归 scope 与 working set 必须一次提交，系统永远看不到“目录尚在但 children 被清空”的中间态。
     func commitWorkingSet(
         items: [ProviderItem],
-        recursiveScopes: [ProviderDiscoveryScopeSnapshot],
+        recursiveScopes: [ProviderScopeSnapshot],
         rootGeneration: UInt64,
         migratesLegacySearch: Bool,
         expectedPublicationEpoch: UInt64
@@ -914,9 +951,17 @@ actor ProviderRepository: ProviderSearchResultStoring {
             migratesLegacySearch: migratesLegacySearch,
             storage: storage
         )
+        var projectedDeletedIdentifiers = Set<String>()
+        for scope in recursiveScopes {
+            let newIdentifiers = Set(scope.items.map { $0.itemIdentifier.rawValue })
+            let previous = try await storage.providerScopeSnapshot(scope.storageKey) ?? []
+            projectedDeletedIdentifiers.formUnion(
+                previous.lazy.map(\.identifier).filter { !newIdentifiers.contains($0) }
+            )
+        }
         var commits = recursiveScopes.map {
             ProviderStoredScopeCommit(
-                scope: ProviderEnumerationScope.discoveryPage($0.reference).storageKey,
+                scope: $0.storageKey,
                 items: Self.storedStates(from: $0.items)
             )
         }
@@ -924,7 +969,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
             ProviderStoredScopeCommit(
                 scope: ProviderEnumerationScope.workingSet.storageKey,
                 items: Self.storedStates(from: items),
-                initialDeletedIdentifiers: legacyDeleted
+                initialDeletedIdentifiers: legacyDeleted,
+                additionalDeletedIdentifiers: projectedDeletedIdentifiers.sorted()
             )
         )
         do {
@@ -1103,20 +1149,16 @@ actor ProviderRepository: ProviderSearchResultStoring {
         )
     }
 
-    /// App 可展示的类型比 Finder 自动目录更宽；若用户只选了 App 专属类型，Finder 回退到稳定目录。
+    /// Finder 与 App 使用同一头像类型集合；缓存 key 随实际类型变化，禁止回退到未选择的类型。
     private func currentFileProviderAvatarFilter() -> FileProviderAvatarFilter {
-        let requestedTypes = currentFilterSnapshot().avatarTypes
-            .intersection(Self.stableFileProviderAvatarTypes)
-        let effectiveTypes = requestedTypes.isEmpty
-            ? Self.stableFileProviderAvatarTypes
-            : requestedTypes
+        let effectiveTypes = currentFilterSnapshot().avatarTypes
         let values = AvatarType.allCases
             .filter(effectiveTypes.contains)
             .map(\.rawValue)
             .joined(separator: ",")
         return FileProviderAvatarFilter(
             types: effectiveTypes,
-            key: "provider-avatar-filter-v2:\(values)"
+            key: "provider-avatar-filter-v3:\(values)"
         )
     }
 }
@@ -1153,16 +1195,16 @@ struct ProviderOccurrence: Sendable {
     }
 }
 
-/// working set 为某个已打开目录重建的当前代次完整快照。
-struct ProviderDiscoveryScopeSnapshot: Sendable {
-    let reference: DiscoveryPageReference
+/// working set 为某个已发布目录重建的完整快照。
+struct ProviderScopeSnapshot: Sendable {
+    let storageKey: String
     let items: [ProviderItem]
 }
 
 /// working set 一次枚举中要交付的递归成员及其逐目录发布边界。
 struct ProviderRecursiveWorkingSetSnapshot: Sendable {
     let items: [ProviderItem]
-    let scopes: [ProviderDiscoveryScopeSnapshot]
+    let scopes: [ProviderScopeSnapshot]
 }
 
 /// 根目录当前可发布的完整推荐序列；`nextPage` 为空表示远端已无更多内容。

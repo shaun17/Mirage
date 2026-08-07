@@ -147,15 +147,18 @@ public struct ProviderStoredScopeCommit: Equatable, Sendable {
     public let scope: String
     public let items: [ProviderStoredItemState]
     public let initialDeletedIdentifiers: [String]
+    public let additionalDeletedIdentifiers: [String]
 
     public init(
         scope: String,
         items: [ProviderStoredItemState],
-        initialDeletedIdentifiers: [String] = []
+        initialDeletedIdentifiers: [String] = [],
+        additionalDeletedIdentifiers: [String] = []
     ) {
         self.scope = scope
         self.items = items
         self.initialDeletedIdentifiers = initialDeletedIdentifiers
+        self.additionalDeletedIdentifiers = additionalDeletedIdentifiers
     }
 }
 
@@ -1476,6 +1479,7 @@ public actor AppGroupStorage {
         if scopeState.hasCommittedSnapshot == false {
             deleted.formUnion(commit.initialDeletedIdentifiers.filter { newItems[$0] == nil })
         }
+        deleted.formUnion(commit.additionalDeletedIdentifiers.filter { newItems[$0] == nil })
         let updated = Set(newItems.compactMap { identifier, item in
             oldItems[identifier] == item ? nil : identifier
         })
