@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// `Settings` Scene 不提供标题参数，通过承载视图在窗口挂载时设置原生标题栏文本。
+/// `Settings` Scene 不提供标题参数；清空窗口名称，并隐藏系统居中的标题绘制。
 struct SettingsWindowTitleConfigurator: NSViewRepresentable {
     let title: String
 
@@ -30,14 +30,24 @@ final class SettingsWindowTitleView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         applyTitle()
+        scheduleTitleUpdate()
     }
 
     func update(title: String) {
         representedTitle = title
         applyTitle()
+        scheduleTitleUpdate()
+    }
+
+    private func scheduleTitleUpdate() {
+        DispatchQueue.main.async { [weak self] in
+            self?.applyTitle()
+        }
     }
 
     private func applyTitle() {
-        window?.title = representedTitle
+        guard let window else { return }
+        window.title = representedTitle
+        window.titleVisibility = .hidden
     }
 }

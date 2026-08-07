@@ -34,14 +34,8 @@ struct PhotoSourceSettingsView: View {
         .frame(width: 720, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .background {
-            SettingsWindowTitleConfigurator(title: "数据源设置")
+            SettingsWindowTitleConfigurator(title: "")
                 .allowsHitTesting(false)
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("数据源设置")
-                    .font(.headline)
-            }
         }
         .onAppear {
             selectedSourceID = .openverse

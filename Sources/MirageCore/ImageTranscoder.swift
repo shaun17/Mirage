@@ -217,13 +217,14 @@ public struct ImageTranscoder: Sendable {
 }
 
 private enum InputFormat {
-    case png, jpeg, webP, heif
+    case png, jpeg, webP, heif, bmp
 
     /// 使用魔数而不是扩展名判断真实内容格式。
     static func detect(_ data: Data) -> InputFormat? {
         let bytes = [UInt8](data.prefix(16))
         if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return .png }
         if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return .jpeg }
+        if bytes.starts(with: [0x42, 0x4D]) { return .bmp }
         if bytes.count >= 12, String(bytes: bytes[0..<4], encoding: .ascii) == "RIFF",
            String(bytes: bytes[8..<12], encoding: .ascii) == "WEBP" { return .webP }
         if bytes.count >= 12, String(bytes: bytes[4..<8], encoding: .ascii) == "ftyp" {
@@ -240,6 +241,7 @@ private enum InputFormat {
         case .jpeg: return "image/jpeg"
         case .webP: return "image/webp"
         case .heif: return "image/heic"
+        case .bmp: return "image/bmp"
         }
     }
 
@@ -250,6 +252,7 @@ private enum InputFormat {
         case .jpeg: return ["image/jpeg", "image/jpg"]
         case .webP: return ["image/webp"]
         case .heif: return ["image/heic", "image/heif", "image/avif"]
+        case .bmp: return ["image/bmp", "image/x-bmp", "image/x-ms-bmp"]
         }
     }
 }

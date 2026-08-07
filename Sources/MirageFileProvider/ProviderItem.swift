@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// File Provider 树中可枚举、可下载但不可修改的条目。
 final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     /// 转码规则变化时必须推进内容版本，使 Finder 丢弃旧缩略图与物化文件。
-    private static let transcodingAlgorithmVersion = "center-crop-png-512-fixed-1.25m-v4"
+    private static let transcodingAlgorithmVersion = "center-crop-png-512-fixed-1.25m-v5"
     /// 能力变化必须进入元数据版本，系统才能刷新占位文件的可回收标记。
     private static let capabilitySchemaVersion = "read-content-policy-lazy-v1"
 

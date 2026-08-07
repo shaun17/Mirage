@@ -290,7 +290,11 @@ final class AppModel: ObservableObject {
 
     /// 将注册成功与扩展已启用分开，避免首次安装时显示虚假的成功状态。
     private func performProviderCheck() async {
-        providerState = .checking
+        // 已就绪后的后台复查不再插入临时状态栏，避免设置页内容上下跳动；
+        // 首次检查与异常状态下的手动重试仍展示检查进度。
+        if providerState != .ready {
+            providerState = .checking
+        }
         do {
             _ = try await domainManager.registerIfNeeded()
             try await domainManager.refreshAvatarCatalogAfterUpgradeIfNeeded()

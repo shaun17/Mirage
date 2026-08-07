@@ -36,6 +36,22 @@ final class ImageTranscoderTests: XCTestCase {
         }
     }
 
+    /// Pixabay 偶尔以 `.jpg` 地址返回 BMP；按真实魔数解码后仍必须交付标准 PNG。
+    func testTranscodesBitmapInput() throws {
+        let input = try makeImage(width: 64, height: 96, type: .bmp)
+        XCTAssertTrue(input.starts(with: [0x42, 0x4D]))
+
+        let output = try ImageTranscoder().transcode(input, declaredMIMEType: "image/x-ms-bmp")
+        XCTAssertTrue(output.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(output as CFData, nil))
+        let properties = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        XCTAssertEqual((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, 512)
+        XCTAssertEqual((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, 512)
+    }
+
     /// File Provider 写入版本必须是精确固定大小，并仍能被 ImageIO 识别为 512×512 PNG。
     func testWritingProducesFixedSizeValidPNG() throws {
         let input = try makePNG(width: 80, height: 120)
@@ -61,6 +77,16 @@ final class ImageTranscoderTests: XCTestCase {
 
     /// 生成带可选 orientation 的有效 PNG 测试夹具。
     private func makePNG(width: Int, height: Int, orientation: Int? = nil) throws -> Data {
+        try makeImage(width: width, height: height, type: .png, orientation: orientation)
+    }
+
+    /// 用 ImageIO 生成指定静态格式，覆盖服务地址后缀与真实内容不一致的情况。
+    private func makeImage(
+        width: Int,
+        height: Int,
+        type: UTType,
+        orientation: Int? = nil
+    ) throws -> Data {
         let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
         let context = try XCTUnwrap(CGContext(
             data: nil,
@@ -76,7 +102,7 @@ final class ImageTranscoderTests: XCTestCase {
         let image = try XCTUnwrap(context.makeImage())
         let output = NSMutableData()
         let destination = try XCTUnwrap(
-            CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil)
+            CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil)
         )
         let properties = orientation.map { [kCGImagePropertyOrientation: $0] as CFDictionary }
         CGImageDestinationAddImage(destination, image, properties)
