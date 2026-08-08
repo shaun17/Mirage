@@ -1,7 +1,21 @@
+import SwiftUI
+
+#if APP_STORE
+/// Mac App Store 版本必须通过商店更新，因此不链接 Sparkle，也不呈现站外更新入口。
+@MainActor
+final class SoftwareUpdateController {}
+
+struct SoftwareUpdateView: View {
+    init(controller: SoftwareUpdateController) {}
+
+    var body: some View {
+        EmptyView()
+    }
+}
+#else
 import AppKit
 import Combine
 import Sparkle
-import SwiftUI
 
 /// 记录手动检查更新前的前台窗口，并在 Sparkle 结束弹窗或更新会话后恢复窗口层级。
 @MainActor
@@ -92,3 +106,4 @@ struct SoftwareUpdateView: View {
         .help("检查 Mirage 是否有可用的新版本")
     }
 }
+#endif

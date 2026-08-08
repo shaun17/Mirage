@@ -9,7 +9,9 @@
 /* Begin PBXBuildFile section */
 		01C4C2C58935E241F6CC3A5C /* PhotoSourceSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69BF7C96AF68F9EFE65696D1 /* PhotoSourceSettingsModel.swift */; };
 		02AF44E803398CF5ADE3F7D2 /* ProviderSearchCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */; };
+		0807E0C95981778B9BDE603D /* MirageFileProviderAppStore.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4F1215FA0A86C8D629AA294C /* MirageFileProviderAppStore.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		08B9BDF121316E6D3AC4E4A4 /* PhotoSearchEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0575C4280CF472D4895B68ED /* PhotoSearchEnvironment.swift */; };
+		09C03AE2C82FB55C03776CA8 /* PhotoSourceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4E3AD2696EE63C6EF73DAB /* PhotoSourceSettingsView.swift */; };
 		0B2E5534229F988ABF2ABD56 /* ProviderSourcePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D1B9C3614AE9AFFBCC30FD /* ProviderSourcePolicyTests.swift */; };
 		0FCAC52F0F826E1FB66A4C54 /* ThumbnailLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */; };
 		0FE67862C149F9A92FFFCF19 /* PicrewDiscoveryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C851D0B9C5E34348FE5085A /* PicrewDiscoveryClient.swift */; };
@@ -20,17 +22,23 @@
 		14C5DBECCA69B43B107FEB45 /* SettingsWindowTitleConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F53CB3247991492A8B82297 /* SettingsWindowTitleConfigurator.swift */; };
 		15220F9D9D4587AE7B8AF69A /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		166E6FBDE37DDD509C8798F3 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
+		167B99860646EB2DA8AFC986 /* PhotoSourceSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69BF7C96AF68F9EFE65696D1 /* PhotoSourceSettingsModel.swift */; };
 		16FDC664BF4C388B8939276A /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */; };
+		186E227EAC4ABC156A2D10EC /* ProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */; };
+		19BBB1D0E44BE4054DC7588B /* ProviderThumbnailBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */; };
 		1A08F66A8FDFA65017F213E5 /* DiscoveryFeedRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735D715B00C6266576676EA1 /* DiscoveryFeedRepositoryTests.swift */; };
 		1C430E5A835AE2BE7B1410CA /* SoftwareUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */; };
 		1C8AF389EE4655A8882C8938 /* DetailWindowReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A96510E9F960BAD5C8FAA3CF /* DetailWindowReader.swift */; };
 		1E9CA5AF6E0B807B550489DF /* OpenverseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91490DF02E6BF161DA088775 /* OpenverseClient.swift */; };
+		2167CB861DBD5695B5E853A5 /* PhotoSourceSettingsSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B8B1FA9AE0D2068D6BDBDC /* PhotoSourceSettingsSidebar.swift */; };
 		23B488B484C8CB63309A1C78 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
 		25F113DAF0298D779B665D72 /* PhotoSourceRequestPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9B5F67E7FD1D98C6DB1333 /* PhotoSourceRequestPolicy.swift */; };
 		265F7B297127DC301663C68E /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		299DDFD6FF86E362EEE8C76C /* ProviderPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */; };
+		2A7F438ADCE81BB8AF0E2EA0 /* ImageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */; };
 		2B126922A34AF6562188BDDD /* DetailWindowLayoutStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979B26B423257DA953786A69 /* DetailWindowLayoutStateTests.swift */; };
 		2B9BEFA1D8DDD6DC4447A8AB /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
+		2EAFBDEE8406F4E47C1C31B2 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
 		2F297AF8ADD405F5FA3E377C /* AvatarSnapshotReference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93887013D598574456DAC802 /* AvatarSnapshotReference.swift */; };
 		2F6383FA1E9E430CFC0EC0AB /* ImageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7545BEEAEA3ABA16EBC75D /* ImageCard.swift */; };
 		2F6E6A490E1F415CCCA9DA66 /* PixabayClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68810992B725D344AE6457FE /* PixabayClientTests.swift */; };
@@ -39,14 +47,19 @@
 		362F5B103E70FAA8FBA8BF19 /* PhotoSourceSettingsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D781E15D20DBD8EDB4252BF9 /* PhotoSourceSettingsModelTests.swift */; };
 		371CC77410957FBD596632B2 /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712852E84B8494D2634B17A9 /* ImageSearchService.swift */; };
 		37D69B742B4A9CAA06A727F6 /* GiphyCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4812B875930E91B0E0BAEF79 /* GiphyCatalogClient.swift */; };
+		38AB2D025EC4DDD478350298 /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		3BDDC428BFC3CF5FF13389C2 /* ImageSearchServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32302766BC451CA5F5745529 /* ImageSearchServiceTests.swift */; };
+		403D22EE630FDE9E5F7E6FD7 /* MirageDomainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE78B29069C55E789E46142 /* MirageDomainManager.swift */; };
+		4A5D4F1F47E38D824C3A47EA /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
 		4A84D3881A34B313A483CCC4 /* MirageSystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB798163545D3F8C9EA39E6 /* MirageSystemIntegration.swift */; };
 		4AB55F4BCEF3FEF8EA8034E1 /* DetailWindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFD2752E8DDA600E505E5BE /* DetailWindowCoordinator.swift */; };
 		4B51E2C9DAA080EF89B09D51 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4F081ABAA781E0D912A6E94 /* Sparkle */; };
 		4C492FF9A121F6F04583F936 /* AvatarProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F171C0171D91A5A247257E8F /* AvatarProviderTests.swift */; };
 		4D1C1DFF1F15D855BB8E4879 /* PhotoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD59051C53C7E99FE6187AD /* PhotoSource.swift */; };
 		4DC1042CB44FE1C0264AB243 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86D01A404320AA471FC8774F /* Assets.xcassets */; };
+		4E97542C66D52E9B3895474D /* SettingsWindowTitleConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F53CB3247991492A8B82297 /* SettingsWindowTitleConfigurator.swift */; };
 		51A2048ADB2D4629967639E8 /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
+		5292821295C45A8996984129 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86D01A404320AA471FC8774F /* Assets.xcassets */; };
 		538203BB61E1365602C328D1 /* PexelsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBEDD3329E0564D7ADAC087D /* PexelsClient.swift */; };
 		545B0FC78B7BE9A39D073C85 /* DiscoveryFeedSnapshotMutationNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 323FC229B9D85F665E111381 /* DiscoveryFeedSnapshotMutationNotifier.swift */; };
 		548097202E50C19DC1B219E3 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F727B0CD46FC3DC2E73C4F /* SearchQueryParser.swift */; };
@@ -54,12 +67,17 @@
 		552BC2EC1AA3434654B472C9 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8B250AC61C45E5B8256F11 /* AppGroupStorage.swift */; };
 		55FA24C51C2F45CDB36B0F41 /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
 		57C2AE6F72A4A029869464CF /* PhotoSourceBatchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89EF2418290A4416BD485F54 /* PhotoSourceBatchStore.swift */; };
+		59A9F55F746D70BFA6842B33 /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		5AF8BBA00F619CABF2B099B9 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
 		5C6CE33E23B72755DC027564 /* libMirageDetailWindow.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0035164C1C62AEC278295E6C /* libMirageDetailWindow.a */; };
+		5D1EC4519029C1E573C21F6D /* PhotoSourceProviderSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 157A7276FBF8E70C249F1F16 /* PhotoSourceProviderSettingsPane.swift */; };
 		5DE9203DD14509E97E09AD6A /* DiscoveryRecommendation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 072DD1D2AC50C3513B38948A /* DiscoveryRecommendation.swift */; };
+		5FA10C4276594D03519960A2 /* FileProviderExtension+Content.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */; };
 		61041A9D8AE6A48551D518F0 /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
 		619EB03775C37070DAD75119 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
+		662A1A3025292B400B3F30B9 /* libMirageDetailWindow.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0035164C1C62AEC278295E6C /* libMirageDetailWindow.a */; };
 		669FA174B3F6BF2BCD112A64 /* AvatarCatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */; };
+		6F50088BE52B4D183C67062C /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F96F7C1B62EDB9FEDC217CB /* SidebarView.swift */; };
 		7029316DF12DD6E1E9157636 /* GiphyCatalogClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC7D8DD6BE3A2F58D8DE977 /* GiphyCatalogClientTests.swift */; };
 		705CBFFD8A543C52F747FA19 /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
 		7077B5D834EE7563D1E76A84 /* ProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5664A659FF167A24F3F75DA8 /* ProviderEnumerator.swift */; };
@@ -69,36 +87,51 @@
 		72F5991548F46E610E6C90EB /* PhotoSourcePreferencesStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2805C4213960EEFC0C8B863 /* PhotoSourcePreferencesStoreTests.swift */; };
 		75E5035BFD3E79A99588FE57 /* ProviderThumbnailBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */; };
 		77560B755F59DC94AE0E17BC /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
+		78F9E7491C69271F8DF1619D /* ProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5032B6A2667C9906D3A2948 /* ProviderItem.swift */; };
 		79F0BD0C9F2EAC0B4D8D24FD /* FileProviderExtension+Content.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA5DCCF48C197C22F343AC0 /* FileProviderExtension+Content.swift */; };
 		7AE4CFAC516648C8B220D8EE /* ProviderAsyncSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6D85D6030DF29BA3EE61F0 /* ProviderAsyncSupport.swift */; };
+		7BB9B31A35B85D98DC1862DD /* MirageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE02568E93053F434F591C23 /* MirageApp.swift */; };
+		81F6F73AED6F4AE76BBCE96F /* ProviderSearchCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA67434AD189B9C83C2DAC7 /* ProviderSearchCache.swift */; };
 		856A620D824204103E9B84E4 /* ProviderRepositoryPageSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92D53877C9941928E111849A /* ProviderRepositoryPageSnapshotTests.swift */; };
 		87BA4968F8E3F713309B5588 /* ConfiguredPhotoSearcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 445083B2456F60A1FB7ECA53 /* ConfiguredPhotoSearcherTests.swift */; };
 		8EDC0FC34725E5A6AB8F1824 /* ProviderPagePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03C6DBE24D83ADC6059FF9E6 /* ProviderPagePlannerTests.swift */; };
+		92B678685B8FC99A53D0B0C8 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */; };
 		95C654E1F2BC055482310595 /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA52EF87F1F723064DA348D /* LibraryGridView.swift */; };
 		96EE0D4B2968CB78CC0F7EE2 /* SearchPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */; };
+		9797D19D833F96C5285E213A /* ProviderSearchResultStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */; };
 		98A2E0EF05425FF8B90D9051 /* MetMuseumClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 076B6DCC7A978643D1ED8EFC /* MetMuseumClient.swift */; };
 		98AAFE21526102B7BA6B703D /* DetailDrawerMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4136DEAEF791EE9942C29E33 /* DetailDrawerMetrics.swift */; };
 		98B96EBA4646C81722A518CC /* DetailWindowLayoutState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68433E1057AAED506C0900F3 /* DetailWindowLayoutState.swift */; };
 		99E06263B6E64F072168F5AA /* DiscoveryFeedRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */; };
 		9B2B3683BDD6F188F4FF94B4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4317C2B9AEBF745304572E2B /* AppModel.swift */; };
+		9BB7794DE81E5CAF432FB35B /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C2758EFC6C1F7C3C96B2A4 /* SearchModel.swift */; };
 		9BFD2C5ECDDEF2EF2F422870 /* SearchEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B056F3E07F529D27482171E /* SearchEnumerator.swift */; };
+		9C6049519312E26C5126F9E9 /* ProviderIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203241881F4AE97156BBEF6A /* ProviderIdentifiers.swift */; };
 		9DD97EB1FABDA5F9FAE29154 /* ProviderThumbnailBatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B53EB5D0B8258A96BABF1468 /* ProviderThumbnailBatchTests.swift */; };
 		9EDDC96D7EA30CE54CA218D8 /* ProviderSearchResultStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */; };
 		A044C48E7A09C0FD50AF12B2 /* RemoteImageRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3669203491BD3021AB3F633 /* RemoteImageRecord.swift */; };
+		A0667276980BC975C498674D /* AppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5E2B42AD514018FDA6A230 /* AppViewState.swift */; };
+		A06E9CADE775D13896AD4A2A /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		A4D101E7B0EACE499A2DAB29 /* PhotoSourceProviderSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 157A7276FBF8E70C249F1F16 /* PhotoSourceProviderSettingsPane.swift */; };
+		A79EAC67B166B16A4CCF00D5 /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
 		A8FAFD4A82B247F46B3F787B /* NASAImagesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0836ABD0D493F8072DA82EFE /* NASAImagesClient.swift */; };
 		A8FDD253FD3F538032A1CCC5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 948E8761E82C9C91131B7E14 /* ContentView.swift */; };
 		AA71B478F178A01CE438EF6A /* ImageTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D983E444CBDF7B9CBBD5BB22 /* ImageTranscoder.swift */; };
+		AB43DB8C64E52F670A91411D /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA52EF87F1F723064DA348D /* LibraryGridView.swift */; };
 		AD19852316BE7E8859C3D769 /* QueryAndIdentifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE6043B99B3B749FF04D061F /* QueryAndIdentifierTests.swift */; };
 		AE4445BE8F6DD1D0A6667564 /* ThumbnailLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */; };
 		B0668DAE9E1ADBFCA4B29207 /* AvatarType.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0410A5273DA21F418460742 /* AvatarType.swift */; };
 		B0C8CAB8A4875F0079440D60 /* AppGroupStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FF8A6E65E6136E14C08B42 /* AppGroupStorageTests.swift */; };
 		B0CFF1592C3D28FE35C328BC /* MirageDomainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE78B29069C55E789E46142 /* MirageDomainManager.swift */; };
+		B3C70C3E57DA4DB2C5778667 /* SearchEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B056F3E07F529D27482171E /* SearchEnumerator.swift */; };
 		B3CD7B74F9AACA7C1CFBFEF6 /* ProviderPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */; };
+		B458B482152BBC32E4AC6660 /* ThumbnailLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BE507D673E42C3AC62663E /* ThumbnailLoader.swift */; };
 		B54584C3FB00F9050E0AE790 /* ProviderCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A8C82ADCD2EA02CBF20C20 /* ProviderCatalog.swift */; };
 		B6803EFB4F44CA2D681E473F /* ProviderDiscoveryTreePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */; };
 		B6ED0822DF7334DBE5E61653 /* ProviderThumbnailBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220292DFDD346DB420200C41 /* ProviderThumbnailBatch.swift */; };
 		B79B6BC60F665A30EF4A7B7D /* NASAImagesClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8D38334E79C68FA3F2E093E /* NASAImagesClientTests.swift */; };
+		B8BFEA4BE1DAD53658B59FF0 /* ProviderPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */; };
+		BB3672363F104611F064353E /* SoftwareUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F00F0349EF2FB3734322AA9 /* SoftwareUpdateView.swift */; };
 		C00B6AAD171DB181BBBC8360 /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9B6CEBBABF0D607449A2 /* SearchResult.swift */; };
 		C061B4A747B8151391FD8E20 /* DiscoveryFeedSnapshotMutationNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6093397CDEC0218F7B45A945 /* DiscoveryFeedSnapshotMutationNotifierTests.swift */; };
 		C2D7350C0777BB3CE3980896 /* AvatarTypeFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811A22F8404A4D1AFF95ADFF /* AvatarTypeFilterTests.swift */; };
@@ -107,6 +140,7 @@
 		C7E7A302CB037338DE9CF5B3 /* PhotoSourcePreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D1E3A33B8070DCB2EA93A3 /* PhotoSourcePreferencesStore.swift */; };
 		C7F640D8CBE3BE2B099C1D87 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
 		C9CBD997652ABA6A3FDB4FD0 /* PhotoSourceCredentialSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD41AE38F84800E50411153 /* PhotoSourceCredentialSettingsSection.swift */; };
+		CAD1AA0B1F5C5E687F2DA9F7 /* ProviderDiscoveryTreePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287B2734BB801281DE613DC /* ProviderDiscoveryTreePlanner.swift */; };
 		CCBBA0227B1E053F67CC5821 /* ProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F501FBD1166694CFC87CF5 /* ProviderRepository.swift */; };
 		CE626F554C731E200D9E98D1 /* PhotoSourceCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08209B3D2F6AABD808F0B2A8 /* PhotoSourceCredentialStoreTests.swift */; };
 		CF56E5284DA114983E00D94E /* SearchEnumeratorPaginationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7DF5AD60A0A51B3A50FE58 /* SearchEnumeratorPaginationTests.swift */; };
@@ -118,9 +152,14 @@
 		D5CCFAF2383E6EED7AD18AFF /* GiphyEmojiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800B38E139BFC0B5449F9BFB /* GiphyEmojiClient.swift */; };
 		D5E9A91C70BD6D1C3E44AE73 /* PhotoSourceCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EDAB962A83006A1EA2D47A8 /* PhotoSourceCredentialStore.swift */; };
 		D83524EE60AD3659D83DC624 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6DB2E141B31F0A3F958665 /* DiscoverView.swift */; };
+		D922738D0259233CA8E772FC /* AvatarTypeFilterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81379BA791528A9095F62205 /* AvatarTypeFilterBar.swift */; };
 		D938999B023BCCA9B6039ACD /* ProviderSearchResultStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DEB7FD9BE060465DE34F0A /* ProviderSearchResultStoring.swift */; };
 		D977176AF18B068279086C57 /* OpenverseClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2514621218B785F24793DCD /* OpenverseClientTests.swift */; };
 		DA2FABA9159F38E393E698B0 /* PhotoSourceRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC81491A3BEF0B56A74E7CF0 /* PhotoSourceRequestCoordinator.swift */; };
+		DEC891FD57C9FC4DAF968F2D /* SearchPagePlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */; };
+		E0FB795895EB6DCD70246A09 /* ImageDetailPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE6B7C51B4C50CAEAFCD2D7 /* ImageDetailPopover.swift */; };
+		E11554F8FE7F1EF42AF7BC23 /* PhotoSourceCredentialSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD41AE38F84800E50411153 /* PhotoSourceCredentialSettingsSection.swift */; };
+		E15615CA9EC874BAB594977C /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4317C2B9AEBF745304572E2B /* AppModel.swift */; };
 		E1F9CC862BCAF5F5276E974F /* PhotoSourceRequestCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5093542CE7FEB78EA7F2C141 /* PhotoSourceRequestCoordinatorTests.swift */; };
 		E2A61F399BDA52C7ABF9624E /* GravatarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149E636C52AD4E461D7EA0C6 /* GravatarClient.swift */; };
 		E439ADFB7420ADC3278E6650 /* PixabayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0827DC89AD583FFC552FFC9E /* PixabayClient.swift */; };
@@ -134,6 +173,8 @@
 		EE3A13990CD6E446839381D6 /* libMirageCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 28FBD235ACD44F4965213D6E /* libMirageCore.a */; };
 		EEA149E852C51464EB293E63 /* ImageTranscoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239F4289745FA622404CE85B /* ImageTranscoderTests.swift */; };
 		EF9C34C91E5E4A88CA41E68E /* SearchPaginationCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9A3D047E2886C97421E6EC /* SearchPaginationCursor.swift */; };
+		EFD9D6FA1F0C4FEC289EB907 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 948E8761E82C9C91131B7E14 /* ContentView.swift */; };
+		F0E1416521C4FF74DAA18D37 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05697FFFFF7A3B8FDFE1916 /* FileProviderExtension.swift */; };
 		F14EDABAF01604AC0C9D0CB5 /* MirageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE02568E93053F434F591C23 /* MirageApp.swift */; };
 		F15712F6A60954A508100221 /* libMirageDetailWindow.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0035164C1C62AEC278295E6C /* libMirageDetailWindow.a */; };
 		F166E6A23AC9D0EE0B262A3C /* AggregatedPhotoSearcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B5496B1780C4B8FCDAF312 /* AggregatedPhotoSearcherTests.swift */; };
@@ -171,6 +212,20 @@
 			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
 			remoteInfo = MirageCore;
 		};
+		C2500ED475B01DC4208C2043 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
+			remoteInfo = MirageCore;
+		};
+		C426A9BBD6319607FE10829C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 01550E8870FF0AB1B92A6FF7;
+			remoteInfo = MirageDetailWindow;
+		};
 		C4B407E16D080BFF7894D392 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
@@ -185,9 +240,34 @@
 			remoteGlobalIDString = 3A0FF057342715E723BB0EA5;
 			remoteInfo = MirageFileProvider;
 		};
+		F30D27EE25B41026E675510D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 75646270BBDED4236B4B7A57;
+			remoteInfo = MirageFileProviderAppStore;
+		};
+		FB2D61CC0FC0E892F70C215C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 64BB6AA7F87D7B7DEDE3C3FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B4444DA00E0FD2333EA8648F;
+			remoteInfo = MirageCore;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		8E5158322E2A539596B0C0E7 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0807E0C95981778B9BDE603D /* MirageFileProviderAppStore.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD7B2684D149D719DF1528B1 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -242,6 +322,7 @@
 		4B056F3E07F529D27482171E /* SearchEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchEnumerator.swift; sourceTree = "<group>"; };
 		4BA52EF87F1F723064DA348D /* LibraryGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryGridView.swift; sourceTree = "<group>"; };
 		4BA9C5A9E569654259585D18 /* SearchPagePlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchPagePlanner.swift; sourceTree = "<group>"; };
+		4F1215FA0A86C8D629AA294C /* MirageFileProviderAppStore.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MirageFileProviderAppStore.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5093542CE7FEB78EA7F2C141 /* PhotoSourceRequestCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceRequestCoordinatorTests.swift; sourceTree = "<group>"; };
 		52B49A22FF919FA50C0E4FC7 /* ProviderPagePlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderPagePlanner.swift; sourceTree = "<group>"; };
 		52B5496B1780C4B8FCDAF312 /* AggregatedPhotoSearcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AggregatedPhotoSearcherTests.swift; sourceTree = "<group>"; };
@@ -266,6 +347,7 @@
 		81379BA791528A9095F62205 /* AvatarTypeFilterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarTypeFilterBar.swift; sourceTree = "<group>"; };
 		84F184830CB335FCE833ACA2 /* DiscoveryFeedRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryFeedRepository.swift; sourceTree = "<group>"; };
 		86D01A404320AA471FC8774F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		877625643A4B62A870BBF653 /* MirageAppStore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MirageAppStore.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MirageFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		89EF2418290A4416BD485F54 /* PhotoSourceBatchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSourceBatchStore.swift; sourceTree = "<group>"; };
 		8B8C087E6A9A058208B23D94 /* AvatarCatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarCatalogClient.swift; sourceTree = "<group>"; };
@@ -324,6 +406,23 @@
 			buildActionMask = 2147483647;
 			files = (
 				EE3A13990CD6E446839381D6 /* libMirageCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4A530DCD87EF1A5EE0793C54 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				59A9F55F746D70BFA6842B33 /* libMirageCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D3D03007CBC0225A717948A4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				38AB2D025EC4DDD478350298 /* libMirageCore.a in Frameworks */,
+				662A1A3025292B400B3F30B9 /* libMirageDetailWindow.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -465,8 +564,10 @@
 				28FBD235ACD44F4965213D6E /* libMirageCore.a */,
 				0035164C1C62AEC278295E6C /* libMirageDetailWindow.a */,
 				1F1B24601B3BA9FBB7FA9EBA /* Mirage.app */,
+				877625643A4B62A870BBF653 /* MirageAppStore.app */,
 				7468E9F22C1E176BF9AE5B75 /* MirageCoreTests.xctest */,
 				8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */,
+				4F1215FA0A86C8D629AA294C /* MirageFileProviderAppStore.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -573,6 +674,48 @@
 			productReference = 8895152C39F93182BD7E9DEF /* MirageFileProvider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		5584569E6FA6BDA79E4C8B9A /* MirageAppStore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0CE4F69A0E4880776980DC14 /* Build configuration list for PBXNativeTarget "MirageAppStore" */;
+			buildPhases = (
+				C0F620DCFD1653E90348B423 /* Sources */,
+				4C113901BB5FFD5A8962F1BF /* Resources */,
+				D3D03007CBC0225A717948A4 /* Frameworks */,
+				8E5158322E2A539596B0C0E7 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1B751EF63ED34B7EB4BE9563 /* PBXTargetDependency */,
+				7B4C63161D19A1ABE1A31A8D /* PBXTargetDependency */,
+				152BB567F90C3732532AEDFD /* PBXTargetDependency */,
+			);
+			name = MirageAppStore;
+			packageProductDependencies = (
+			);
+			productName = MirageAppStore;
+			productReference = 877625643A4B62A870BBF653 /* MirageAppStore.app */;
+			productType = "com.apple.product-type.application";
+		};
+		75646270BBDED4236B4B7A57 /* MirageFileProviderAppStore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9B01FA570560D16761CB3C5D /* Build configuration list for PBXNativeTarget "MirageFileProviderAppStore" */;
+			buildPhases = (
+				99C26AEBA87A44B82C3A0239 /* Sources */,
+				4A530DCD87EF1A5EE0793C54 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A0CDFE962C63CBEB8DE5FA7 /* PBXTargetDependency */,
+			);
+			name = MirageFileProviderAppStore;
+			packageProductDependencies = (
+			);
+			productName = MirageFileProviderAppStore;
+			productReference = 4F1215FA0A86C8D629AA294C /* MirageFileProviderAppStore.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		8FCB00055803C7EBC98F9606 /* MirageCoreTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E8177F80C601459F456C764D /* Build configuration list for PBXNativeTarget "MirageCoreTests" */;
@@ -652,6 +795,14 @@
 						DevelopmentTeam = N4TQ2P9B46;
 						ProvisioningStyle = Automatic;
 					};
+					5584569E6FA6BDA79E4C8B9A = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
+					75646270BBDED4236B4B7A57 = {
+						DevelopmentTeam = N4TQ2P9B46;
+						ProvisioningStyle = Automatic;
+					};
 					8FCB00055803C7EBC98F9606 = {
 						DevelopmentTeam = N4TQ2P9B46;
 						ProvisioningStyle = Automatic;
@@ -684,15 +835,25 @@
 			projectRoot = "";
 			targets = (
 				B48E88F0AED84BCCAF04F865 /* Mirage */,
+				5584569E6FA6BDA79E4C8B9A /* MirageAppStore */,
 				B4444DA00E0FD2333EA8648F /* MirageCore */,
 				8FCB00055803C7EBC98F9606 /* MirageCoreTests */,
 				01550E8870FF0AB1B92A6FF7 /* MirageDetailWindow */,
 				3A0FF057342715E723BB0EA5 /* MirageFileProvider */,
+				75646270BBDED4236B4B7A57 /* MirageFileProviderAppStore */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		4C113901BB5FFD5A8962F1BF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5292821295C45A8996984129 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B357F57091F2F21E65636BD7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -821,6 +982,29 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		99C26AEBA87A44B82C3A0239 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5FA10C4276594D03519960A2 /* FileProviderExtension+Content.swift in Sources */,
+				F0E1416521C4FF74DAA18D37 /* FileProviderExtension.swift in Sources */,
+				4A5D4F1F47E38D824C3A47EA /* ProviderAsyncSupport.swift in Sources */,
+				2EAFBDEE8406F4E47C1C31B2 /* ProviderCatalog.swift in Sources */,
+				CAD1AA0B1F5C5E687F2DA9F7 /* ProviderDiscoveryTreePlanner.swift in Sources */,
+				186E227EAC4ABC156A2D10EC /* ProviderEnumerator.swift in Sources */,
+				9C6049519312E26C5126F9E9 /* ProviderIdentifiers.swift in Sources */,
+				78F9E7491C69271F8DF1619D /* ProviderItem.swift in Sources */,
+				B8BFEA4BE1DAD53658B59FF0 /* ProviderPagePlanner.swift in Sources */,
+				A06E9CADE775D13896AD4A2A /* ProviderRepository.swift in Sources */,
+				81F6F73AED6F4AE76BBCE96F /* ProviderSearchCache.swift in Sources */,
+				9797D19D833F96C5285E213A /* ProviderSearchResultStoring.swift in Sources */,
+				19BBB1D0E44BE4054DC7588B /* ProviderThumbnailBatch.swift in Sources */,
+				B3C70C3E57DA4DB2C5778667 /* SearchEnumerator.swift in Sources */,
+				DEC891FD57C9FC4DAF968F2D /* SearchPagePlanner.swift in Sources */,
+				A79EAC67B166B16A4CCF00D5 /* SearchResult.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A572ED7D380F8074D57FA6A2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -876,6 +1060,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C0F620DCFD1653E90348B423 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E15615CA9EC874BAB594977C /* AppModel.swift in Sources */,
+				A0667276980BC975C498674D /* AppViewState.swift in Sources */,
+				D922738D0259233CA8E772FC /* AvatarTypeFilterBar.swift in Sources */,
+				EFD9D6FA1F0C4FEC289EB907 /* ContentView.swift in Sources */,
+				92B678685B8FC99A53D0B0C8 /* DiscoverView.swift in Sources */,
+				2A7F438ADCE81BB8AF0E2EA0 /* ImageCard.swift in Sources */,
+				E0FB795895EB6DCD70246A09 /* ImageDetailPopover.swift in Sources */,
+				AB43DB8C64E52F670A91411D /* LibraryGridView.swift in Sources */,
+				7BB9B31A35B85D98DC1862DD /* MirageApp.swift in Sources */,
+				403D22EE630FDE9E5F7E6FD7 /* MirageDomainManager.swift in Sources */,
+				E11554F8FE7F1EF42AF7BC23 /* PhotoSourceCredentialSettingsSection.swift in Sources */,
+				5D1EC4519029C1E573C21F6D /* PhotoSourceProviderSettingsPane.swift in Sources */,
+				167B99860646EB2DA8AFC986 /* PhotoSourceSettingsModel.swift in Sources */,
+				2167CB861DBD5695B5E853A5 /* PhotoSourceSettingsSidebar.swift in Sources */,
+				09C03AE2C82FB55C03776CA8 /* PhotoSourceSettingsView.swift in Sources */,
+				9BB7794DE81E5CAF432FB35B /* SearchModel.swift in Sources */,
+				4E97542C66D52E9B3895474D /* SettingsWindowTitleConfigurator.swift in Sources */,
+				6F50088BE52B4D183C67062C /* SidebarView.swift in Sources */,
+				BB3672363F104611F064353E /* SoftwareUpdateView.swift in Sources */,
+				B458B482152BBC32E4AC6660 /* ThumbnailLoader.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D7404C60CFE5C47B894C53A7 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -902,6 +1113,16 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		152BB567F90C3732532AEDFD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 75646270BBDED4236B4B7A57 /* MirageFileProviderAppStore */;
+			targetProxy = F30D27EE25B41026E675510D /* PBXContainerItemProxy */;
+		};
+		1B751EF63ED34B7EB4BE9563 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B4444DA00E0FD2333EA8648F /* MirageCore */;
+			targetProxy = C2500ED475B01DC4208C2043 /* PBXContainerItemProxy */;
+		};
 		53D7E6066C21E1449F7AD07B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 01550E8870FF0AB1B92A6FF7 /* MirageDetailWindow */;
@@ -911,6 +1132,16 @@
 			isa = PBXTargetDependency;
 			target = 01550E8870FF0AB1B92A6FF7 /* MirageDetailWindow */;
 			targetProxy = 633B00366FB85B295FE0EA06 /* PBXContainerItemProxy */;
+		};
+		7B4C63161D19A1ABE1A31A8D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 01550E8870FF0AB1B92A6FF7 /* MirageDetailWindow */;
+			targetProxy = C426A9BBD6319607FE10829C /* PBXContainerItemProxy */;
+		};
+		9A0CDFE962C63CBEB8DE5FA7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B4444DA00E0FD2333EA8648F /* MirageCore */;
+			targetProxy = FB2D61CC0FC0E892F70C215C /* PBXContainerItemProxy */;
 		};
 		A9416535DFD6FAD1724F488F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -957,6 +1188,53 @@
 				SKIP_INSTALL = YES;
 			};
 			name = Release;
+		};
+		65B15CDC77ADE74DA6CAC33F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageFileProviderAppStore.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 39;
+				INFOPLIST_FILE = "Config/MirageFileProviderAppStore-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.FileProvider;
+				PRODUCT_NAME = MirageFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		6CFC921C3AD9157578B165A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageAppStore.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 39;
+				INFOPLIST_FILE = "Config/MirageAppStore-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage;
+				PRODUCT_NAME = Mirage;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
+			};
+			name = Debug;
 		};
 		79C1EAB9F8AFBD873672F40F /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1119,6 +1397,53 @@
 			};
 			name = Debug;
 		};
+		A44B781047B4131E1D802D34 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageAppStore.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 39;
+				INFOPLIST_FILE = "Config/MirageAppStore-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage;
+				PRODUCT_NAME = Mirage;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
+			};
+			name = Release;
+		};
+		AA7D71F7E4D218C1D0117CC9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/MirageFileProviderAppStore.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 39;
+				INFOPLIST_FILE = "Config/MirageFileProviderAppStore-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenren.Mirage.FileProvider;
+				PRODUCT_NAME = MirageFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 		C2BA74F5B3A36CAC9AEB273A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1253,6 +1578,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0CE4F69A0E4880776980DC14 /* Build configuration list for PBXNativeTarget "MirageAppStore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6CFC921C3AD9157578B165A6 /* Debug */,
+				A44B781047B4131E1D802D34 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		8571AC9D3FD996C1557E5300 /* Build configuration list for PBXNativeTarget "MirageDetailWindow" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1276,6 +1610,15 @@
 			buildConfigurations = (
 				DA7D5F1090BB5AB3D3CA6913 /* Debug */,
 				7ED2C06C70BA0870E633CB37 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9B01FA570560D16761CB3C5D /* Build configuration list for PBXNativeTarget "MirageFileProviderAppStore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				65B15CDC77ADE74DA6CAC33F /* Debug */,
+				AA7D71F7E4D218C1D0117CC9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
