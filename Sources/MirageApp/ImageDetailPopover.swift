@@ -20,9 +20,13 @@ struct ImageDetailPopover: View {
                 }
             }
 
-            RemoteThumbnailImage(record: record, maximumPixelSize: 512)
+            RemoteThumbnailImage(
+                record: record,
+                maximumPixelSize: 512,
+                staticImageContentMode: .fit
+            )
                 .id(record.thumbnailURL)
-                .frame(width: 320, height: 220)
+                .frame(width: 320, height: 396)
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityLabel("“\(record.title)”的预览图片")

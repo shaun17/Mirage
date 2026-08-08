@@ -15,6 +15,7 @@ struct ContentView: View {
 
     /// 整个窗口共用一个覆盖式详情抽屉；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
     @State private var inspectedRecord: RemoteImageRecord?
+    @State private var detailSelectionRevision: UInt = 0
     @State private var showsUsageHelp = false
     @State private var lastAnnouncedProviderState: ProviderState?
 
@@ -42,12 +43,14 @@ struct ContentView: View {
             }
         }
         .navigationTitle("Mirage")
-        .background(alignment: .topLeading) {
-            DetailDrawerEscapeMonitor(
+        .background {
+            DetailDrawerInteractionMonitor(
                 isEnabled: inspectedRecord != nil,
-                onEscape: dismissDetailDrawer
+                drawerWidth: DetailDrawerMetrics.width,
+                selectionRevision: detailSelectionRevision,
+                onEscape: dismissDetailDrawer,
+                onOutsideClick: dismissDetailDrawerIfSelectionUnchanged
             )
-            .frame(width: 0, height: 0)
             .allowsHitTesting(false)
         }
         .toolbar {
@@ -172,11 +175,17 @@ struct ContentView: View {
 
     /// 覆盖式抽屉不参与主内容布局；已打开时选择其他图片只替换详情内容。
     private func presentDetailDrawer(for record: RemoteImageRecord) {
-        guard inspectedRecord == nil else {
-            inspectedRecord = record
+        if let inspectedRecord {
+            guard inspectedRecord.id != record.id else {
+                self.inspectedRecord = record
+                return
+            }
+            detailSelectionRevision &+= 1
+            self.inspectedRecord = record
             return
         }
 
+        detailSelectionRevision &+= 1
         withAnimation(detailDrawerPresentationAnimation) {
             inspectedRecord = record
         }
@@ -188,6 +197,12 @@ struct ContentView: View {
         withAnimation(detailDrawerDismissalAnimation) {
             inspectedRecord = nil
         }
+    }
+
+    /// 鼠标抬起后若卡片没有切换详情，说明本次点击只是落在抽屉外部。
+    private func dismissDetailDrawerIfSelectionUnchanged(_ selectionRevision: UInt) {
+        guard detailSelectionRevision == selectionRevision else { return }
+        dismissDetailDrawer()
     }
 
     /// 减少动态效果时直接切换，其他情况下沿窗口右缘滑入和滑出。
@@ -219,13 +234,22 @@ struct ContentView: View {
     }
 }
 
-/// 在根视图监听当前窗口的 Escape；零尺寸且不参与命中，不能覆盖抽屉的鼠标交互。
-private struct DetailDrawerEscapeMonitor: NSViewRepresentable {
+/// 监听当前窗口的 Escape 与抽屉外点击；视图不参与命中，原始鼠标事件仍交给卡片处理。
+private struct DetailDrawerInteractionMonitor: NSViewRepresentable {
     let isEnabled: Bool
+    let drawerWidth: CGFloat
+    let selectionRevision: UInt
     let onEscape: () -> Void
+    let onOutsideClick: (UInt) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isEnabled: isEnabled, onEscape: onEscape)
+        Coordinator(
+            isEnabled: isEnabled,
+            drawerWidth: drawerWidth,
+            selectionRevision: selectionRevision,
+            onEscape: onEscape,
+            onOutsideClick: onOutsideClick
+        )
     }
 
     func makeNSView(context: Context) -> WindowTrackingView {
@@ -233,39 +257,58 @@ private struct DetailDrawerEscapeMonitor: NSViewRepresentable {
         view.onWindowChange = { [weak coordinator = context.coordinator] window in
             coordinator?.window = window
         }
+        context.coordinator.trackingView = view
         context.coordinator.startMonitoring()
         return view
     }
 
     func updateNSView(_ nsView: WindowTrackingView, context: Context) {
         context.coordinator.window = nsView.window
+        context.coordinator.trackingView = nsView
         context.coordinator.isEnabled = isEnabled
+        context.coordinator.drawerWidth = drawerWidth
+        context.coordinator.selectionRevision = selectionRevision
         context.coordinator.onEscape = onEscape
+        context.coordinator.onOutsideClick = onOutsideClick
     }
 
     static func dismantleNSView(_ nsView: WindowTrackingView, coordinator: Coordinator) {
         nsView.onWindowChange = nil
+        coordinator.trackingView = nil
         coordinator.stopMonitoring()
     }
 
     @MainActor
     final class Coordinator {
         weak var window: NSWindow?
+        weak var trackingView: NSView?
         var isEnabled: Bool
+        var drawerWidth: CGFloat
+        var selectionRevision: UInt
         var onEscape: () -> Void
+        var onOutsideClick: (UInt) -> Void
         private var eventMonitor: Any?
 
-        init(isEnabled: Bool, onEscape: @escaping () -> Void) {
+        init(
+            isEnabled: Bool,
+            drawerWidth: CGFloat,
+            selectionRevision: UInt,
+            onEscape: @escaping () -> Void,
+            onOutsideClick: @escaping (UInt) -> Void
+        ) {
             self.isEnabled = isEnabled
+            self.drawerWidth = drawerWidth
+            self.selectionRevision = selectionRevision
             self.onEscape = onEscape
+            self.onOutsideClick = onOutsideClick
         }
 
         func startMonitoring() {
             guard eventMonitor == nil else { return }
-            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            eventMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.keyDown, .leftMouseUp]
+            ) { [weak self] event in
                 guard
-                    event.keyCode == 53,
-                    event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
                     let self,
                     isEnabled,
                     let window,
@@ -274,8 +317,37 @@ private struct DetailDrawerEscapeMonitor: NSViewRepresentable {
                     return event
                 }
 
-                onEscape()
-                return nil
+                if event.type == .keyDown {
+                    return handleKeyDown(event)
+                }
+                handleOutsideMouseUp(event)
+                return event
+            }
+        }
+
+        private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+            guard event.keyCode == 53 else { return event }
+            let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+            guard event.modifierFlags.intersection(modifiers).isEmpty else { return event }
+            onEscape()
+            return nil
+        }
+
+        private func handleOutsideMouseUp(_ event: NSEvent) {
+            guard event.type == .leftMouseUp, let trackingView else { return }
+            let point = trackingView.convert(event.locationInWindow, from: nil)
+            let width = min(drawerWidth, trackingView.bounds.width)
+            let drawerFrame = CGRect(
+                x: trackingView.bounds.maxX - width,
+                y: trackingView.bounds.minY,
+                width: width,
+                height: trackingView.bounds.height
+            )
+            guard !drawerFrame.contains(point) else { return }
+
+            let revision = selectionRevision
+            DispatchQueue.main.async { [weak self] in
+                self?.onOutsideClick(revision)
             }
         }
 
@@ -317,8 +389,10 @@ private struct DetailDrawerShell: View {
                 .onTapGesture { }
 
             if accessibilityReduceMotion || revealsContent {
-                ImageDetailPopover(record: record)
-                    .transition(.opacity)
+                ScrollView {
+                    ImageDetailPopover(record: record)
+                }
+                .transition(.opacity)
             }
         }
         .frame(width: DetailDrawerMetrics.width)

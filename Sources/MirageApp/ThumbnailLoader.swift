@@ -103,6 +103,7 @@ final class ThumbnailImageBox: @unchecked Sendable {
 struct ThumbnailImage: View {
     let url: URL
     let maximumPixelSize: Int
+    let contentMode: ContentMode
 
     @State private var image: CGImage?
     @State private var didFail = false
@@ -112,7 +113,7 @@ struct ThumbnailImage: View {
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             } else if didFail {
                 Image(systemName: "photo.badge.exclamationmark")
                     .font(.largeTitle)
@@ -138,6 +139,7 @@ struct ThumbnailImage: View {
 struct RemoteThumbnailImage: View {
     let record: RemoteImageRecord
     let maximumPixelSize: Int
+    let staticImageContentMode: ContentMode
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -147,7 +149,11 @@ struct RemoteThumbnailImage: View {
     var body: some View {
         Group {
             if record.source.allowsMediaCaching {
-                ThumbnailImage(url: record.thumbnailURL, maximumPixelSize: maximumPixelSize)
+                ThumbnailImage(
+                    url: record.thumbnailURL,
+                    maximumPixelSize: maximumPixelSize,
+                    contentMode: staticImageContentMode
+                )
             } else if scenePhase == .active, isVisible {
                 TransientAnimatedImage(
                     url: record.thumbnailURL,

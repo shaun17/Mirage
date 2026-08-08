@@ -61,7 +61,11 @@ struct ImageCard: View {
             .frame(maxWidth: .infinity)
             .background(.quaternary)
             .overlay {
-                RemoteThumbnailImage(record: record, maximumPixelSize: 512)
+                RemoteThumbnailImage(
+                    record: record,
+                    maximumPixelSize: 512,
+                    staticImageContentMode: .fill
+                )
                     .padding(record.source == .giphy ? 8 : 0)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
