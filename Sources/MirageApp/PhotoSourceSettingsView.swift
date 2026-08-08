@@ -182,6 +182,12 @@ struct PhotoSourceSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
+            Link(destination: Self.privacyPolicyURL) {
+                Label("隐私政策", systemImage: "hand.raised")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+
             if model.hasUnsavedChanges {
                 Text("已修改 \(model.unsavedSourceIDs.count) 个数据源")
                     .font(.caption)
@@ -262,6 +268,8 @@ struct PhotoSourceSettingsView: View {
             set: { if !$0 { model.dismissNotice() } }
         )
     }
+
+    private static let privacyPolicyURL = URL(string: "https://mirage.wenmsg.fun/privacy")!
 }
 
 private struct ProviderStatusPresentation {

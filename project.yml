@@ -104,7 +104,7 @@ targets:
         PRODUCT_NAME: MirageFileProvider
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
-        CURRENT_PROJECT_VERSION: "40"
+        CURRENT_PROJECT_VERSION: "41"
     dependencies:
       - target: MirageCore
 
@@ -181,7 +181,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.wenren.Mirage
         PRODUCT_NAME: Mirage
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: "40"
+        CURRENT_PROJECT_VERSION: "41"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) APP_STORE
     dependencies:
       - target: MirageCore
