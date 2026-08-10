@@ -83,6 +83,115 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertEqual(restoredSecond, second)
     }
 
+    /// 重建系统域只清理可再生成缓存，收藏、最近使用和当前推荐快照必须保留。
+    func testResetFileProviderGeneratedCachesPreservesUserState() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(1)
+        let recent = Self.record(2)
+        let staleAvatar = Self.record(3)
+        let discovery = Self.record(4)
+        _ = try await storage.toggleFavorite(favorite)
+        try await storage.writeRecent(recent)
+        try await storage.writeItem(staleAvatar)
+        let feed = try await storage.commitDiscoveryFeed(
+            records: [discovery],
+            refreshedAt: Date(timeIntervalSince1970: 1_000),
+            source: .network,
+            catalogKey: "cache-reset",
+            queryKey: "cache-reset",
+            nextPage: nil
+        )
+        _ = try await storage.commitDiscoveryPageSnapshot(
+            generation: feed.generation,
+            page: 1,
+            records: [discovery],
+            nextPage: nil
+        )
+
+        try await storage.resetFileProviderGeneratedCaches()
+
+        let favoritesAfterReset = try await storage.readFavoriteRecords()
+        let recentAfterReset = try await storage.readRecent().map(\.image)
+        let favoriteItemAfterReset = try await storage.readItem(id: favorite.id)
+        let recentItemAfterReset = try await storage.readItem(id: recent.id)
+        let staleAvatarAfterReset = try await storage.readItem(id: staleAvatar.id)
+        let discoveryFeedAfterReset = try await storage.readDiscoveryFeedSnapshot()
+        let discoveryRecordAfterReset = try await storage.readDiscoveryRecord(id: discovery.id)
+        let persistedPageAfterReset = try await storage.readPersistedDiscoveryPageSnapshot(
+            generation: feed.generation,
+            page: 1
+        )
+
+        XCTAssertEqual(favoritesAfterReset, [favorite])
+        XCTAssertEqual(recentAfterReset, [recent])
+        XCTAssertNil(favoriteItemAfterReset)
+        XCTAssertNil(recentItemAfterReset)
+        XCTAssertNil(staleAvatarAfterReset)
+        XCTAssertEqual(discoveryFeedAfterReset?.records, [discovery])
+        XCTAssertEqual(discoveryRecordAfterReset, discovery)
+        XCTAssertNil(persistedPageAfterReset)
+    }
+
+    /// 删除 items 前必须把旧 ID-only 收藏与搜索快照迁移到各自的权威存储。
+    func testResetFileProviderGeneratedCachesMigratesLegacyUserState() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(5, title: "旧收藏")
+        let search = Self.record(6, title: "旧搜索")
+        try await storage.writeItem(favorite)
+        try await storage.writeItem(search)
+        try JSONEncoder().encode([favorite.id]).write(
+            to: temporaryURL.appendingPathComponent("favorites.json"),
+            options: .atomic
+        )
+        try JSONEncoder().encode(LegacySearchBackingFixture(
+            queryKey: "legacy-reset",
+            recordIDs: [search.id],
+            committedAt: Date(timeIntervalSince1970: 123)
+        )).write(
+            to: temporaryURL.appendingPathComponent("search-backing.json"),
+            options: .atomic
+        )
+
+        try await storage.resetFileProviderGeneratedCaches()
+
+        let favoritesAfterReset = try await storage.readFavoriteRecords()
+        let searchAfterReset = try await storage.readSearchBackingRecords()
+        let searchableRecordAfterReset = try await storage.readSearchRecord(id: search.id)
+        let favoriteItemAfterReset = try await storage.readItem(id: favorite.id)
+        let searchItemAfterReset = try await storage.readItem(id: search.id)
+        XCTAssertEqual(favoritesAfterReset, [favorite])
+        XCTAssertEqual(searchAfterReset, [search])
+        XCTAssertEqual(searchableRecordAfterReset, search)
+        XCTAssertNil(favoriteItemAfterReset)
+        XCTAssertNil(searchItemAfterReset)
+    }
+
+    /// 迁移 lease 必须阻止同进程的第二个 storage 实例进入，释放后才允许继续。
+    func testFileProviderMigrationLeaseSerializesStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let firstLease = try await firstStorage.acquireFileProviderMigrationLease()
+        let probe = MigrationLeaseProbe()
+        let started = expectation(description: "第二个 lease 已开始等待")
+        let secondLeaseTask = Task {
+            started.fulfill()
+            let lease = try await secondStorage.acquireFileProviderMigrationLease()
+            await probe.markAcquired()
+            return lease
+        }
+        await fulfillment(of: [started], timeout: 1)
+        try await Task.sleep(for: .milliseconds(50))
+        let acquiredWhileLocked = await probe.acquired
+
+        firstLease.release()
+        let secondLease = try await secondLeaseTask.value
+        let acquiredAfterRelease = await probe.acquired
+        secondLease.release()
+
+        XCTAssertFalse(acquiredWhileLocked)
+        XCTAssertTrue(acquiredAfterRelease)
+    }
+
     /// 收藏去重应保留首次出现的顺序，且条目元数据独立可读。
     func testItemsAndFavoritesRoundTrip() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
@@ -1137,5 +1246,13 @@ final class AppGroupStorageTests: XCTestCase {
         let queryKey: String
         let recordIDs: [String]
         let committedAt: Date
+    }
+}
+
+private actor MigrationLeaseProbe {
+    private(set) var acquired = false
+
+    func markAcquired() {
+        acquired = true
     }
 }

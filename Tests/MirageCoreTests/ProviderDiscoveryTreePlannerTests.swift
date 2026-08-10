@@ -6,8 +6,8 @@ import XCTest
 final class ProviderDiscoveryTreePlannerTests: XCTestCase {
     /// v3 目录与分页图片都能无损往返，远程 ID 中的冒号不会被误当成截断点。
     func testVersionThreeIdentifiersRoundTripColonRecordID() throws {
-        let page = try XCTUnwrap(DiscoveryPageReference(page: 27))
-        XCTAssertEqual(page.itemIdentifier.rawValue, "discover-page:v3:27")
+        let page = try XCTUnwrap(DiscoveryPageReference(page: 5))
+        XCTAssertEqual(page.itemIdentifier.rawValue, "discover-page:v3:5")
         XCTAssertEqual(
             ProviderIdentifiers.discoveryPageReference(from: page.itemIdentifier),
             page
@@ -16,7 +16,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         let original = RecordReference(recordID: "ov:alpha:beta:42", discoveryPage: page)
         XCTAssertEqual(
             original.itemIdentifier.rawValue,
-            "discover-page-item:v3:27:ov:alpha:beta:42"
+            "discover-page-item:v3:5:ov:alpha:beta:42"
         )
         let decoded = try XCTUnwrap(
             ProviderIdentifiers.recordReference(from: original.itemIdentifier)
@@ -154,7 +154,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         XCTAssertEqual(try ProviderAvatarTreePlanner.recordRange(for: 2), 40..<80)
         XCTAssertEqual(
             try ProviderAvatarTreePlanner.recordRange(for: AvatarPageReference.maximumPage),
-            199_960..<200_000
+            160..<200
         )
         XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: 0))
         XCTAssertThrowsError(try ProviderAvatarTreePlanner.recordRange(for: Int.max))
@@ -324,9 +324,9 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
         )
     }
 
-    /// 40 张批次仍覆盖底层 20 万条推荐容量，边界外与超长批次必须明确失败。
+    /// File Provider 最多公开 5 个 40 张批次，边界外与超长批次必须明确失败。
     func testRangeAndBatchValidationRejectOverflowAndInvalidSizes() throws {
-        XCTAssertEqual(DiscoveryPageReference.maximumPage, 5_000)
+        XCTAssertEqual(DiscoveryPageReference.maximumPage, 5)
         XCTAssertEqual(
             try ProviderDiscoveryTreePlanner.recordRange(for: 1),
             0..<40
@@ -335,7 +335,7 @@ final class ProviderDiscoveryTreePlannerTests: XCTestCase {
             try ProviderDiscoveryTreePlanner.recordRange(
                 for: DiscoveryPageReference.maximumPage
             ),
-            199_960..<200_000
+            160..<200
         )
         XCTAssertThrowsError(try ProviderDiscoveryTreePlanner.recordRange(for: 0))
         XCTAssertThrowsError(try ProviderDiscoveryTreePlanner.recordRange(for: Int.max))

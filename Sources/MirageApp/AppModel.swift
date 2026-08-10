@@ -296,8 +296,7 @@ final class AppModel: ObservableObject {
             providerState = .checking
         }
         do {
-            _ = try await domainManager.registerIfNeeded()
-            try await domainManager.refreshAvatarCatalogAfterUpgradeIfNeeded()
+            _ = try await domainManager.prepareBoundedCatalogAndRegisterIfNeeded()
             switch try await domainManager.refreshDiscoveryAndCheckAvailability() {
             case .ready: providerState = .ready
             case .needsActivation: providerState = .needsActivation

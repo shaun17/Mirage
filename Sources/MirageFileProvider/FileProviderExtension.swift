@@ -51,6 +51,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         case ProviderIdentifiers.searchBacking: scope = .search
         case ProviderIdentifiers.recent: scope = .recent
         case ProviderIdentifiers.favorites: scope = .favorites
+        case .trashContainer:
+            // 只读域不支持废纸篓；按 File Provider 契约返回终态 unsupported，不能误报条目已删除。
+            throw ProviderError.trashUnsupported()
         case .workingSet: scope = .workingSet
         default:
             if let reference = ProviderIdentifiers.avatarPageReference(

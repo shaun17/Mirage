@@ -364,6 +364,23 @@ public actor AppGroupStorage {
         try fileManager.createDirectory(at: lockDirectoryURL, withIntermediateDirectories: true)
     }
 
+    /// 为“卸载域—清缓存—重新注册”整段流程取得跨进程独占 lease。
+    public nonisolated func acquireFileProviderMigrationLease() async throws
+        -> AppGroupStorageMigrationLease {
+        let lockURL = lockDirectoryURL.appendingPathComponent("provider-migration.lock")
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(
+                        returning: try AppGroupStorageMigrationLease(lockURL: lockURL)
+                    )
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     /// 读取由动态头像来源冻结的标准 PNG；文件键只能是内部生成的 SHA-256。
     public func readAvatarSnapshot(
         key: String,
@@ -683,13 +700,6 @@ public actor AppGroupStorage {
         }
     }
 
-    /// 扫描仍可解码的历史元数据，用于首次迁移时删除旧搜索 occurrence，而不删除底层记录。
-    public func readRecoverableItemIDs() throws -> [String] {
-        try jsonFiles(in: itemsURL).compactMap { url in
-            try? decode(RemoteImageRecord.self, from: url).id
-        }.sorted()
-    }
-
     /// 比较 scope 的旧新快照并原子追加变更批次；只有真实变化才推进全局 generation。
     @discardableResult
     public func commitProviderScope(
@@ -839,6 +849,29 @@ public actor AppGroupStorage {
                 )
             )
             return resetAnchor
+        }
+    }
+
+    /// 文件域已用 removeAll 卸载后，删除只服务于旧 occurrence 的可再生成缓存。
+    /// 收藏、最近使用、搜索结果和动态头像内容快照都保存在其他位置，不受影响。
+    public func resetFileProviderGeneratedCaches() throws {
+        // 旧收藏和搜索快照只保存 item ID；删除 items 前必须先回填并落盘权威记录。
+        try withExclusiveFileLock(named: "favorites") {
+            _ = try readFavoriteSnapshotUnlocked(skippingLegacyItemCleanup: true)
+        }
+        try withExclusiveFileLock(named: "search-backing") {
+            let snapshot = try readSearchBackingSnapshotUnlocked()
+            try persistSearchRecordsUnlocked(snapshot.records)
+        }
+        try resetDirectory(itemsURL)
+        try withExclusiveFileLock(named: "discovery-feed") {
+            let current = try readDiscoveryFeedSnapshotUnlocked()
+            try resetDirectory(discoveryItemsURL)
+            try resetDirectory(discoveryPagesURL)
+            try resetDirectory(discoverySnapshotsURL)
+            if let current {
+                try persistDiscoverySnapshotUnlocked(current, makeCurrent: true)
+            }
         }
     }
 
@@ -1338,7 +1371,9 @@ public actor AppGroupStorage {
     }
 
     /// 读取收藏记录快照，并把旧 [String] 索引一次性升级为内嵌记录。
-    private func readFavoriteSnapshotUnlocked() throws -> FavoriteSnapshot {
+    private func readFavoriteSnapshotUnlocked(
+        skippingLegacyItemCleanup: Bool = false
+    ) throws -> FavoriteSnapshot {
         guard fileManager.fileExists(atPath: favoritesURL.path) else {
             return FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
@@ -1354,7 +1389,7 @@ public actor AppGroupStorage {
                     || snapshot.schemaVersion == Self.favoritesSchemaVersion else {
                 throw StorageSnapshotValidationError.unsupportedSchema
             }
-            if snapshot.schemaVersion == 1 {
+            if snapshot.schemaVersion == 1, !skippingLegacyItemCleanup {
                 try removeLegacyGiphyItemsUnlocked()
             }
             let normalized = Self.normalizedFavoriteSnapshot(snapshot)
@@ -1374,7 +1409,9 @@ public actor AppGroupStorage {
         do {
             let legacyIDs = Self.uniqueIDs(try decode([String].self, from: data))
             let records = try legacyIDs.compactMap { try readItem(id: $0) }
-            try removeLegacyGiphyItemsUnlocked()
+            if !skippingLegacyItemCleanup {
+                try removeLegacyGiphyItemsUnlocked()
+            }
             let migrated = Self.normalizedFavoriteSnapshot(FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
                 recordIDs: legacyIDs,
@@ -1448,6 +1485,14 @@ public actor AppGroupStorage {
     private func jsonFiles(in directory: URL) throws -> [URL] {
         try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }
+    }
+
+    /// 调用方必须先确保对应系统域不再运行；整目录替换避免逐个删除数万个缓存文件。
+    private func resetDirectory(_ directory: URL) throws {
+        if fileManager.fileExists(atPath: directory.path) {
+            try fileManager.removeItem(at: directory)
+        }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
     /// 每次创建编码器，避免共享可变 Foundation 对象跨隔离域传播。
@@ -1841,6 +1886,62 @@ public actor AppGroupStorage {
     /// SHA-256 文件键固定长度且不泄露原始 ID。
     private static func fileKey(_ id: String) -> String {
         SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Open-file-description 锁在同进程多实例与跨进程间都互斥，关闭 FD 即自动释放。
+public final class AppGroupStorageMigrationLease: @unchecked Sendable {
+    private let stateLock = NSLock()
+    private var descriptor: Int32?
+
+    fileprivate init(lockURL: URL) throws {
+        let descriptor = Darwin.open(
+            lockURL.path,
+            O_CREAT | O_RDWR | O_CLOEXEC,
+            mode_t(S_IRUSR | S_IWUSR)
+        )
+        guard descriptor >= 0 else { throw Self.currentPOSIXError() }
+        var lock = flock()
+        lock.l_type = Int16(F_WRLCK)
+        lock.l_whence = Int16(SEEK_SET)
+        lock.l_start = 0
+        lock.l_len = 0
+        while Darwin.fcntl(descriptor, F_OFD_SETLKW, &lock) == -1 {
+            guard errno == EINTR else {
+                let lockError = errno
+                _ = Darwin.close(descriptor)
+                throw Self.posixError(lockError)
+            }
+        }
+        self.descriptor = descriptor
+    }
+
+    /// 幂等释放；即使恢复到不同线程，OFD 锁也不依赖获取线程。
+    public func release() {
+        let descriptor = stateLock.withLock { () -> Int32? in
+            defer { self.descriptor = nil }
+            return self.descriptor
+        }
+        guard let descriptor else { return }
+        var lock = flock()
+        lock.l_type = Int16(F_UNLCK)
+        lock.l_whence = Int16(SEEK_SET)
+        lock.l_start = 0
+        lock.l_len = 0
+        while Darwin.fcntl(descriptor, F_OFD_SETLK, &lock) == -1, errno == EINTR {}
+        _ = Darwin.close(descriptor)
+    }
+
+    deinit {
+        release()
+    }
+
+    private static func currentPOSIXError() -> POSIXError {
+        posixError(errno)
+    }
+
+    private static func posixError(_ code: Int32) -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
 }
 

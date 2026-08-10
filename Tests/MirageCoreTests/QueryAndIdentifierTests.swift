@@ -258,6 +258,14 @@ final class QueryAndIdentifierTests: XCTestCase {
         XCTAssertFalse(MirageSystemIntegration.isManagedFileProviderDomainIdentifier("another-provider-v16"))
     }
 
+    /// 不支持 Trash 的 replicated extension 必须返回 Cocoa featureUnsupported，而非 noSuchItem。
+    func testReadOnlyProviderReportsTrashAsUnsupported() {
+        let error = ProviderError.trashUnsupported() as NSError
+
+        XCTAssertEqual(error.domain, NSCocoaErrorDomain)
+        XCTAssertEqual(error.code, NSFeatureUnsupportedError)
+    }
+
     private static func utcDate(
         year: Int,
         month: Int,

@@ -71,18 +71,15 @@ extension FileProviderExtension {
                     )
                     try Task.checkCancellation()
                     guard relay.beginNonCancellableCompletion() else { throw CancellationError() }
-                    // 从这里起取消不能再越过 recent 写入；若取消先到达，上面的原子门会直接拒绝提交。
-                    try Task.checkCancellation()
-                    try await repository.markRecent(record)
-                    try Task.checkCancellation()
-                    try? await manager.signalEnumerator(for: .workingSet)
-                    try Task.checkCancellation()
+                    // 文件已经完整写入后先交付给系统；最近使用记账不得阻塞网页或 App 的上传动作。
                     relay.finish({
                         progress.completedUnitCount = 100
                         callback.value(outputURL, materializedItem, nil)
                     }, ifCancelled: {
                         callback.value(nil, nil, ProviderError.cancelled())
                     })
+                    try? await repository.markRecent(record)
+                    try? await manager.signalEnumerator(for: .workingSet)
                 } catch {
                     try? FileManager.default.removeItem(at: outputURL)
                     throw error

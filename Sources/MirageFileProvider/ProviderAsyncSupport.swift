@@ -35,7 +35,7 @@ final class ProviderTaskRelay: @unchecked Sendable {
         task?.cancel()
     }
 
-    /// 在写入最近记录前原子取得提交权，确保取消若先发生就绝不会进入不可逆副作用。
+    /// 在交付完整文件前原子取得提交权，确保取消若先发生就不会回调成功。
     func beginNonCancellableCompletion() -> Bool {
         lock.withLock {
             guard state == .active else { return false }

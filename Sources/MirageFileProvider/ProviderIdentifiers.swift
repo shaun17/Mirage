@@ -124,8 +124,8 @@ enum ProviderView: String, CaseIterable, Sendable {
 
 /// 递归头像目录的稳定逻辑位置；第 1 批直接位于“头像”，不公开分页目录 ID。
 struct AvatarPageReference: Hashable, Sendable {
-    /// 每层 40 张，最多公开 20 万个确定性头像，避免恶意构造无限深目录。
-    static let maximumPage = 5_000
+    /// 系统索引器会递归枚举真实目录；限制为 5 批，避免后台展开无限深的“加载更多”链。
+    static let maximumPage = 5
 
     let page: Int
 
@@ -156,10 +156,8 @@ struct AvatarPageReference: Hashable, Sendable {
 
 /// 递归推荐目录的稳定逻辑位置。根页只在规划器内部表示，不对系统公开目录 ID。
 struct DiscoveryPageReference: Hashable, Sendable {
-    /// 底层最多 10,000 页、每页 20 张；File Provider 每批 40 张，因此最多公开 5,000 批。
-    static let maximumPage =
-        (SearchPaginationCursor.maximumPage * DiscoveryRecommendation.pageSize)
-        / ProviderDiscoveryTreePlanner.batchSize
+    /// App 内搜索仍可独立翻页；File Provider 只公开 5 批，防止索引器自动爬完整远端目录。
+    static let maximumPage = 5
 
     let page: Int
 
@@ -274,6 +272,11 @@ enum ProviderError {
     /// 未知条目必须返回 noSuchItem，系统据此清理陈旧占位符。
     static func noSuchItem(_ identifier: NSFileProviderItemIdentifier) -> Error {
         NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
+    }
+
+    /// 只读域不公开废纸篓；特殊容器探测必须返回协议指定的 unsupported 终态错误。
+    static func trashUnsupported() -> Error {
+        NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
     }
 
     /// 只读数据源拒绝所有来自本地文件系统的写操作。

@@ -112,7 +112,6 @@ struct ProviderCatalog: Sendable {
                 items: snapshot.items,
                 recursiveScopes: snapshot.recursiveScopes,
                 rootGeneration: snapshot.rootGeneration,
-                migratesLegacySearch: scope.migratesLegacySearch,
                 expectedPublicationEpoch: publicationEpoch
             )
             try Task.checkCancellation()
@@ -124,7 +123,6 @@ struct ProviderCatalog: Sendable {
         _ = try await repository.commitScope(
             scope,
             items: current,
-            migratesLegacySearch: scope.migratesLegacySearch,
             expectedPublicationEpoch: publicationEpoch
         )
         try Task.checkCancellation()
@@ -222,10 +220,8 @@ struct ProviderCatalog: Sendable {
         )
     }
 
-    /// 当前锚点读取前先提交 scope 快照，使系统拿到的边界覆盖眼前可枚举的数据。
-    func currentAnchor(for scope: ProviderEnumerationScope) async throws -> UInt64 {
-        _ = try await preparedItems(for: scope)
-        try Task.checkCancellation()
+    /// 同步锚点必须是纯读取；实际枚举和变化请求会各自在提交后返回对应边界。
+    func currentAnchor() async throws -> UInt64 {
         let anchor = try await repository.currentAnchor()
         try Task.checkCancellation()
         return anchor
@@ -268,11 +264,4 @@ extension ProviderEnumerationScope {
         }
     }
 
-    /// 首次迁移时这两个 scope 需要显式删除旧进程遗留的 search occurrence。
-    var migratesLegacySearch: Bool {
-        switch self {
-        case .search, .workingSet: return true
-        default: return false
-        }
-    }
 }

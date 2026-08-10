@@ -7,8 +7,8 @@ import OSLog
 struct MirageDomainManager: Sendable {
     private static let logger = Logger(subsystem: "com.wenren.Mirage", category: "Domain")
     private static let displayName = "Mirage"
-    private static let avatarCatalogRefreshVersion = 3
-    private static let avatarCatalogRefreshVersionKey =
+    private static let boundedCatalogMigrationVersion = 4
+    private static let boundedCatalogMigrationVersionKey =
         "finder-avatar-catalog-refresh-version-v1"
     enum RegistrationResult: Sendable {
         case installed
@@ -25,7 +25,7 @@ struct MirageDomainManager: Sendable {
     }
 
     /// 域标识跨 App 版本保持稳定；仅在首次迁移时移除历史版本域及其 Finder 副本。
-    func registerIfNeeded() async throws -> RegistrationResult {
+    private func registerIfNeeded() async throws -> RegistrationResult {
         // 必须在任何 remove/add 前验证宿主与内嵌扩展来自同一构建，防止混合产物误删有效域。
         let domainIdentifier = try synchronizedDomainIdentifier()
         var repaired = false
@@ -161,20 +161,57 @@ struct MirageDomainManager: Sendable {
         try await manager.signalEnumerator(for: .workingSet)
     }
 
-    /// 首次运行支持完整头像类型的版本时主动淘汰旧 Finder 树；成功后不再重复刷新。
-    func refreshAvatarCatalogAfterUpgradeIfNeeded() async throws {
+    /// 跨进程串行化旧域重建与重新注册，防止另一 App 实例在清理期间抢先挂载。
+    func prepareBoundedCatalogAndRegisterIfNeeded() async throws -> RegistrationResult {
+        let storage = try AppGroupStorage()
+        let migrationLease = try await storage.acquireFileProviderMigrationLease()
+        defer { migrationLease.release() }
+
         guard let defaults = UserDefaults(suiteName: AppGroupStorage.appGroupIdentifier) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        guard defaults.integer(forKey: Self.avatarCatalogRefreshVersionKey)
-                < Self.avatarCatalogRefreshVersion else {
-            return
+        if defaults.integer(forKey: Self.boundedCatalogMigrationVersionKey)
+            < Self.boundedCatalogMigrationVersion {
+            // 在任何 remove 前复核宿主和扩展版本，沿用注册流程的混合构建保护。
+            _ = try synchronizedDomainIdentifier()
+            let managedDomains = try await installedDomains().filter {
+                MirageSystemIntegration.isManagedFileProviderDomainIdentifier(
+                    $0.identifier.rawValue
+                )
+            }
+            for domain in managedDomains {
+                Self.logger.notice(
+                    "重建旧版无界 Mirage 文件域：\(domain.identifier.rawValue, privacy: .public)"
+                )
+                do {
+                    try await remove(domain)
+                } catch {
+                    guard isRecoverableRegistrationRace(error) else { throw error }
+                    Self.logger.notice(
+                        "Mirage 文件域已由另一进程卸载：\(domain.identifier.rawValue, privacy: .public)"
+                    )
+                }
+            }
+            let remainingManagedDomains = try await installedDomains().filter {
+                MirageSystemIntegration.isManagedFileProviderDomainIdentifier(
+                    $0.identifier.rawValue
+                )
+            }
+            guard remainingManagedDomains.isEmpty else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+
+            try await storage.resetFileProviderGeneratedCaches()
+            let resetAnchor = try await storage.resetProviderPublicationState()
+            Self.logger.notice(
+                "已清理旧文件域生成缓存并重置发布索引，新锚点：\(resetAnchor, privacy: .public)"
+            )
+            defaults.set(
+                Self.boundedCatalogMigrationVersion,
+                forKey: Self.boundedCatalogMigrationVersionKey
+            )
         }
-        try await signalAvatarFilterChanged()
-        defaults.set(
-            Self.avatarCatalogRefreshVersion,
-            forKey: Self.avatarCatalogRefreshVersionKey
-        )
+        return try await registerIfNeeded()
     }
 
     /// 其他 App 侧变更沿用 working set 全局刷新入口。

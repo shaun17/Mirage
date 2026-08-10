@@ -578,6 +578,32 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertNil(forgedOccurrence)
     }
 
+    /// 后台索引即使主动枚举每个入口，也只能得到 5 批头像，working set 和状态文件保持有界。
+    func testAvatarTreeStopsAtFifthPageAndKeepsWorkingSetBounded() async throws {
+        let context = try makeContext()
+        _ = try await context.catalog.preparedItems(for: .avatars)
+        var lastPageItems: [ProviderItem] = []
+        for page in 2...AvatarPageReference.maximumPage {
+            let reference = try XCTUnwrap(AvatarPageReference(page: page))
+            lastPageItems = try await context.catalog.preparedItems(for: .avatarPage(reference))
+        }
+
+        let workingSet = try await context.catalog.preparedItems(for: .workingSet)
+        let avatarImages = workingSet.filter { item in
+            ProviderIdentifiers.recordReference(from: item.itemIdentifier)?.view == .avatar
+        }
+        let providerStateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
+        let providerStateBytes = try providerStateURL.resourceValues(forKeys: [.fileSizeKey])
+            .fileSize
+
+        XCTAssertEqual(AvatarPageReference.maximumPage, 5)
+        XCTAssertEqual(Self.images(in: lastPageItems).count, 40)
+        XCTAssertTrue(lastPageItems.allSatisfy { $0.contentType != .folder })
+        XCTAssertNil(AvatarPageReference(page: AvatarPageReference.maximumPage + 1))
+        XCTAssertEqual(avatarImages.count, 200)
+        XCTAssertLessThan(try XCTUnwrap(providerStateBytes), 1_000_000)
+    }
+
     /// 单条头像 JSON 损坏时缓存应失效并被确定性结果覆盖，不能让目录持续枚举失败。
     func testAvatarFolderRegeneratesCorruptCachedRecord() async throws {
         let context = try makeContext()
@@ -715,8 +741,8 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         XCTAssertEqual(requestedPages, Array(1...6))
     }
 
-    /// 第 4 批之后仍须发布并打开第 5 批，避免 Finder 在 4×40 张处形成伪上限。
-    func testOpeningFourthPagePublishesAndOpensFifthPage() async throws {
+    /// 第 4 批之后仍可打开第 5 批，但必须在产品上限停止递归目录。
+    func testOpeningFourthPagePublishesFifthPageAndStopsAtBound() async throws {
         let context = try makeContext()
         _ = try await context.catalog.preparedItems(for: .root)
         for page in 2...3 {
@@ -737,23 +763,21 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
 
         let fifthItems = try await context.catalog.preparedItems(for: .discoveryPage(fifth))
         let fifthImages = Self.images(in: fifthItems)
-        let sixth = try XCTUnwrap(DiscoveryPageReference(page: 6))
-        let sixthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fifthItems).only)
         XCTAssertEqual(fifthImages.count, 40)
         XCTAssertEqual(
             fifthImages.first?.itemIdentifier.rawValue,
             "discover-page-item:v3:5:provider:9:0"
         )
         XCTAssertTrue(fifthImages.last?.itemIdentifier.rawValue.contains(":db:v13:") == true)
-        XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
-        XCTAssertEqual(sixthContinuation.parentItemIdentifier, fifth.itemIdentifier)
+        XCTAssertTrue(Self.discoveryDirectories(in: fifthItems).isEmpty)
+        XCTAssertNil(DiscoveryPageReference(page: 6))
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
         let requestedPages = await context.openverse.requestedPages()
         XCTAssertEqual(maximumOpenedPage, 5)
         XCTAssertEqual(requestedPages, Array(1...10))
     }
 
-    /// 残缺旧状态恢复后必须能从当前根重新建立 lineage，并继续打开第 5 批。
+    /// 残缺旧状态恢复后必须能从当前根重新建立 lineage，并在第 5 批停止。
     func testIncompleteProviderStateRecoversBeforeOpeningFifthPage() async throws {
         let stateURL = temporaryURL.appendingPathComponent("provider-sync-state.json")
         let incompleteData = Data(
@@ -773,13 +797,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         let fifth = try XCTUnwrap(DiscoveryPageReference(page: 5))
         let fifthDirectory = try await context.catalog.item(for: fifth.itemIdentifier)
         let fifthItems = try await context.catalog.preparedItems(for: .discoveryPage(fifth))
-        let sixth = try XCTUnwrap(DiscoveryPageReference(page: 6))
-        let sixthContinuation = try XCTUnwrap(Self.discoveryDirectories(in: fifthItems).only)
         let maximumOpenedPage = try await context.storage.maximumOpenedProviderDiscoveryPage()
 
         XCTAssertEqual(fifthDirectory?.itemIdentifier, fifth.itemIdentifier)
         XCTAssertEqual(Self.images(in: fifthItems).count, 40)
-        XCTAssertEqual(sixthContinuation.itemIdentifier, sixth.itemIdentifier)
+        XCTAssertTrue(Self.discoveryDirectories(in: fifthItems).isEmpty)
+        XCTAssertNil(DiscoveryPageReference(page: 6))
         XCTAssertEqual(maximumOpenedPage, 5)
     }
 
@@ -1072,6 +1095,32 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         )
     }
 
+    /// 同步锚点只读取持久边界，不得联网、创建 scope 或推进 generation。
+    func testCurrentAnchorIsPureRead() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let repository = ProviderRepository(
+            manager: nil,
+            storage: storage,
+            discoveryFeed: ProviderFailingDiscoveryFeed()
+        )
+        let catalog = ProviderCatalog(repository: repository)
+        let before = try await storage.currentProviderAnchor()
+
+        let anchor = try await catalog.currentAnchor()
+        let after = try await storage.currentProviderAnchor()
+        let workingSet = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.workingSet.storageKey
+        )
+        let root = try await storage.providerScopeSnapshot(
+            ProviderEnumerationScope.root.storageKey
+        )
+
+        XCTAssertEqual(anchor, before)
+        XCTAssertEqual(after, before)
+        XCTAssertNil(workingSet)
+        XCTAssertNil(root)
+    }
+
     /// Repository 必须把域重建后迟到的 root/working-set 发布统一映射为 File Provider 页过期。
     func testRepositoryMapsStalePublicationEpochToPageExpired() async throws {
         let context = try makeContext()
@@ -1084,7 +1133,6 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             try await context.repository.commitScope(
                 .root,
                 items: rootItems,
-                migratesLegacySearch: false,
                 expectedPublicationEpoch: staleEpoch
             )
         ) { error in
@@ -1097,7 +1145,6 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
                 items: rootItems,
                 recursiveScopes: [],
                 rootGeneration: rootGeneration,
-                migratesLegacySearch: false,
                 expectedPublicationEpoch: staleEpoch
             )
         ) { error in
@@ -1118,14 +1165,12 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
         _ = try await context.repository.commitScope(
             .root,
             items: rootItems,
-            migratesLegacySearch: false,
             expectedPublicationEpoch: currentEpoch
         )
         _ = try await context.repository.commitWorkingSet(
             items: rootItems,
             recursiveScopes: [],
             rootGeneration: rootGeneration,
-            migratesLegacySearch: false,
             expectedPublicationEpoch: currentEpoch
         )
         let committedRoot = try await context.storage.providerScopeSnapshot(
@@ -1162,7 +1207,6 @@ final class ProviderRepositoryPageSnapshotTests: XCTestCase {
             try await context.repository.commitScope(
                 .discoveryPage(second),
                 items: staleItems,
-                migratesLegacySearch: false,
                 expectedPublicationEpoch: publicationEpoch
             )
         ) { error in

@@ -133,7 +133,12 @@ public final class BoundedDownloader: NSObject, URLSessionDataDelegate, @uncheck
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
-            finish(.failure(DownloadError.network(error.localizedDescription)))
+            let urlError = error as? URLError
+            if urlError?.code == .cancelled || lock.withLock({ cancelled }) {
+                finish(.failure(CancellationError()))
+            } else {
+                finish(.failure(DownloadError.network(error.localizedDescription)))
+            }
         } else {
             finish(.success(lock.withLock { buffer }))
         }

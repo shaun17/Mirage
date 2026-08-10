@@ -373,7 +373,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 Self.isAllowedDiscoveryPhoto($0, filter: photoFilter)
             }
         }
-        let hasMore = upperBound < snapshot.records.count || snapshot.nextPage != nil
+        let hasMore = page < DiscoveryPageReference.maximumPage
+            && (upperBound < snapshot.records.count || snapshot.nextPage != nil)
         return ProviderDiscoveryBatch(
             page: page,
             generation: snapshot.generation,
@@ -888,20 +889,13 @@ actor ProviderRepository: ProviderSearchResultStoring {
     func commitScope(
         _ scope: ProviderEnumerationScope,
         items: [ProviderItem],
-        migratesLegacySearch: Bool,
         expectedPublicationEpoch: UInt64
     ) async throws -> UInt64 {
         try Task.checkCancellation()
         let storage = try requireStorage()
-        let legacyDeleted = try await legacyDeletedIdentifiers(
-            migratesLegacySearch: migratesLegacySearch,
-            storage: storage
-        )
-        try Task.checkCancellation()
         let commit = ProviderStoredScopeCommit(
             scope: scope.storageKey,
-            items: Self.storedStates(from: items),
-            initialDeletedIdentifiers: legacyDeleted
+            items: Self.storedStates(from: items)
         )
         do {
             switch scope {
@@ -942,15 +936,10 @@ actor ProviderRepository: ProviderSearchResultStoring {
         items: [ProviderItem],
         recursiveScopes: [ProviderScopeSnapshot],
         rootGeneration: UInt64,
-        migratesLegacySearch: Bool,
         expectedPublicationEpoch: UInt64
     ) async throws -> UInt64 {
         try Task.checkCancellation()
         let storage = try requireStorage()
-        let legacyDeleted = try await legacyDeletedIdentifiers(
-            migratesLegacySearch: migratesLegacySearch,
-            storage: storage
-        )
         var projectedDeletedIdentifiers = Set<String>()
         for scope in recursiveScopes {
             let newIdentifiers = Set(scope.items.map { $0.itemIdentifier.rawValue })
@@ -969,7 +958,6 @@ actor ProviderRepository: ProviderSearchResultStoring {
             ProviderStoredScopeCommit(
                 scope: ProviderEnumerationScope.workingSet.storageKey,
                 items: Self.storedStates(from: items),
-                initialDeletedIdentifiers: legacyDeleted,
                 additionalDeletedIdentifiers: projectedDeletedIdentifiers.sorted()
             )
         )
@@ -984,17 +972,6 @@ actor ProviderRepository: ProviderSearchResultStoring {
             )
         } catch is ProviderPublicationError {
             throw ProviderError.expiredDiscoveryPage()
-        }
-    }
-
-    /// 首次迁移的旧搜索 occurrence 只在需要它的 scope 提交前扫描一次。
-    private func legacyDeletedIdentifiers(
-        migratesLegacySearch: Bool,
-        storage: AppGroupStorage
-    ) async throws -> [String] {
-        guard migratesLegacySearch else { return [] }
-        return try await storage.readRecoverableItemIDs().map {
-            ProviderIdentifiers.itemIdentifier(recordID: $0, view: .search).rawValue
         }
     }
 

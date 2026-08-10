@@ -131,10 +131,10 @@ final class ProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked S
         let relay = ProviderTaskRelay()
         let operationID = UUID()
         tasks.insert(relay, id: operationID)
-        let task = Task { [catalog, scope, tasks, relay] in
+        let task = Task { [catalog, tasks, relay] in
             defer { tasks.remove(id: operationID) }
             do {
-                let anchor = try await catalog.currentAnchor(for: scope)
+                let anchor = try await catalog.currentAnchor()
                 try Task.checkCancellation()
                 relay.finish({
                     callback.value(Self.encode(anchor))
