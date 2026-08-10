@@ -735,10 +735,6 @@ final class SearchModel: ObservableObject {
         )
     }
 
-    private var contentName: String {
-        filter == .gif ? "GIF" : "图片"
-    }
-
     private var countedContentName: String {
         filter == .gif ? "个 GIF" : "张图片"
     }

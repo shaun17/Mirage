@@ -17,7 +17,6 @@ struct MirageDomainManager: Sendable {
     }
 
     private static let maximumRegistrationAttempts = 5
-    static let favoritesIdentifier = NSFileProviderItemIdentifier("favorites")
 
     /// 只把用户明确关闭扩展归为待启用，其余异常保留为可诊断错误。
     enum Availability: Sendable {

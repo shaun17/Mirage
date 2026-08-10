@@ -219,7 +219,6 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let storedCredential = try await credentials.credential(for: .pexels)
         XCTAssertEqual(storedCredential, "new-key")
         XCTAssertEqual(model.credentialDrafts[.pexels], "new-key")
-        XCTAssertTrue(model.configuredCredentialSourceIDs.contains(.pexels))
         XCTAssertFalse(model.hasUnsavedChanges(for: .pexels))
         let storeCalls = await credentials.storeCallCount()
         XCTAssertEqual(storeCalls, 1)
@@ -265,48 +264,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let storedCredential = try await credentials.credential(for: .pexels)
         XCTAssertEqual(storedCredential, "new-key")
         XCTAssertEqual(model.credentialDrafts[.pexels], "new-key")
-        XCTAssertTrue(model.configuredCredentialSourceIDs.contains(.pexels))
         XCTAssertTrue(model.notice?.contains("无法恢复") == true)
-    }
-
-    /// 移除失败时先停用数据源并保留 Key，避免生产配置继续启用一个无凭据的数据源。
-    func testCredentialRemovalFailureLeavesSourceDisabledAndCredentialIntact() async throws {
-        let preferences = makePreferences()
-        _ = try await preferences.setEnabled(true, sourceID: .pexels, surface: .app)
-        let credentials = InMemoryPhotoSourceCredentialStore(
-            values: [.pexels: "saved-key"],
-            removalError: TestCredentialError.removalFailed
-        )
-        let model = makeModel(preferences: preferences, credentials: credentials)
-        await model.load()
-
-        await model.removeCredential(for: .pexels)
-
-        let savedSnapshot = await preferences.snapshot()
-        XCTAssertFalse(savedSnapshot.appSourceIDs.contains(.pexels))
-        let storedCredential = try await credentials.credential(for: .pexels)
-        XCTAssertEqual(storedCredential, "saved-key")
-        XCTAssertTrue(model.configuredCredentialSourceIDs.contains(.pexels))
-        XCTAssertEqual(model.connectionMessages[.pexels], "数据源已停用，API Key 未移除")
-        XCTAssertNotNil(model.notice)
-    }
-
-    /// 移除一个供应商的 Key 只能重置该供应商，不能覆盖其他供应商尚未保存的草稿。
-    func testCredentialRemovalPreservesOtherProviderDrafts() async throws {
-        let preferences = makePreferences()
-        _ = try await preferences.setEnabled(true, sourceID: .pexels, surface: .app)
-        _ = try await preferences.setEnabled(true, sourceID: .pexels, surface: .fileProvider)
-        let credentials = InMemoryPhotoSourceCredentialStore(values: [.pexels: "saved-key"])
-        let model = makeModel(preferences: preferences, credentials: credentials)
-        await model.load()
-        model.setEnabled(false, sourceID: .openverse)
-        XCTAssertTrue(model.hasUnsavedChanges(for: .openverse))
-
-        await model.removeCredential(for: .pexels)
-
-        XCTAssertFalse(model.isEnabled(.openverse))
-        XCTAssertTrue(model.hasUnsavedChanges(for: .openverse))
-        XCTAssertFalse(model.isEnabled(.pexels))
     }
 
     /// 分段切换或窗口关闭若先取消测试任务，Model 不应再写状态或启动请求。
@@ -403,16 +361,13 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
 private actor InMemoryPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
     private var values: [PhotoSourceID: String]
     private var storeCalls = 0
-    private let removalError: TestCredentialError?
     private let failingStoreCalls: Set<Int>
 
     init(
         values: [PhotoSourceID: String] = [:],
-        removalError: TestCredentialError? = nil,
         failingStoreCalls: Set<Int> = []
     ) {
         self.values = values
-        self.removalError = removalError
         self.failingStoreCalls = failingStoreCalls
     }
 
@@ -429,7 +384,6 @@ private actor InMemoryPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
     }
 
     func removeCredential(for sourceID: PhotoSourceID) async throws {
-        if let removalError { throw removalError }
         values[sourceID] = nil
     }
 
@@ -437,6 +391,5 @@ private actor InMemoryPhotoSourceCredentialStore: PhotoSourceCredentialStoring {
 }
 
 private enum TestCredentialError: Error {
-    case removalFailed
     case storeFailed
 }

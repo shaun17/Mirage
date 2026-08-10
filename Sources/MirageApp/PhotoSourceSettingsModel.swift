@@ -7,7 +7,6 @@ final class PhotoSourceSettingsModel: ObservableObject {
     typealias ConfigurationDidChange = @MainActor @Sendable (PhotoSourceID) async -> Void
 
     @Published private(set) var snapshot = PhotoSourcePreferencesSnapshot()
-    @Published private(set) var configuredCredentialSourceIDs = Set<PhotoSourceID>()
     @Published private(set) var workingSourceIDs = Set<PhotoSourceID>()
     @Published private(set) var scheduledSourceIDs = Set<PhotoSourceID>()
     @Published private(set) var connectionMessages: [PhotoSourceID: String] = [:]
@@ -53,7 +52,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        // 关闭设置后仍在完成的保存/移除必须先落稳；快速重开只读取最终持久状态。
+        // 关闭设置后仍在完成的保存必须先落稳；快速重开只读取最终持久状态。
         while !workingSourceIDs.isEmpty {
             do {
                 try await Task.sleep(for: .milliseconds(20))
@@ -83,7 +82,6 @@ final class PhotoSourceSettingsModel: ObservableObject {
         enabledSurfaceDrafts = Self.surfaceDrafts(from: loadedSnapshot, descriptors: descriptors)
         savedCredentials = loadedCredentials
         credentialDrafts = loadedCredentials
-        configuredCredentialSourceIDs = Set(loadedCredentials.keys)
         hasLoaded = !didFail
     }
 
@@ -200,44 +198,10 @@ final class PhotoSourceSettingsModel: ObservableObject {
             if shouldPersistCredential {
                 savedCredentials[sourceID] = draft
                 credentialDrafts[sourceID] = draft
-                configuredCredentialSourceIDs.insert(sourceID)
             }
             successfulConnectionSourceIDs.remove(sourceID)
             connectionMessages[sourceID] = "设置已保存"
             if snapshot.revision != previousRevision {
-                await configurationDidChange(sourceID)
-            }
-        } catch {
-            notice = error.localizedDescription
-        }
-    }
-
-    func removeCredential(for sourceID: PhotoSourceID) async {
-        guard !isLoading, workingSourceIDs.isEmpty else { return }
-        workingSourceIDs.insert(sourceID)
-        defer { finishWorking(on: sourceID) }
-        do {
-            let previousRevision = snapshot.revision
-            snapshot = try await preferences.disableEverywhere(sourceID)
-            enabledSurfaceDrafts[sourceID] = Self.surfaces(for: sourceID, in: snapshot)
-            let configurationChanged = snapshot.revision != previousRevision
-            do {
-                try await credentials.removeCredential(for: sourceID)
-            } catch {
-                successfulConnectionSourceIDs.remove(sourceID)
-                connectionMessages[sourceID] = "数据源已停用，API Key 未移除"
-                if configurationChanged {
-                    await configurationDidChange(sourceID)
-                }
-                notice = "\(sourceName(sourceID)) 已停用，但 API Key 未能移除：\(error.localizedDescription)"
-                return
-            }
-            configuredCredentialSourceIDs.remove(sourceID)
-            successfulConnectionSourceIDs.remove(sourceID)
-            savedCredentials[sourceID] = nil
-            credentialDrafts[sourceID] = ""
-            connectionMessages[sourceID] = "API Key 已移除，数据源已停用"
-            if configurationChanged {
                 await configurationDidChange(sourceID)
             }
         } catch {
@@ -302,16 +266,6 @@ final class PhotoSourceSettingsModel: ObservableObject {
         }
     }
 
-    func scheduleCredentialRemoval(for sourceID: PhotoSourceID) {
-        guard scheduledOperationCount == 0, workingSourceIDs.isEmpty else { return }
-        scheduledOperationCount += 1
-        scheduledSourceIDs.insert(sourceID)
-        Task { [self] in
-            await removeCredential(for: sourceID)
-            finishScheduledOperation(for: sourceID)
-        }
-    }
-
     /// 关闭窗口时丢弃未保存草稿；下次打开会重新读取并回填已保存的 Key。
     func discardDrafts() {
         guard scheduledOperationCount == 0, workingSourceIDs.isEmpty else {
@@ -324,7 +278,6 @@ final class PhotoSourceSettingsModel: ObservableObject {
     private func resetDrafts() {
         credentialDrafts = [:]
         savedCredentials = [:]
-        configuredCredentialSourceIDs = []
         enabledSurfaceDrafts = Self.surfaceDrafts(from: snapshot, descriptors: descriptors)
         connectionMessages = [:]
         successfulConnectionSourceIDs = []
@@ -337,10 +290,6 @@ final class PhotoSourceSettingsModel: ObservableObject {
     private func finishWorking(on sourceID: PhotoSourceID) {
         workingSourceIDs.remove(sourceID)
         discardWhenIdleIfNeeded()
-    }
-
-    private func finishScheduledOperation(for sourceID: PhotoSourceID) {
-        finishScheduledOperation(for: Set([sourceID]))
     }
 
     private func finishScheduledOperation(for sourceIDs: Set<PhotoSourceID>) {
@@ -376,18 +325,15 @@ final class PhotoSourceSettingsModel: ObservableObject {
             if let credential = try await credentials.credential(for: sourceID), !credential.isEmpty {
                 savedCredentials[sourceID] = credential
                 credentialDrafts[sourceID] = credential
-                configuredCredentialSourceIDs.insert(sourceID)
             } else {
                 savedCredentials[sourceID] = nil
                 credentialDrafts[sourceID] = ""
-                configuredCredentialSourceIDs.remove(sourceID)
             }
             successfulConnectionSourceIDs.remove(sourceID)
             return true
         } catch {
             savedCredentials[sourceID] = nil
             credentialDrafts[sourceID] = ""
-            configuredCredentialSourceIDs.remove(sourceID)
             successfulConnectionSourceIDs.remove(sourceID)
             hasLoaded = false
             return false
