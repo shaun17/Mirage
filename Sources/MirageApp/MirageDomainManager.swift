@@ -246,7 +246,7 @@ struct MirageDomainManager: Sendable {
         return manager
     }
 
-    /// 先读取系统公开的启用/断开状态，再以 URL 与 signal 验证完整运行链路。
+    /// 读取系统公开的启用/断开状态，并以 working set signal 验证扩展运行链路。
     func refreshDiscoveryAndCheckAvailability() async throws -> Availability {
         let domainIdentifier = try synchronizedDomainIdentifier()
         guard let domain = try await installedDomains().first(where: {
@@ -259,7 +259,6 @@ struct MirageDomainManager: Sendable {
         guard let manager = NSFileProviderManager(for: domain) else {
             throw ProviderAvailabilityError.managerUnavailable
         }
-        _ = try await manager.getUserVisibleURL(for: .rootContainer)
         // 只发系统支持的 working set signal；每个推荐目录都是固定批次，
         // 后续 40 张仅在用户显式打开“更多图片”目录时发布。
         try await manager.signalEnumerator(for: .workingSet)

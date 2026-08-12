@@ -24,8 +24,6 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
-	<key>NSFileProviderDomainUsageDescription</key>
-	<string>Mirage 需要在系统文件选择器中提供可浏览和选择的头像与图片。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

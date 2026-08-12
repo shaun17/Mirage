@@ -273,7 +273,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 幂等注册系统域，再用系统可见 URL 与枚举 signal 验证扩展是否真实可用。
+    /// 幂等注册系统域，再用公开状态与枚举 signal 验证扩展是否真实可用。
     func configureProvider() async {
         if let providerCheckTask {
             await providerCheckTask.value
