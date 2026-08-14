@@ -138,7 +138,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
             offset += count
         }
         guard !generatedRecords.isEmpty else {
-            throw ProviderError.serverUnreachable("当前头像类型暂时没有可用图片。")
+            throw ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("当前头像类型暂时没有可用图片。")
+            )
         }
         try Task.checkCancellation()
         for record in generatedRecords {
@@ -1067,7 +1069,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 把 App Group 初始化失败转换为允许 File Provider 退避重试的错误。
     private func requireStorage() throws -> AppGroupStorage {
         guard let storage else {
-            throw ProviderError.serverUnreachable("无法访问 Mirage 共享存储。")
+            throw ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("无法访问 Mirage 共享存储。")
+            )
         }
         return storage
     }
@@ -1076,7 +1080,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private func requireDiscoveryFeed() async throws -> any DiscoveryFeedProviding {
         if let discoveryFeed { return discoveryFeed }
         guard let storage, let photoEnvironment else {
-            throw ProviderError.serverUnreachable("无法访问 Mirage 推荐存储。")
+            throw ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("无法访问 Mirage 推荐存储。")
+            )
         }
 
         let photoFilter = await currentFileProviderPhotoFilter()

@@ -47,7 +47,11 @@ extension FileProviderExtension {
                     || requested.metadataVersion != item.itemVersion.metadataVersion {
                     throw ProviderError.versionNoLongerAvailable()
                 }
-                guard let manager else { throw ProviderError.serverUnreachable("File Provider 域不可用。") }
+                guard let manager else {
+                    throw ProviderError.serverUnreachable(
+                        ProviderLocalization.current.string("File Provider 域不可用。")
+                    )
+                }
                 let data = try await repository.imageData(
                     at: record.imageURL,
                     maximumBytes: ImageTranscoder.defaultMaximumBytes
@@ -174,13 +178,35 @@ extension FileProviderExtension {
             return ProviderError.cancelled()
         }
         if let download = error as? DownloadError {
-            return ProviderError.serverUnreachable(download.localizedDescription)
+            let message: String
+            switch download {
+            case .insecureURL:
+                message = ProviderLocalization.current.string(
+                    "远程图片地址必须使用受信任的 HTTPS。"
+                )
+            case .invalidResponse:
+                message = ProviderLocalization.current.string(
+                    "远程图片服务返回了无效响应。"
+                )
+            case let .tooLarge(limit):
+                message = ProviderLocalization.current.string(
+                    "远程图片超过 %lld 字节上限。",
+                    Int64(limit)
+                )
+            case .network:
+                message = ProviderLocalization.current.string("远程图片下载失败。")
+            }
+            return ProviderError.serverUnreachable(message)
         }
         if error is ImageTranscoderError {
             return NSError(
                 domain: NSCocoaErrorDomain,
                 code: NSFileReadCorruptFileError,
-                userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]
+                userInfo: [
+                    NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                        "图片内容无效或无法转换。"
+                    )
+                ]
             )
         }
         return error

@@ -4,6 +4,40 @@ import XCTest
 
 @MainActor
 final class SearchModelTests: XCTestCase {
+    func testAppDisplayMessageResolvesSelectedLanguageAndPreservesVerbatimText() {
+        let fixedMessage = AppDisplayMessage.localized(
+            "%@ 请求过于频繁，请稍后重试。",
+            .text("Pexels")
+        )
+        let bundle = Bundle(for: SearchModelTests.self)
+
+        XCTAssertEqual(
+            fixedMessage.resolved(locale: Locale(identifier: "en"), bundle: bundle),
+            "Pexels received too many requests. Try again later."
+        )
+        XCTAssertEqual(
+            fixedMessage.resolved(locale: Locale(identifier: "zh-Hans"), bundle: bundle),
+            "Pexels 请求过于频繁，请稍后重试。"
+        )
+
+        let verbatim = AppDisplayMessage.verbatim("upstream detail 42")
+        XCTAssertEqual(
+            verbatim.resolved(locale: Locale(identifier: "en"), bundle: bundle),
+            "upstream detail 42"
+        )
+
+        XCTAssertEqual(
+            AppDisplayMessage.error(PexelsError.invalidCredential)
+                .resolved(locale: Locale(identifier: "en"), bundle: bundle),
+            "The Pexels API key is invalid or has not been configured."
+        )
+        XCTAssertEqual(
+            AppDisplayMessage.error(OpenverseError.rateLimited(retryAfter: nil))
+                .resolved(locale: Locale(identifier: "en"), bundle: bundle),
+            "Too many Openverse requests"
+        )
+    }
+
     /// 内容类型不再展示混合“全部”，来源行仍可独立提供全部服务商入口。
     func testContentFiltersPresentAvatarsPhotosThenGIF() {
         XCTAssertEqual(SearchFilter.contentTypes, [.avatars, .photos, .gif])
@@ -72,7 +106,7 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(model.photoSourceSelection, .all)
         XCTAssertEqual(persistedSelections, [.source(.nasa), .all])
         XCTAssertEqual(
-            model.accessibilityEvent?.message,
+            resolved(model.accessibilityEvent?.message),
             "NASA 未在设置中启用，已切换到全部来源"
         )
     }
@@ -228,7 +262,10 @@ final class SearchModelTests: XCTestCase {
 
         let loadedFirstPage = await waitUntil { model.results.map(\.id) == ["giphy-first"] }
         XCTAssertTrue(loadedFirstPage)
-        XCTAssertEqual(model.accessibilityEvent?.message, "已加载 1 个 GIF，共 1 个 GIF")
+        XCTAssertEqual(
+            resolved(model.accessibilityEvent?.message),
+            "已加载 1 个 GIF，共 1 个 GIF"
+        )
         model.loadNextPage()
 
         let loadedLastPage = await waitUntil {
@@ -236,7 +273,10 @@ final class SearchModelTests: XCTestCase {
         }
         XCTAssertTrue(loadedLastPage)
         XCTAssertEqual(model.paginationState, .exhausted)
-        XCTAssertEqual(model.accessibilityEvent?.message, "已加载 1 个 GIF，共 2 个 GIF；已加载全部 GIF")
+        XCTAssertEqual(
+            resolved(model.accessibilityEvent?.message),
+            "已加载 1 个 GIF，共 2 个 GIF；已加载全部 GIF"
+        )
         let giphyCursors = await giphy.recordedCursors()
         let giphyQueries = await giphy.recordedQueries()
         let openverseCalls = await openverse.callCount()
@@ -290,7 +330,10 @@ final class SearchModelTests: XCTestCase {
         }
 
         XCTAssertTrue(settled)
-        XCTAssertEqual(model.accessibilityEvent?.message, "网络不可用：GIPHY 请求被中断，请重试。")
+        XCTAssertEqual(
+            resolved(model.accessibilityEvent?.message),
+            "网络不可用：GIPHY 请求被中断，请重试。"
+        )
     }
 
     /// 三路中只有部分端点限流时保留已到达结果，但暂停自动续页且在 retryAt 前不重复请求。
@@ -324,7 +367,7 @@ final class SearchModelTests: XCTestCase {
         let finalCallCount = await giphy.callCount()
         XCTAssertEqual(finalCallCount, 1)
         XCTAssertEqual(
-            model.accessibilityEvent?.message,
+            resolved(model.accessibilityEvent?.message),
             "GIPHY 限流尚未结束，请稍后重试加载更多 GIF。"
         )
     }
@@ -343,9 +386,16 @@ final class SearchModelTests: XCTestCase {
         model.setActive(true)
 
         let limited = await waitUntil {
-            model.state == .rateLimited("GIPHY 请求过于频繁，请稍后重试。")
+            if case .rateLimited = model.state { return true }
+            return false
         }
         XCTAssertTrue(limited)
+        if case let .rateLimited(message) = model.state {
+            XCTAssertEqual(
+                resolved(message),
+                "GIPHY 请求过于频繁，请稍后重试。"
+            )
+        }
         let initialCallCount = await giphy.callCount()
         XCTAssertEqual(initialCallCount, 1)
 
@@ -355,7 +405,14 @@ final class SearchModelTests: XCTestCase {
 
         let finalCallCount = await giphy.callCount()
         XCTAssertEqual(finalCallCount, 1)
-        XCTAssertEqual(model.state, .rateLimited("GIPHY 请求过于频繁，请稍后重试。"))
+        if case let .rateLimited(message) = model.state {
+            XCTAssertEqual(
+                resolved(message),
+                "GIPHY 请求过于频繁，请稍后重试。"
+            )
+        } else {
+            XCTFail("重试边界内应保持限流状态")
+        }
 
         model.sourceConfigurationDidChange(sourceID: .giphy)
         let retriedAfterGiphyConfigurationChange = await giphy.waitForCalls(2)
@@ -393,7 +450,7 @@ final class SearchModelTests: XCTestCase {
         let callsAfterRetry = await giphy.callCount()
         XCTAssertEqual(callsAfterRetry, 2)
         XCTAssertEqual(
-            model.accessibilityEvent?.message,
+            resolved(model.accessibilityEvent?.message),
             "GIPHY 限流尚未结束，请稍后重试加载更多 GIF。"
         )
     }
@@ -458,7 +515,9 @@ final class SearchModelTests: XCTestCase {
         let retried = await photos.waitForCalls(3)
 
         XCTAssertTrue(retried)
-        XCTAssertFalse(model.accessibilityEvent?.message.contains("GIPHY") == true)
+        XCTAssertFalse(
+            resolved(model.accessibilityEvent?.message)?.contains("GIPHY") == true
+        )
     }
 
     /// 空搜索框首次进入应立即读取共享推荐，滚动续页后累计40张且搜索框保持为空。
@@ -570,7 +629,9 @@ final class SearchModelTests: XCTestCase {
             return false
         }
         XCTAssertTrue(failed)
-        XCTAssertTrue(model.accessibilityEvent?.message.contains("网络不可用") == true)
+        XCTAssertTrue(
+            resolved(model.accessibilityEvent?.message)?.contains("网络不可用") == true
+        )
     }
 
     /// 聚合搜索局部失败仍显示可用结果，并把来源故障并入同一次 VoiceOver 公告。
@@ -586,8 +647,8 @@ final class SearchModelTests: XCTestCase {
         XCTAssertTrue(loaded)
         XCTAssertEqual(model.sourceIssues.map(\.sourceID), [.pexels])
         XCTAssertEqual(
-            model.accessibilityEvent?.message,
-            "已加载 2 张图片，共 2 张；已加载全部图片；部分数据源不可用：Pexels 测试不可用"
+            resolved(model.accessibilityEvent?.message),
+            "已加载 2 张图片，共 2 张；已加载全部图片；部分数据源不可用：Pexels 暂时不可用。"
         )
     }
 
@@ -607,7 +668,10 @@ final class SearchModelTests: XCTestCase {
                 && model.paginationState == .loadingSources
         }
         XCTAssertTrue(displayedFastSource)
-        XCTAssertEqual(model.accessibilityEvent?.message, "已先加载 1 张图片，其他图片数据源仍在加载")
+        XCTAssertEqual(
+            resolved(model.accessibilityEvent?.message),
+            "已先加载 1 张图片，其他图片数据源仍在加载"
+        )
 
         await photos.releaseSlowSource()
         let completed = await waitUntil {
@@ -615,7 +679,10 @@ final class SearchModelTests: XCTestCase {
                 && model.paginationState == .exhausted
         }
         XCTAssertTrue(completed)
-        XCTAssertEqual(model.accessibilityEvent?.message, "已加载 2 张图片，共 2 张；已加载全部图片")
+        XCTAssertEqual(
+            resolved(model.accessibilityEvent?.message),
+            "已加载 2 张图片，共 2 张；已加载全部图片"
+        )
     }
 
     /// 已取消查询即使在新查询完成后迟到发布批次，也不能污染当前会话。
@@ -814,7 +881,7 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(model.paginationState, .exhausted)
         XCTAssertNotEqual(model.accessibilityEvent?.id, firstEventID)
         XCTAssertEqual(
-            model.accessibilityEvent?.message,
+            resolved(model.accessibilityEvent?.message),
             "已加载 5 张图片，共 25 张；已加载全部图片"
         )
     }
@@ -899,13 +966,32 @@ final class SearchModelTests: XCTestCase {
             message: "limited"
         )
 
+        guard case let .network(networkMessage) = SearchState(
+            photoSearchError: .allSourcesFailed([credential, network])
+        ) else {
+            return XCTFail("网络错误应优先于凭据错误")
+        }
         XCTAssertEqual(
-            SearchState(photoSearchError: .allSourcesFailed([credential, network])),
-            .network("network")
+            resolved(networkMessage),
+            "Openverse 网络不可用，请检查连接后重试。"
         )
+
+        guard case let .rateLimited(rateLimitMessage) = SearchState(
+            photoSearchError: .allSourcesFailed([credential, network, rateLimit])
+        ) else {
+            return XCTFail("限流错误应拥有最高优先级")
+        }
         XCTAssertEqual(
-            SearchState(photoSearchError: .allSourcesFailed([credential, network, rateLimit])),
-            .rateLimited("limited")
+            resolved(rateLimitMessage),
+            "Pexels 请求过于频繁，请稍后重试。"
+        )
+    }
+
+    /// 测试 bundle 不携带 App 资源时会按 key 回退，仍可验证结构化消息的中文格式与参数。
+    private func resolved(_ message: AppDisplayMessage?) -> String? {
+        message?.resolved(
+            locale: Locale(identifier: "zh-Hans"),
+            bundle: Bundle(for: SearchModelTests.self)
         )
     }
 

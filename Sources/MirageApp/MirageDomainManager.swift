@@ -161,6 +161,17 @@ struct MirageDomainManager: Sendable {
         try await manager.signalEnumerator(for: .workingSet)
     }
 
+    /// 目录 ID 保持稳定；刷新 root 与 working set 即可让 Finder 读取新语言下的显示名称。
+    func signalLanguageChanged() async throws {
+        let manager = try await currentManager()
+        let storage = try AppGroupStorage()
+        _ = try await storage.advanceProviderPublicationEpoch()
+        try await signalEnumerators(
+            [.rootContainer, .workingSet],
+            using: manager
+        )
+    }
+
     /// 跨进程串行化旧域重建与重新注册，防止另一 App 实例在清理期间抢先挂载。
     func prepareBoundedCatalogAndRegisterIfNeeded() async throws -> RegistrationResult {
         let storage = try AppGroupStorage()
@@ -363,7 +374,7 @@ struct MirageDomainManager: Sendable {
 }
 
 /// 阻止 App 与内嵌扩展版本漂移时继续修改 Finder 域，并向界面给出明确诊断。
-private enum DomainVersionError: LocalizedError {
+private enum DomainVersionError: LocalizedError, AppDisplayMessageConvertible {
     case invalidAppBuildVersion
     case missingEmbeddedExtension
     case invalidExtensionBuildVersion
@@ -381,15 +392,40 @@ private enum DomainVersionError: LocalizedError {
             return "Mirage App（\(app)）与 File Provider（\(fileProvider)）构建号不一致，未修改 Finder 文件域。"
         }
     }
+
+    var appDisplayMessage: AppDisplayMessage {
+        switch self {
+        case .invalidAppBuildVersion:
+            return "Mirage App 缺少有效构建号，未修改 Finder 文件域。"
+        case .missingEmbeddedExtension:
+            return "Mirage 未包含 File Provider 扩展，未修改 Finder 文件域。"
+        case .invalidExtensionBuildVersion:
+            return "Mirage File Provider 缺少有效构建号，未修改 Finder 文件域。"
+        case let .buildVersionMismatch(app, fileProvider):
+            return .localized(
+                "Mirage App（%@）与 File Provider（%@）构建号不一致，未修改 Finder 文件域。",
+                .text(app),
+                .text(fileProvider)
+            )
+        }
+    }
 }
 
 /// File Provider 已启用但运行状态异常时给出区别于“待启用”的明确错误。
-private enum ProviderAvailabilityError: LocalizedError {
+private enum ProviderAvailabilityError: LocalizedError, AppDisplayMessageConvertible {
     case missingDomain
     case disconnected
     case managerUnavailable
 
     var errorDescription: String? {
+        switch self {
+        case .missingDomain: return "Mirage 文件域尚未注册。"
+        case .disconnected: return "Mirage 文件域已断开，请稍后重新检查。"
+        case .managerUnavailable: return "系统暂时无法打开 Mirage 文件域。"
+        }
+    }
+
+    var appDisplayMessage: AppDisplayMessage {
         switch self {
         case .missingDomain: return "Mirage 文件域尚未注册。"
         case .disconnected: return "Mirage 文件域已断开，请稍后重新检查。"

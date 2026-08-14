@@ -1,5 +1,45 @@
-import MirageCore
 import Foundation
+import MirageCore
+import SwiftUI
+
+/// 同时维护当前界面语言与 App Group 持久化值，保存后立即驱动所有窗口重绘。
+@MainActor
+final class AppLanguageState: ObservableObject {
+    @Published private(set) var language: MirageAppLanguage
+
+    private let userDefaults: UserDefaults
+
+    init(
+        userDefaults: UserDefaults = UserDefaults(
+            suiteName: AppGroupStorage.appGroupIdentifier
+        ) ?? .standard
+    ) {
+        self.userDefaults = userDefaults
+        language = MirageAppLanguage.resolve(
+            userDefaults.string(forKey: MirageAppLanguage.storageKey)
+        )
+    }
+
+    /// 先持久化共享偏好，再发布运行时状态；相同选择不触发无意义的刷新。
+    @discardableResult
+    func save(_ language: MirageAppLanguage) -> Bool {
+        guard self.language != language else { return false }
+        userDefaults.set(language.rawValue, forKey: MirageAppLanguage.storageKey)
+        self.language = language
+        return true
+    }
+}
+
+/// 设置页底部保存按钮同时观察语言草稿与图片源草稿。
+struct SettingsSaveState: Equatable {
+    let savedLanguage: MirageAppLanguage
+    let draftLanguage: MirageAppLanguage
+    let hasPhotoSourceChanges: Bool
+
+    var hasUnsavedChanges: Bool {
+        savedLanguage != draftLanguage || hasPhotoSourceChanges
+    }
+}
 
 /// 主窗口的三个固定内容区；GIF 是发现页中的独立 App 内容类型。
 enum AppSection: String, CaseIterable, Identifiable {
@@ -15,6 +55,21 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .recent: return "最近使用"
         }
     }
+
+    var localizedTitle: LocalizedStringKey { LocalizedStringKey(title) }
+
+    /// AppKit 导航标题与命令菜单使用显式字符串，避免既有窗口缓存旧的本地化键。
+    func resolvedTitle(locale: Locale, bundle: Bundle = .main) -> String {
+        switch self {
+        case .discover:
+            return AppDisplayMessage.localized("发现").resolved(locale: locale, bundle: bundle)
+        case .favorites:
+            return AppDisplayMessage.localized("收藏").resolved(locale: locale, bundle: bundle)
+        case .recent:
+            return AppDisplayMessage.localized("最近使用").resolved(locale: locale, bundle: bundle)
+        }
+    }
+
     var symbol: String {
         switch self {
         case .discover: return "square.grid.2x2"
@@ -50,6 +105,8 @@ enum SearchFilter: String, CaseIterable, Identifiable {
         case .gif: return "GIF"
         }
     }
+
+    var localizedTitle: LocalizedStringKey { LocalizedStringKey(title) }
 
     /// 分段筛选覆盖输入中的旧前缀，避免产生“图片:头像:”一类无效查询。
     func serviceQuery(for rawQuery: String) -> String {
@@ -221,6 +278,11 @@ enum PhotoSourceFilterSelection: Hashable, Identifiable, Sendable {
         return PhotoSourceRegistry.descriptor(for: sourceID)?.displayName ?? sourceID.rawValue
     }
 
+    /// 展示层保留本地化键；业务层继续使用稳定的普通字符串生成搜索播报。
+    var localizedTitle: LocalizedStringKey {
+        LocalizedStringKey(title)
+    }
+
     var persistedValue: String { id }
 
     init(persistedValue: String?) {
@@ -268,19 +330,19 @@ enum SearchState: Equatable {
     case searching
     case results
     case empty
-    case network(String)
-    case rateLimited(String)
-    case failed(String)
+    case network(AppDisplayMessage)
+    case rateLimited(AppDisplayMessage)
+    case failed(AppDisplayMessage)
 
     /// 将 Core 的结构化错误转换成面向用户的精确状态。
     init(openverseError: OpenverseError) {
         switch openverseError {
         case .rateLimited:
-            self = .rateLimited(openverseError.localizedDescription)
+            self = .rateLimited(openverseError.appDisplayMessage)
         case .network:
-            self = .network(openverseError.localizedDescription)
+            self = .network(openverseError.appDisplayMessage)
         case .invalidResponse, .decoding:
-            self = .failed(openverseError.localizedDescription)
+            self = .failed(openverseError.appDisplayMessage)
         }
     }
 
@@ -288,13 +350,13 @@ enum SearchState: Equatable {
     init(photoSearchError: PhotoSearchError) {
         guard case let .allSourcesFailed(issues) = photoSearchError,
               !issues.isEmpty else {
-            self = .failed(photoSearchError.localizedDescription)
+            self = .failed(photoSearchError.appDisplayMessage)
             return
         }
         let issue = issues.first { $0.kind == .rateLimited }
             ?? issues.first { $0.kind == .network }
             ?? issues.first!
-        let message = issue.message
+        let message = issue.appDisplayMessage
         switch issue.kind {
         case .rateLimited:
             self = .rateLimited(message)
@@ -310,7 +372,7 @@ enum SearchState: Equatable {
 enum LibraryAvailability: Equatable {
     case preparing
     case ready
-    case failed(String)
+    case failed(AppDisplayMessage)
 
     /// 只有 App Group 已成功打开时才允许修改收藏。
     var allowsFavoriteChanges: Bool {
@@ -318,9 +380,9 @@ enum LibraryAvailability: Equatable {
     }
 
     /// 永久失败时提供可持续读取的界面说明，启动准备阶段不制造错误提示。
-    var unavailableDescription: String? {
+    var unavailableDescription: AppDisplayMessage? {
         guard case let .failed(message) = self else { return nil }
-        return "收藏不可用：\(message)"
+        return .localized("收藏不可用：%@", .message(message))
     }
 }
 
@@ -330,8 +392,8 @@ enum SearchPaginationState: Equatable {
     case loadingSources
     case ready
     case loading
-    case needsContinuation(String)
-    case failed(String)
+    case needsContinuation(AppDisplayMessage)
+    case failed(AppDisplayMessage)
     case exhausted
 
     /// 只有准备态允许尾部卡片预取下一页，其他状态都需要等待或用户操作。
@@ -343,7 +405,7 @@ enum SearchPaginationState: Equatable {
 /// 每次搜索提交只产生一个独立播报事件，避免结果数量和结束状态互相打断。
 struct SearchAccessibilityEvent: Equatable {
     let id = UUID()
-    let message: String
+    let message: AppDisplayMessage
 }
 
 /// File Provider 从注册到真实可用的完整状态。
@@ -351,10 +413,10 @@ enum ProviderState: Equatable {
     case checking
     case ready
     case needsActivation
-    case failed(String)
+    case failed(AppDisplayMessage)
 
     /// 只在状态进入明确终态时播报，避免检查中的短暂状态打断 VoiceOver。
-    var accessibilityAnnouncement: String? {
+    var accessibilityAnnouncement: AppDisplayMessage? {
         switch self {
         case .checking:
             return nil

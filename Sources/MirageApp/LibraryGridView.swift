@@ -4,16 +4,16 @@ import SwiftUI
 /// 搜索网格的分页展示状态与动作；收藏页传 nil 保持静态列表。
 struct GridPagination {
     let state: SearchPaginationState
-    let contentName: String
-    let continueButtonTitle: String
+    let contentName: LocalizedStringKey
+    let continueButtonTitle: LocalizedStringKey
     let loadNextPage: () -> Void
     let continueLoading: () -> Void
     let retry: () -> Void
 
     init(
         state: SearchPaginationState,
-        contentName: String = "图片",
-        continueButtonTitle: String = "继续查找",
+        contentName: LocalizedStringKey = "图片",
+        continueButtonTitle: LocalizedStringKey = "继续查找",
         loadNextPage: @escaping () -> Void,
         continueLoading: @escaping () -> Void,
         retry: @escaping () -> Void
@@ -29,11 +29,12 @@ struct GridPagination {
 
 /// 收藏与搜索共用的自适应网格，最近使用通过独立包装调用。
 struct LibraryGridView: View {
-    let title: String?
+    @Environment(\.locale) private var locale
+
     let records: [RemoteImageRecord]
     let favoriteIDs: Set<String>
-    let emptyTitle: String
-    let emptyDescription: String
+    let emptyTitle: LocalizedStringKey
+    let emptyDescription: LocalizedStringKey
     let allowsFavoriteChanges: Bool
     let pagination: GridPagination?
     let onToggleFavorite: (RemoteImageRecord) -> Void
@@ -79,7 +80,6 @@ struct LibraryGridView: View {
                 }
             }
         }
-        .navigationTitle(title ?? "发现")
     }
 
     /// 下一页加载失败时保留网格，并在底部提供不会自动连点的显式重试。
@@ -88,16 +88,16 @@ struct LibraryGridView: View {
         if let pagination {
             switch pagination.state {
             case .loadingSources:
-                ProgressView("其他\(pagination.contentName)数据源仍在加载…")
+                ProgressView("其他\(Text(pagination.contentName))数据源仍在加载…")
                     .padding(.vertical, 8)
-                    .accessibilityLabel("其他\(pagination.contentName)数据源仍在加载")
+                    .accessibilityLabel("其他\(Text(pagination.contentName))数据源仍在加载")
             case .loading:
-                ProgressView("正在加载更多\(pagination.contentName)…")
+                ProgressView("正在加载更多\(Text(pagination.contentName))…")
                     .padding(.vertical, 8)
-                    .accessibilityLabel("正在加载更多\(pagination.contentName)")
+                    .accessibilityLabel("正在加载更多\(Text(pagination.contentName))")
             case let .needsContinuation(message):
                 VStack(spacing: 8) {
-                    Text(message)
+                    Text(verbatim: message.resolved(locale: locale))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button(pagination.continueButtonTitle, action: pagination.continueLoading)
@@ -105,14 +105,17 @@ struct LibraryGridView: View {
                 .padding(.vertical, 8)
             case let .failed(message):
                 VStack(spacing: 8) {
-                    Text(message)
+                    Text(verbatim: message.resolved(locale: locale))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("重新加载更多\(pagination.contentName)", action: pagination.retry)
+                    Button(
+                        "重新加载更多\(Text(pagination.contentName))",
+                        action: pagination.retry
+                    )
                 }
                 .padding(.vertical, 8)
             case .exhausted:
-                Text("已加载全部\(pagination.contentName)")
+                Text("已加载全部\(Text(pagination.contentName))")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 8)
@@ -220,10 +223,9 @@ struct FavoritesGridView: View {
                 }
             }
         }
-        .navigationTitle("收藏")
     }
 
-    private func sectionTitle(_ title: String) -> some View {
+    private func sectionTitle(_ title: LocalizedStringKey) -> some View {
         Text(title)
             .font(.headline)
             .accessibilityAddTraits(.isHeader)
@@ -310,6 +312,5 @@ struct RecentGridView: View {
                 }
             }
         }
-        .navigationTitle("最近使用")
     }
 }

@@ -1,10 +1,16 @@
 import MirageCore
 import SwiftUI
 
+/// Settings 侧栏只在 UI 层组合数据源和通用设置，不污染图片源业务注册表。
+enum SettingsSidebarSelection: Hashable {
+    case source(PhotoSourceID)
+    case general
+}
+
 /// 参考 macOS 设置页的侧栏样式，保留所有供应商草稿并只切换当前详情。
 struct PhotoSourceSettingsSidebar: View {
     let descriptors: [PhotoSourceDescriptor]
-    @Binding var selection: PhotoSourceID
+    @Binding var selection: SettingsSidebarSelection
     let isDisabled: Bool
 
     var body: some View {
@@ -13,6 +19,8 @@ struct PhotoSourceSettingsSidebar: View {
                 ForEach(descriptors) { descriptor in
                     sourceButton(for: descriptor)
                 }
+
+                generalSettingsButton
             }
             .padding(20)
         }
@@ -24,10 +32,10 @@ struct PhotoSourceSettingsSidebar: View {
     }
 
     private func sourceButton(for descriptor: PhotoSourceDescriptor) -> some View {
-        let isSelected = descriptor.id == selection
+        let isSelected = selection == .source(descriptor.id)
 
         return Button {
-            selection = descriptor.id
+            selection = .source(descriptor.id)
         } label: {
             HStack(spacing: 12) {
                 PhotoSourceBrandIcon(
@@ -36,7 +44,7 @@ struct PhotoSourceSettingsSidebar: View {
                     size: 28
                 )
 
-                Text(sidebarTitle(for: descriptor))
+                Text(descriptor.displayName)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
 
                 Spacer(minLength: 0)
@@ -63,12 +71,52 @@ struct PhotoSourceSettingsSidebar: View {
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .accessibilityLabel(sidebarTitle(for: descriptor))
-        .accessibilityValue(isSelected ? "已选择" : "")
+        .accessibilityLabel(descriptor.displayName)
+        .accessibilityValue(isSelected ? Text("已选择") : Text("未选择"))
     }
 
-    private func sidebarTitle(for descriptor: PhotoSourceDescriptor) -> String {
-        descriptor.id == .openverse ? "Default" : descriptor.displayName
+    private var generalSettingsButton: some View {
+        let isSelected = selection == .general
+
+        return Button {
+            selection = .general
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
+
+                Text("设置")
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
+
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .background(
+                isSelected
+                    ? Color.accentColor.opacity(0.11)
+                    : Color(nsColor: .windowBackgroundColor).opacity(0.68),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        isSelected
+                            ? Color.accentColor.opacity(0.58)
+                            : Color(nsColor: .separatorColor).opacity(0.62),
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel("设置")
+        .accessibilityValue(isSelected ? Text("已选择") : Text("未选择"))
     }
 }
 

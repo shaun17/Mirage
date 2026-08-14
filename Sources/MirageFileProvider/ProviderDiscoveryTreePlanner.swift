@@ -21,7 +21,9 @@ enum ProviderDiscoveryTreeError: Error, Equatable, Sendable {
 enum ProviderDiscoveryTreePlanner {
     static let batchSize = 40
     static let maximumPage = DiscoveryPageReference.maximumPage
-    static let continuationFolderName = "更多图片"
+    static var continuationFolderName: String {
+        ProviderLocalization.current.string("更多图片")
+    }
 
     /// 构造一层完整快照。固定资料库目录只会出现在根批，续页目录始终追加在数组末尾。
     static func items(
@@ -136,7 +138,9 @@ enum ProviderAvatarTreeError: Error, Equatable, Sendable {
 /// 把 DiceBear 的绝对 offset 投影为每层 40 张及一个真实“加载更多”目录。
 enum ProviderAvatarTreePlanner {
     static let batchSize = 40
-    static let continuationFolderName = "加载更多"
+    static var continuationFolderName: String {
+        ProviderLocalization.current.string("加载更多")
+    }
 
     /// 首页保留既有 avatar ID；续页使用带逻辑页的位置 ID，确保回查时父级不丢失。
     static func items(for batch: ProviderAvatarBatch) throws -> [ProviderItem] {

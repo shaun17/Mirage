@@ -2,15 +2,18 @@ import FinderSync
 import MirageCore
 import SwiftUI
 
-/// 左侧切换供应商、右侧编辑详情，并在页面底部统一保存所有供应商草稿。
+/// 左侧切换设置分类、右侧编辑详情，并在页面底部统一保存全部设置草稿。
 struct PhotoSourceSettingsView: View {
     @ObservedObject var model: PhotoSourceSettingsModel
     let providerState: ProviderState
     let softwareUpdateController: SoftwareUpdateController
+    @Binding var appLanguage: AppLanguage
     let onRecheckProvider: @MainActor () async -> Void
 
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selectedSourceID: PhotoSourceID = .openverse
+    @Environment(\.locale) private var locale
+    @State private var selection: SettingsSidebarSelection = .source(.openverse)
+    @State private var appLanguageDraft: AppLanguage?
     @State private var connectionTask: Task<Void, Never>?
     @State private var testingSourceID: PhotoSourceID?
 
@@ -19,7 +22,7 @@ struct PhotoSourceSettingsView: View {
             HStack(spacing: 0) {
                 PhotoSourceSettingsSidebar(
                     descriptors: providerDescriptors,
-                    selection: $selectedSourceID,
+                    selection: $selection,
                     isDisabled: providerSwitchingIsDisabled
                 )
 
@@ -38,7 +41,8 @@ struct PhotoSourceSettingsView: View {
                 .allowsHitTesting(false)
         }
         .onAppear {
-            selectedSourceID = .openverse
+            selection = .source(.openverse)
+            appLanguageDraft = appLanguage
         }
         .task { await model.load() }
         .task(id: scenePhase) {
@@ -48,19 +52,23 @@ struct PhotoSourceSettingsView: View {
         .onDisappear {
             cancelConnectionTest()
             model.discardDrafts()
+            appLanguageDraft = nil
         }
-        .onChange(of: selectedSourceID) {
+        .onChange(of: selection) {
             cancelConnectionTest()
         }
         .onChange(of: model.connectionMessages) { previous, messages in
-            guard let message = messages[selectedSourceID],
-                  message != previous[selectedSourceID] else { return }
-            AccessibilityNotification.Announcement(message).post()
+            guard case let .source(sourceID) = selection,
+                  let message = messages[sourceID],
+                  message != previous[sourceID] else { return }
+            AccessibilityNotification.Announcement(
+                message.resolved(locale: locale)
+            ).post()
         }
         .alert("内容数据源", isPresented: noticeIsPresented) {
             Button("好", action: model.dismissNotice)
         } message: {
-            Text(model.notice ?? "")
+            Text(verbatim: model.notice?.resolved(locale: locale) ?? "")
         }
     }
 
@@ -71,16 +79,21 @@ struct PhotoSourceSettingsView: View {
                 Divider()
             }
 
-            if let selectedDescriptor {
-                PhotoSourceProviderSettingsPane(
-                    model: model,
-                    descriptor: selectedDescriptor,
-                    isTesting: testingSourceID == selectedDescriptor.id,
-                    onTestConnection: testConnection
-                )
-            } else {
-                ContentUnavailableView("数据源不可用", systemImage: "exclamationmark.triangle")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            switch selection {
+            case .general:
+                GeneralSettingsPane(languageDraft: appLanguageDraftBinding)
+            case .source:
+                if let selectedDescriptor {
+                    PhotoSourceProviderSettingsPane(
+                        model: model,
+                        descriptor: selectedDescriptor,
+                        isTesting: testingSourceID == selectedDescriptor.id,
+                        onTestConnection: testConnection
+                    )
+                } else {
+                    ContentUnavailableView("数据源不可用", systemImage: "exclamationmark.triangle")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,7 +109,7 @@ struct PhotoSourceSettingsView: View {
                     .font(.callout.weight(.medium))
 
                 if let detail = status.detail {
-                    Text(detail)
+                    Text(verbatim: detail.resolved(locale: locale))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -104,8 +117,10 @@ struct PhotoSourceSettingsView: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Finder 状态：\(status.title)")
-            .accessibilityValue(status.detail ?? "")
+            .accessibilityLabel(Text("Finder 状态：") + Text(status.title))
+            .accessibilityValue(
+                Text(verbatim: status.detail?.resolved(locale: locale) ?? "")
+            )
 
             Spacer(minLength: 12)
             providerStatusAction
@@ -182,14 +197,8 @@ struct PhotoSourceSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
-            Link(destination: Self.privacyPolicyURL) {
-                Label("隐私政策", systemImage: "hand.raised")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-
-            if model.hasUnsavedChanges {
-                Text("已修改 \(model.unsavedSourceIDs.count) 个数据源")
+            if let pendingChangesDescription {
+                Text(pendingChangesDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -202,14 +211,12 @@ struct PhotoSourceSettingsView: View {
                     .accessibilityLabel("正在处理内容数据源设置")
             }
 
-            Button("保存") {
-                model.scheduleSaveAllConfigurations()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut(.defaultAction)
-            .disabled(isBusy || !model.hasUnsavedChanges)
-            .accessibilityLabel("保存所有内容数据源设置")
+            Button("保存", action: saveSettings)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isBusy || !settingsSaveState.hasUnsavedChanges)
+                .accessibilityLabel("保存所有设置")
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -217,7 +224,8 @@ struct PhotoSourceSettingsView: View {
     }
 
     private var selectedDescriptor: PhotoSourceDescriptor? {
-        PhotoSourceRegistry.descriptor(for: selectedSourceID)
+        guard case let .source(sourceID) = selection else { return nil }
+        return PhotoSourceRegistry.descriptor(for: sourceID)
     }
 
     private var providerDescriptors: [PhotoSourceDescriptor] {
@@ -226,6 +234,48 @@ struct PhotoSourceSettingsView: View {
 
     private var isBusy: Bool {
         model.isLoading || !model.workingSourceIDs.isEmpty || !model.scheduledSourceIDs.isEmpty
+    }
+
+    private var effectiveLanguageDraft: AppLanguage {
+        appLanguageDraft ?? appLanguage
+    }
+
+    private var appLanguageDraftBinding: Binding<AppLanguage> {
+        Binding(
+            get: { effectiveLanguageDraft },
+            set: { appLanguageDraft = $0 }
+        )
+    }
+
+    private var settingsSaveState: SettingsSaveState {
+        SettingsSaveState(
+            savedLanguage: appLanguage,
+            draftLanguage: effectiveLanguageDraft,
+            hasPhotoSourceChanges: model.hasUnsavedChanges
+        )
+    }
+
+    private var pendingChangesDescription: LocalizedStringKey? {
+        let languageChanged = appLanguage != effectiveLanguageDraft
+        switch (languageChanged, model.hasUnsavedChanges) {
+        case (true, true):
+            return "已修改应用语言和 \(model.unsavedSourceIDs.count) 个数据源"
+        case (true, false):
+            return "已修改应用语言"
+        case (false, true):
+            return "已修改 \(model.unsavedSourceIDs.count) 个数据源"
+        case (false, false):
+            return nil
+        }
+    }
+
+    /// 语言与图片源遵循同一个草稿边界；只有点击底部保存才写入共享偏好。
+    private func saveSettings() {
+        let language = effectiveLanguageDraft
+        if language != appLanguage {
+            appLanguage = language
+        }
+        model.scheduleSaveAllConfigurations()
     }
 
     /// 连接测试允许切换供应商并由 `onChange` 取消；只有加载与持久化操作锁定侧栏。
@@ -268,13 +318,131 @@ struct PhotoSourceSettingsView: View {
             set: { if !$0 { model.dismissNotice() } }
         )
     }
+}
+
+/// 通用设置与图片源配置分开呈现；语言草稿与图片源草稿统一由底部按钮保存。
+private struct GeneralSettingsPane: View {
+    @Binding var languageDraft: AppLanguage
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                header
+                languageSection
+                privacySection
+            }
+            .padding(.horizontal, 36)
+            .padding(.vertical, 32)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 18) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(.tint)
+                .frame(width: 68, height: 68)
+                .background(
+                    Color(nsColor: .controlBackgroundColor).opacity(0.72),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.75), lineWidth: 1)
+                }
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("设置")
+                    .font(.title3.bold())
+                Text("管理 Mirage 的语言与隐私选项。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var languageSection: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("语言")
+                .font(.headline)
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("应用语言")
+                        .font(.callout.weight(.medium))
+                    Text("默认跟随系统语言，也可以随时切换。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 16)
+
+                Picker("应用语言", selection: $languageDraft) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.title).tag(language)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .accessibilityLabel("应用语言")
+            }
+            .settingsCard()
+        }
+    }
+
+    private var privacySection: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("隐私")
+                .font(.headline)
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("隐私政策")
+                        .font(.callout.weight(.medium))
+                    Text("在浏览器中查看 Mirage 隐私政策。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 16)
+
+                Button("查看隐私政策") {
+                    openURL(Self.privacyPolicyURL)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("查看隐私政策")
+            }
+            .settingsCard()
+        }
+    }
 
     private static let privacyPolicyURL = URL(string: "https://mirage.wenmsg.fun/privacy")!
 }
 
+private extension View {
+    func settingsCard() -> some View {
+        padding(16)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .background(
+                Color(nsColor: .controlBackgroundColor).opacity(0.52),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.68), lineWidth: 1)
+            }
+    }
+}
+
 private struct ProviderStatusPresentation {
-    let title: String
-    let detail: String?
+    let title: LocalizedStringKey
+    let detail: AppDisplayMessage?
     let symbol: String
     let color: Color
 }

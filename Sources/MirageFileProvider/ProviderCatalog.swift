@@ -16,19 +16,19 @@ struct ProviderCatalog: Sendable {
             ProviderItem(
                 directory: ProviderIdentifiers.avatars,
                 parent: .rootContainer,
-                name: "头像",
+                name: ProviderLocalization.current.string("头像"),
                 discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(
                 directory: ProviderIdentifiers.recent,
                 parent: .rootContainer,
-                name: "最近使用",
+                name: ProviderLocalization.current.string("最近使用"),
                 discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(
                 directory: ProviderIdentifiers.favorites,
                 parent: .rootContainer,
-                name: "收藏",
+                name: ProviderLocalization.current.string("收藏"),
                 discoveryGeneration: discoveryGeneration
             ),
             ProviderItem(

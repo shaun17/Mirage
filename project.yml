@@ -14,8 +14,8 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     CLANG_ENABLE_MODULES: YES
-    CURRENT_PROJECT_VERSION: "42"
-    MARKETING_VERSION: "0.5.4"
+    CURRENT_PROJECT_VERSION: "43"
+    MARKETING_VERSION: "0.5.5"
 
 packages:
   Sparkle:
@@ -192,15 +192,20 @@ targets:
     sources:
       - path: Tests/MirageCoreTests
       # 这些无 UI 的生产源直接编入测试模块，锁住 App 与 File Provider 状态机而不启动宿主进程。
+      - path: Sources/MirageApp/AppDisplayMessage.swift
+      - path: Sources/MirageApp/AppDisplayMessage+Errors.swift
       - path: Sources/MirageApp/AppViewState.swift
       - path: Sources/MirageApp/PhotoSourceSettingsModel.swift
       - path: Sources/MirageApp/SearchModel.swift
       - path: Sources/MirageApp/ThumbnailLoader.swift
+      - path: Sources/MirageApp/Resources
+        buildPhase: resources
       - path: Sources/MirageFileProvider/ProviderAsyncSupport.swift
       - path: Sources/MirageFileProvider/ProviderCatalog.swift
       - path: Sources/MirageFileProvider/ProviderIdentifiers.swift
       - path: Sources/MirageFileProvider/ProviderDiscoveryTreePlanner.swift
       - path: Sources/MirageFileProvider/ProviderItem.swift
+      - path: Sources/MirageFileProvider/ProviderLocalization.swift
       - path: Sources/MirageFileProvider/ProviderPagePlanner.swift
       - path: Sources/MirageFileProvider/ProviderRepository.swift
       - path: Sources/MirageFileProvider/ProviderSearchResultStoring.swift

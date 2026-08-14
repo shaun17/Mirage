@@ -12,6 +12,7 @@ struct ContentView: View {
     /// 场景阶段用于在窗口重新进入前台时同步 File Provider 写入的数据。
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.locale) private var locale
 
     /// 整个窗口共用一个覆盖式详情抽屉；每张卡片各挂 popover 会在长列表里堆出成百个呈现上下文。
     @State private var inspectedRecord: RemoteImageRecord?
@@ -41,8 +42,11 @@ struct ContentView: View {
                     .zIndex(1)
                 }
             }
+            // 标题属于 detail 列；挂在整个 SplitView 上时，AppKit 可能保留切换前的标题。
+            .navigationTitle(
+                Text(verbatim: model.selection.resolvedTitle(locale: locale))
+            )
         }
-        .navigationTitle("Mirage")
         .background {
             DetailDrawerInteractionMonitor(
                 isEnabled: inspectedRecord != nil,
@@ -52,24 +56,36 @@ struct ContentView: View {
                 onOutsideClick: dismissDetailDrawerIfSelectionUnchanged
             )
             .allowsHitTesting(false)
+
+            MainWindowTitleConfigurator(
+                title: model.selection.resolvedTitle(locale: locale)
+            )
+            .allowsHitTesting(false)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     showsUsageHelp = true
                 } label: {
-                    Label("使用说明", systemImage: "questionmark.circle")
+                    Label {
+                        Text(verbatim: AppDisplayMessage.localized("使用说明").resolved(locale: locale))
+                    } icon: {
+                        Image(systemName: "questionmark.circle")
+                    }
                 }
-                .help("如何在上传框中使用 Mirage")
+                .help(
+                    AppDisplayMessage.localized("如何在上传框中使用 Mirage")
+                        .resolved(locale: locale)
+                )
                 .popover(isPresented: $showsUsageHelp, arrowEdge: .bottom) {
-                    UsageHelpPopover()
+                    UsageHelpPopover(locale: locale)
                 }
             }
         }
         .alert("Mirage", isPresented: noticeIsPresented) {
             Button("好") { model.libraryNotice = nil }
         } message: {
-            Text(model.libraryNotice ?? "")
+            Text(verbatim: model.libraryNotice?.resolved(locale: locale) ?? "")
         }
         .onChange(of: searchLifecycleState.isActive, initial: true) { _, isActive in
             // 同步状态变化直接提交，避免旧异步 task 在取消后反向覆盖最新生命周期。
@@ -101,7 +117,9 @@ struct ContentView: View {
             guard let message = state.accessibilityAnnouncement else { return }
             guard state != lastAnnouncedProviderState else { return }
             lastAnnouncedProviderState = state
-            AccessibilityNotification.Announcement(message).post()
+            AccessibilityNotification.Announcement(
+                message.resolved(locale: locale)
+            ).post()
         }
         .task(id: scenePhase) {
             // 返回前台时同时同步资料库并复查扩展，用户启用后无需重启 App。
@@ -123,7 +141,7 @@ struct ContentView: View {
                 onShowDetails: { presentDetailDrawer(for: $0) }
             )
         case .favorites:
-            libraryContent(title: "收藏") {
+            libraryContent {
                 FavoritesGridView(
                     records: model.favorites,
                     favoriteIDs: model.favoriteIDs,
@@ -136,7 +154,7 @@ struct ContentView: View {
                 )
             }
         case .recent:
-            libraryContent(title: "最近使用") {
+            libraryContent {
                 RecentGridView(
                     records: model.recent,
                     favoriteIDs: model.favoriteIDs,
@@ -153,23 +171,20 @@ struct ContentView: View {
     /// 收藏与最近使用只有在共享资料库可读时才展示空态，失败不能伪装成“没有内容”。
     @ViewBuilder
     private func libraryContent<Content: View>(
-        title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         switch model.libraryAvailability {
         case .preparing:
             ProgressView("正在准备共享资料库…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle(title)
         case .ready:
             content()
         case let .failed(message):
             ContentUnavailableView(
                 "资料库不可用",
                 systemImage: "externaldrive.badge.exclamationmark",
-                description: Text(message)
+                description: Text(verbatim: message.resolved(locale: locale))
             )
-            .navigationTitle(title)
         }
     }
 

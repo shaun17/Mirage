@@ -10,7 +10,7 @@ struct ImageDetailPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(record.source == .giphy ? "GIF 详情" : "图片详情")
+                Text(detailTitle)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
 
@@ -61,23 +61,47 @@ struct ImageDetailPopover: View {
         if let creatorURL = record.creatorURL, let creator = record.creator {
             LabeledContent("作者") { Link(creator, destination: creatorURL) }
         } else {
-            LabeledContent("作者", value: record.creator ?? "未提供")
+            LabeledContent("作者") {
+                if let creator = record.creator {
+                    Text(creator)
+                } else {
+                    Text("未提供")
+                }
+            }
         }
     }
 
     /// 缺失链接时仍明确显示状态，避免把原图地址误称为来源页。
     @ViewBuilder
-    private func linkRow(title: String, url: URL?, label: String? = nil) -> some View {
+    private func linkRow(
+        title: LocalizedStringKey,
+        url: URL?,
+        label: String? = nil
+    ) -> some View {
         if let url {
             LabeledContent(title) {
-                Link(label ?? "打开", destination: url)
+                if let label {
+                    Link(label, destination: url)
+                } else {
+                    Link("打开", destination: url)
+                }
             }
         } else {
-            LabeledContent(title, value: label ?? "未提供")
+            LabeledContent(title) {
+                if let label {
+                    Text(label)
+                } else {
+                    Text("未提供")
+                }
+            }
         }
     }
 
-    private var usageNote: String {
+    private var detailTitle: LocalizedStringKey {
+        record.source == .giphy ? "GIF 详情" : "图片详情"
+    }
+
+    private var usageNote: LocalizedStringKey {
         if record.source == .giphy {
             return "此 Emoji、GIF 或 Sticker 由 GIPHY 提供。收藏只保存 GIPHY 对象 ID，打开收藏时实时回查；媒体文件与媒体 URL 均不落盘，也不写入 Finder。使用前请核对来源页与 API 条款。"
         }
@@ -90,7 +114,7 @@ struct ImageDetailPopover: View {
         return "许可信息来自内容提供方，仅供参考。使用前请核对来源页，并自行确认肖像权、商标权及其他适用限制。"
     }
 
-    private var licenseLinkTitle: String {
+    private var licenseLinkTitle: LocalizedStringKey {
         switch record.source {
         case .giphy: return "使用条款"
         case .picrew: return "使用范围"

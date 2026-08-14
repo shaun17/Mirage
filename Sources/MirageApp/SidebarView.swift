@@ -9,9 +9,9 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             List(selection: $model.selection) {
                 ForEach(AppSection.allCases) { section in
-                    Label(section.title, systemImage: section.symbol)
+                    Label(section.localizedTitle, systemImage: section.symbol)
                         .tag(section)
-                        .accessibilityHint("在右侧显示\(section.title)内容")
+                        .accessibilityHint("在右侧显示\(Text(section.localizedTitle))内容")
                 }
             }
             .listStyle(.sidebar)
@@ -38,9 +38,11 @@ struct SidebarView: View {
 
 /// 使用说明从侧栏移到工具栏帮助按钮，正文只描述用户能看到的行为。
 struct UsageHelpPopover: View {
+    let locale: Locale
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("在上传框中使用 Mirage")
+            Text(verbatim: localized("在上传框中使用 Mirage"))
                 .font(.headline)
 
             step(1, "打开目标 App 的上传框或文件面板")
@@ -48,7 +50,7 @@ struct UsageHelpPopover: View {
             step(3, "打开“更多图片”继续浏览")
 
             Divider()
-            Text("收藏和最近使用会同步到文件面板中的同名目录。")
+            Text(verbatim: localized("收藏和最近使用会同步到文件面板中的同名目录。"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -58,19 +60,30 @@ struct UsageHelpPopover: View {
     }
 
     /// 用连续编号建立可扫描、可被 VoiceOver 顺序朗读的步骤。
-    private func step(_ number: Int, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+    private func step(_ number: Int, _ key: StaticString) -> some View {
+        let text = localized(key)
+        let accessibilityLabel = AppDisplayMessage.localized(
+            "第 %lld 步，%@",
+            .integer(number),
+            .text(text)
+        ).resolved(locale: locale)
+
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text("\(number)")
                 .font(.caption.bold())
                 .foregroundStyle(.white)
                 .frame(width: 20, height: 20)
                 .background(.tint, in: Circle())
                 .accessibilityHidden(true)
-            Text(text)
+            Text(verbatim: text)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("第 \(number) 步，\(text)")
+        .accessibilityLabel(Text(verbatim: accessibilityLabel))
+    }
+
+    private func localized(_ key: StaticString) -> String {
+        AppDisplayMessage.localized(key).resolved(locale: locale)
     }
 }

@@ -12,7 +12,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var unresolvedGiphyFavoriteCount = 0
     @Published private(set) var libraryAvailability: LibraryAvailability = .preparing
     @Published private(set) var providerState: ProviderState = .checking
-    @Published var libraryNotice: String?
+    @Published var libraryNotice: AppDisplayMessage?
 
     let searchModel: SearchModel
     lazy var sourceSettingsModel = PhotoSourceSettingsModel(
@@ -109,7 +109,10 @@ final class AppModel: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            libraryNotice = "无法读取共享资料库：\(error.localizedDescription)"
+            libraryNotice = .localized(
+                "无法读取共享资料库：%@",
+                .message(.error(error))
+            )
         }
     }
 
@@ -117,7 +120,10 @@ final class AppModel: ObservableObject {
     func toggleFavorite(_ record: RemoteImageRecord) async {
         let isRemovingExistingFavorite = favoriteIDs.contains(record.id)
         guard record.source.allowsPersistentLibraryStorage || isRemovingExistingFavorite else {
-            libraryNotice = "\(record.source.displayName) 当前仅支持临时搜索预览，请从来源页打开并下载图片。"
+            libraryNotice = .localized(
+                "%@ 当前仅支持临时搜索预览，请从来源页打开并下载图片。",
+                .text(record.source.displayName)
+            )
             return
         }
         let normalizedGiphyID = record.giphyID?
@@ -133,7 +139,7 @@ final class AppModel: ObservableObject {
             case .preparing, .ready:
                 libraryNotice = "共享资料库仍在准备，请稍后再试。"
             case let .failed(message):
-                libraryNotice = "收藏不可用：\(message)"
+                libraryNotice = .localized("收藏不可用：%@", .message(message))
             }
             return
         }
@@ -152,7 +158,10 @@ final class AppModel: ObservableObject {
             do {
                 try await domainManager.signalFavoritesChanged()
             } catch {
-                libraryNotice = "收藏已保存，但文件面板暂未刷新：\(error.localizedDescription)"
+                libraryNotice = .localized(
+                    "收藏已保存，但文件面板暂未刷新：%@",
+                    .message(.error(error))
+                )
             }
         } catch {
             if let previousLiveGiphyRecord {
@@ -160,7 +169,10 @@ final class AppModel: ObservableObject {
             } else {
                 liveGiphyFavoritesByID.removeValue(forKey: record.id)
             }
-            libraryNotice = "无法更新收藏：\(error.localizedDescription)"
+            libraryNotice = .localized(
+                "无法更新收藏：%@",
+                .message(.error(error))
+            )
         }
     }
 
@@ -215,14 +227,20 @@ final class AppModel: ObservableObject {
             }
             rebuildFavoritePresentation()
             if unresolvedGiphyFavoriteCount > 0 {
-                libraryNotice = "有 \(unresolvedGiphyFavoriteCount) 项 GIPHY 收藏已不可用或被下架。"
+                libraryNotice = .localized(
+                    "有 %lld 项 GIPHY 收藏已不可用或被下架。",
+                    .integer(unresolvedGiphyFavoriteCount)
+                )
             }
         } catch is CancellationError {
             return
         } catch {
             guard latestLibraryRevision == requestedRevision else { return }
             rebuildFavoritePresentation()
-            libraryNotice = "GIPHY 收藏暂时无法加载：\(error.localizedDescription)"
+            libraryNotice = .localized(
+                "GIPHY 收藏暂时无法加载：%@",
+                .message(.error(error))
+            )
         }
     }
 
@@ -266,9 +284,9 @@ final class AppModel: ObservableObject {
             )
             await refreshLibrary()
         } catch {
-            let message = error.localizedDescription
+            let message = AppDisplayMessage.error(error)
             libraryAvailability = .failed(message)
-            libraryNotice = "无法打开共享资料库：\(message)"
+            libraryNotice = .localized("无法打开共享资料库：%@", .message(message))
             searchModel.useRecommendationFallback()
         }
     }
@@ -288,6 +306,21 @@ final class AppModel: ObservableObject {
         providerCheckTask = nil
     }
 
+    /// 语言偏好已经由 App 写入共享容器；这里只负责让 File Provider 重新发布可见目录名。
+    func appLanguageDidChange() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.domainManager.signalLanguageChanged()
+            } catch {
+                self.libraryNotice = .localized(
+                    "语言已切换，但文件面板暂未刷新：%@",
+                    .message(.error(error))
+                )
+            }
+        }
+    }
+
     /// 将注册成功与扩展已启用分开，避免首次安装时显示虚假的成功状态。
     private func performProviderCheck() async {
         // 已就绪后的后台复查不再插入临时状态栏，避免设置页内容上下跳动；
@@ -302,7 +335,7 @@ final class AppModel: ObservableObject {
             case .needsActivation: providerState = .needsActivation
             }
         } catch {
-            providerState = .failed(error.localizedDescription)
+            providerState = .failed(.error(error))
         }
     }
 
@@ -316,7 +349,10 @@ final class AppModel: ObservableObject {
         do {
             try await domainManager.signalPhotoFilterChanged()
         } catch {
-            libraryNotice = "图片数据源设置已保存，但文件面板暂未刷新：\(error.localizedDescription)"
+            libraryNotice = .localized(
+                "图片数据源设置已保存，但文件面板暂未刷新：%@",
+                .message(.error(error))
+            )
         }
     }
 

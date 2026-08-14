@@ -171,7 +171,9 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
                 Self.logger.error("搜索网络错误：\(error.localizedDescription, privacy: .public)")
                 relay.finish({
                     observer.finishEnumeratingWithError(
-                        ProviderError.serverUnreachable("搜索网络错误：\(error.localizedDescription)")
+                        ProviderError.serverUnreachable(
+                            ProviderLocalization.current.string("搜索网络请求失败。")
+                        )
                     )
                 }, ifCancelled: {
                     observer.finishEnumeratingWithError(ProviderError.cancelled())
@@ -200,14 +202,28 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
     private static func searchError(_ error: OpenverseError) -> Error {
         switch error {
         case let .rateLimited(retryAfter):
-            let suffix = retryAfter.map { "，约 \(Int($0)) 秒后可重试" } ?? ""
-            return ProviderError.serverUnreachable("搜索请求过于频繁\(suffix)。")
-        case let .network(message):
+            let message = retryAfter.map {
+                ProviderLocalization.current.string(
+                    "搜索请求过于频繁，约 %lld 秒后可重试。",
+                    Int64($0)
+                )
+            } ?? ProviderLocalization.current.string("搜索请求过于频繁。")
             return ProviderError.serverUnreachable(message)
+        case .network:
+            return ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("搜索网络请求失败。")
+            )
         case let .invalidResponse(statusCode):
-            return ProviderError.serverUnreachable("搜索服务返回 HTTP \(statusCode)。")
-        case let .decoding(message):
-            return ProviderError.serverUnreachable("搜索结果无法解析：\(message)")
+            return ProviderError.serverUnreachable(
+                ProviderLocalization.current.string(
+                    "搜索服务返回 HTTP %lld。",
+                    Int64(statusCode)
+                )
+            )
+        case .decoding:
+            return ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("搜索结果无法解析。")
+            )
         }
     }
 
@@ -217,17 +233,49 @@ final class SearchEnumerator: NSObject, NSFileProviderSearchEnumerator, @uncheck
         case .invalidCursor, .configurationChanged:
             return ProviderError.invalidSearchPage()
         case .noEnabledSources:
-            return ProviderError.serverUnreachable("没有启用可用于 Finder 的图片数据源。")
+            return ProviderError.serverUnreachable(
+                ProviderLocalization.current.string("没有启用可用于 Finder 的图片数据源。")
+            )
         case let .allSourcesFailed(issues):
             if let rateLimit = issues.first(where: { $0.kind == .rateLimited }) {
-                let suffix = rateLimit.retryAt.map {
-                    "，约 \(Int(ceil(max($0.timeIntervalSinceNow, 1)))) 秒后可重试"
-                } ?? ""
-                return ProviderError.serverUnreachable("搜索请求过于频繁\(suffix)。")
+                let message = rateLimit.retryAt.map {
+                    ProviderLocalization.current.string(
+                        "搜索请求过于频繁，约 %lld 秒后可重试。",
+                        Int64(ceil(max($0.timeIntervalSinceNow, 1)))
+                    )
+                } ?? ProviderLocalization.current.string("搜索请求过于频繁。")
+                return ProviderError.serverUnreachable(message)
             }
             return ProviderError.serverUnreachable(
-                issues.first?.message ?? "图片数据源暂时不可用。"
+                issues.first.map(Self.localizedMessage(for:))
+                    ?? ProviderLocalization.current.string("图片数据源暂时不可用。")
             )
+        }
+    }
+
+    /// Core 的 issue message 也会提供给 App；Finder 只根据稳定类型生成自己的本地化说明。
+    private static func localizedMessage(for issue: PhotoSourceIssue) -> String {
+        let sourceName = PhotoSourceRegistry.descriptor(for: issue.sourceID)?.displayName
+            ?? issue.sourceID.rawValue
+        switch issue.kind {
+        case .missingCredential:
+            return ProviderLocalization.current.string(
+                "请先在设置中配置 %@ API Key。",
+                sourceName
+            )
+        case .invalidCredential:
+            return ProviderLocalization.current.string("%@ API Key 无效。", sourceName)
+        case .rateLimited:
+            return ProviderLocalization.current.string(
+                "%@ 请求额度正在退避，请稍后重试。",
+                sourceName
+            )
+        case .network:
+            return ProviderLocalization.current.string("%@ 网络请求失败。", sourceName)
+        case .invalidResponse, .decoding:
+            return ProviderLocalization.current.string("%@ 返回了无效响应。", sourceName)
+        case .unavailable:
+            return ProviderLocalization.current.string("%@ 暂时不可用。", sourceName)
         }
     }
 }

@@ -1,9 +1,72 @@
+import Combine
 import Foundation
 import MirageCore
 import XCTest
 
 @MainActor
 final class PhotoSourceSettingsModelTests: XCTestCase {
+    /// 保存语言必须同时更新当前运行时状态与 App Group 中供下次启动读取的偏好。
+    func testAppLanguageStatePublishesAndPersistsSavedLanguage() {
+        let suiteName = "AppLanguageStateTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
+
+        let state = AppLanguageState(userDefaults: defaults)
+        XCTAssertEqual(state.language, .system)
+
+        var publishedLanguages: [MirageAppLanguage] = []
+        let languageSubscription = state.$language
+            .dropFirst()
+            .sink { publishedLanguages.append($0) }
+
+        XCTAssertTrue(state.save(.english))
+        XCTAssertEqual(state.language, .english)
+        XCTAssertEqual(publishedLanguages, [.english])
+        XCTAssertEqual(state.language.locale.identifier, "en")
+        XCTAssertEqual(
+            defaults.string(forKey: MirageAppLanguage.storageKey),
+            MirageAppLanguage.english.rawValue
+        )
+        XCTAssertEqual(AppLanguageState(userDefaults: defaults).language, .english)
+        XCTAssertFalse(state.save(.english))
+        XCTAssertEqual(publishedLanguages, [.english])
+        withExtendedLifetime(languageSubscription) {}
+    }
+
+    /// 语言草稿必须与图片源草稿共同驱动底部保存按钮。
+    func testSettingsSaveStateIncludesLanguageDraftChanges() {
+        XCTAssertFalse(
+            SettingsSaveState(
+                savedLanguage: .system,
+                draftLanguage: .system,
+                hasPhotoSourceChanges: false
+            ).hasUnsavedChanges
+        )
+        XCTAssertTrue(
+            SettingsSaveState(
+                savedLanguage: .system,
+                draftLanguage: .english,
+                hasPhotoSourceChanges: false
+            ).hasUnsavedChanges
+        )
+        XCTAssertTrue(
+            SettingsSaveState(
+                savedLanguage: .english,
+                draftLanguage: .english,
+                hasPhotoSourceChanges: true
+            ).hasUnsavedChanges
+        )
+        XCTAssertFalse(
+            SettingsSaveState(
+                savedLanguage: .english,
+                draftLanguage: .english,
+                hasPhotoSourceChanges: false
+            ).hasUnsavedChanges
+        )
+    }
+
     /// 已保存 Key 应在打开设置时回填，并且开关只在点击当前供应商的保存后才生效。
     func testLoadsSavedKeyAndStagesProviderConfigurationUntilSave() async throws {
         let preferences = makePreferences()
@@ -27,7 +90,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         XCTAssertEqual(savedSnapshot.appSourceIDs, [.openverse, .pexels])
         XCTAssertEqual(savedSnapshot.fileProviderSourceIDs, [.openverse, .pexels])
         XCTAssertEqual(model.credentialDrafts[.pexels], "saved-key")
-        XCTAssertEqual(model.connectionMessages[.pexels], "设置已保存")
+        XCTAssertEqual(resolved(model.connectionMessages[.pexels]), "设置已保存")
         XCTAssertFalse(model.hasUnsavedChanges(for: .pexels))
         let storeCalls = await credentials.storeCallCount()
         XCTAssertEqual(storeCalls, 0)
@@ -132,7 +195,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         XCTAssertEqual(snapshot.appSourceIDs, [.openverse, .pixabay])
         XCTAssertEqual(snapshot.fileProviderSourceIDs, [.openverse, .pixabay])
         XCTAssertEqual(storedKey, "pixabay-key")
-        XCTAssertEqual(model.connectionMessages[.pixabay], "设置已保存")
+        XCTAssertEqual(resolved(model.connectionMessages[.pixabay]), "设置已保存")
         XCTAssertTrue(model.isEnabled(.pixabay))
         XCTAssertEqual(changedSourceIDs, [.pixabay])
     }
@@ -196,7 +259,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.credentialDrafts[.pexels], "new-key")
         let storedCredential = try await credentials.credential(for: .pexels)
         XCTAssertEqual(storedCredential, "new-key")
-        XCTAssertEqual(model.connectionMessages[.pexels], "设置已保存")
+        XCTAssertEqual(resolved(model.connectionMessages[.pexels]), "设置已保存")
 
         model.discardDrafts()
         XCTAssertNil(model.credentialDrafts[.pexels])
@@ -264,7 +327,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let storedCredential = try await credentials.credential(for: .pexels)
         XCTAssertEqual(storedCredential, "new-key")
         XCTAssertEqual(model.credentialDrafts[.pexels], "new-key")
-        XCTAssertTrue(model.notice?.contains("无法恢复") == true)
+        XCTAssertTrue(resolved(model.notice)?.contains("无法恢复") == true)
     }
 
     /// 分段切换或窗口关闭若先取消测试任务，Model 不应再写状态或启动请求。
@@ -333,7 +396,7 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let persisted = try await credentials.credential(for: .pexels)
         XCTAssertEqual(persisted, "new-key")
         XCTAssertEqual(model.credentialDrafts[.pexels], "new-key")
-        XCTAssertEqual(model.connectionMessages[.pexels], "设置已保存")
+        XCTAssertEqual(resolved(model.connectionMessages[.pexels]), "设置已保存")
     }
 
     private func makePreferences() -> PhotoSourcePreferencesStore {
@@ -341,6 +404,13 @@ final class PhotoSourceSettingsModelTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return PhotoSourcePreferencesStore(userDefaults: defaults)
+    }
+
+    private func resolved(_ message: AppDisplayMessage?) -> String? {
+        message?.resolved(
+            locale: Locale(identifier: "zh-Hans"),
+            bundle: Bundle(for: PhotoSourceSettingsModelTests.self)
+        )
     }
 
     private func makeModel(

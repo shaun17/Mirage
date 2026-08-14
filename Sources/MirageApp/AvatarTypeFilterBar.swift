@@ -10,7 +10,7 @@ struct AvatarTypeFilterBar: View {
         MultiSelectionFilterBar(
             title: "头像类型",
             options: AvatarType.allCases,
-            displayName: \AvatarType.displayName,
+            displayName: { LocalizedStringKey($0.displayName) },
             selectedCount: selection.count,
             isSelected: selection.contains,
             minimumSelectionMessage: "至少保留一种头像类型",
@@ -28,7 +28,7 @@ struct GiphyContentTypeFilterBar: View {
         MultiSelectionFilterBar(
             title: "GIF 类型",
             options: GiphyContentType.allCases,
-            displayName: \GiphyContentType.displayName,
+            displayName: { LocalizedStringKey($0.displayName) },
             selectedCount: selection.count,
             isSelected: selection.contains,
             minimumSelectionMessage: "至少保留一种 GIF 类型",
@@ -39,12 +39,12 @@ struct GiphyContentTypeFilterBar: View {
 
 /// 多选标签只负责展示与切换；“至少一项”和持久化规则由对应 Selection 值对象负责。
 private struct MultiSelectionFilterBar<Option: Identifiable & Hashable>: View {
-    let title: String
+    let title: LocalizedStringKey
     let options: [Option]
-    let displayName: (Option) -> String
+    let displayName: (Option) -> LocalizedStringKey
     let selectedCount: Int
     let isSelected: (Option) -> Bool
-    let minimumSelectionMessage: String
+    let minimumSelectionMessage: LocalizedStringKey
     let onToggle: (Option) -> Void
 
     var body: some View {
@@ -112,8 +112,15 @@ private struct MultiSelectionFilterBar<Option: Identifiable & Hashable>: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func helpText(name: String, isSelected: Bool, isOnlySelection: Bool) -> String {
-        if isOnlySelection { return "\(name) 已勾选；\(minimumSelectionMessage)" }
-        return isSelected ? "取消勾选 \(name)" : "勾选 \(name)"
+    private func helpText(
+        name: LocalizedStringKey,
+        isSelected: Bool,
+        isOnlySelection: Bool
+    ) -> Text {
+        let localizedName = Text(name)
+        if isOnlySelection {
+            return Text("\(localizedName) 已勾选；\(Text(minimumSelectionMessage))")
+        }
+        return isSelected ? Text("取消勾选 \(localizedName)") : Text("勾选 \(localizedName)")
     }
 }

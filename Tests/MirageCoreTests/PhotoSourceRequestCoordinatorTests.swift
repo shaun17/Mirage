@@ -707,8 +707,22 @@ final class PhotoSourceRequestCoordinatorTests: XCTestCase {
             do {
                 _ = try await source.search(query: "city", cursor: nil, pageSize: 20)
                 XCTFail("\(sourceID.rawValue) 不得降级为无协调网络请求")
-            } catch let error as PhotoSourceBatchStoreError {
-                XCTAssertEqual(error, .unavailable)
+            } catch let error as any PhotoSourceFailure {
+                XCTAssertEqual(error.sourceID, sourceID)
+                XCTAssertEqual(error.issueKind, .unavailable)
+            }
+
+            do {
+                try await coordinator.testConnection(
+                    source: upstream,
+                    policy: PhotoSourceRequestPolicies.policy(for: sourceID),
+                    query: "nature",
+                    configurationPartition: "credential:\(sourceID.rawValue):test-store-unavailable"
+                )
+                XCTFail("连接测试不得绕过缺失的生产共享存储")
+            } catch let error as any PhotoSourceFailure {
+                XCTAssertEqual(error.sourceID, sourceID)
+                XCTAssertEqual(error.issueKind, .unavailable)
             }
             let calls = await upstream.recordedCalls()
             XCTAssertTrue(calls.isEmpty)

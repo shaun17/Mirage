@@ -327,7 +327,7 @@ final class SearchModel: ObservableObject {
                 // 条件切换、离开页面等真实 Task 取消应保持静默；若下游把一次独立的
                 // I/O 中断包装成 CancellationError，则必须收敛为可见失败，不能永远 searching。
                 guard !Task.isCancelled, let self, self.sessionID == newSessionID else { return }
-                let message = request.isGiphy
+                let message: AppDisplayMessage = request.isGiphy
                     ? "GIPHY 请求被中断，请重试。"
                     : "搜索请求被中断，请重试。"
                 self.commitInitialFailure(.network(message))
@@ -345,7 +345,7 @@ final class SearchModel: ObservableObject {
                 self.commitInitialFailure(SearchState(photoSearchError: error))
             } catch {
                 guard !Task.isCancelled, self?.sessionID == newSessionID else { return }
-                self?.commitInitialFailure(.failed(error.localizedDescription))
+                self?.commitInitialFailure(.failed(.error(error)))
             }
         }
     }
@@ -433,7 +433,7 @@ final class SearchModel: ObservableObject {
             guard !Task.isCancelled,
                   self.sessionID == sessionID,
                   activeRequest == request else { return }
-            let message = request.isGiphy
+            let message: AppDisplayMessage = request.isGiphy
                 ? "GIPHY 请求被中断，请重试。"
                 : "搜索请求被中断，请重试。"
             paginationState = .failed(message)
@@ -443,8 +443,9 @@ final class SearchModel: ObservableObject {
             restartExpiredRecommendationSession()
         } catch let error as OpenverseError {
             guard self.sessionID == sessionID else { return }
-            paginationState = .failed(error.localizedDescription)
-            announce(error.localizedDescription)
+            let message = error.appDisplayMessage
+            paginationState = .failed(message)
+            announce(message)
         } catch let error as PhotoSearchError {
             guard self.sessionID == sessionID else { return }
             if case let .allSourcesFailed(issues) = error {
@@ -454,12 +455,14 @@ final class SearchModel: ObservableObject {
                 captureGiphyRetryBoundary(from: error)
                 paginationRetryAt = giphyRetryAt
             }
-            paginationState = .failed(error.localizedDescription)
-            announce(error.localizedDescription)
+            let message = error.appDisplayMessage
+            paginationState = .failed(message)
+            announce(message)
         } catch {
             guard self.sessionID == sessionID else { return }
-            paginationState = .failed(error.localizedDescription)
-            announce(error.localizedDescription)
+            let message = AppDisplayMessage.error(error)
+            paginationState = .failed(message)
+            announce(message)
         }
     }
 
@@ -570,7 +573,10 @@ final class SearchModel: ObservableObject {
         paginationState = .loadingSources
         state = .results
         if isFirstBatch {
-            announce("已先加载 \(additions.count) 张图片，其他图片数据源仍在加载")
+            announce(.localized(
+                "已先加载 %lld 张图片，其他图片数据源仍在加载",
+                .integer(additions.count)
+            ))
         }
     }
 
@@ -627,7 +633,10 @@ final class SearchModel: ObservableObject {
         let disabledName = photoSourceSelection.title
         photoSourceSelection = .all
         photoSourceSelectionDidChange(.all)
-        announce("\(disabledName) 未在设置中启用，已切换到全部来源")
+        announce(.localized(
+            "%@ 未在设置中启用，已切换到全部来源",
+            .text(disabledName)
+        ))
         return true
     }
 
@@ -720,7 +729,9 @@ final class SearchModel: ObservableObject {
         case let .needsContinuation(message):
             announceIncludingSourceIssues(message)
         case .exhausted:
-            announceIncludingSourceIssues("没有更多可用\(contentReferenceName)")
+            announceIncludingSourceIssues(
+                filter == .gif ? "没有更多可用 GIF" : "没有更多可用图片"
+            )
         case .unavailable, .loadingSources, .ready, .loading, .failed:
             break
         }
@@ -729,46 +740,64 @@ final class SearchModel: ObservableObject {
     /// 把新增数量、总数和末页状态合并成一条完整的 VoiceOver 信息。
     private func announceLoaded(_ count: Int, total: Int, exhausted: Bool) {
         guard count > 0 else { return }
-        let suffix = exhausted ? "；\(allLoadedMessage)" : ""
-        announceIncludingSourceIssues(
-            "已加载 \(count) \(countedContentName)，共 \(total) \(totalCountedContentName)\(suffix)"
-        )
+        if filter == .gif, exhausted {
+            announceIncludingSourceIssues(.localized(
+                "已加载 %lld 个 GIF，共 %lld 个 GIF；已加载全部 GIF",
+                .integer(count),
+                .integer(total)
+            ))
+        } else if filter == .gif {
+            announceIncludingSourceIssues(.localized(
+                "已加载 %lld 个 GIF，共 %lld 个 GIF",
+                .integer(count),
+                .integer(total)
+            ))
+        } else if exhausted {
+            announceIncludingSourceIssues(.localized(
+                "已加载 %lld 张图片，共 %lld 张；已加载全部图片",
+                .integer(count),
+                .integer(total)
+            ))
+        } else {
+            announceIncludingSourceIssues(.localized(
+                "已加载 %lld 张图片，共 %lld 张",
+                .integer(count),
+                .integer(total)
+            ))
+        }
     }
 
-    private var countedContentName: String {
-        filter == .gif ? "个 GIF" : "张图片"
-    }
-
-    private var totalCountedContentName: String {
-        filter == .gif ? "个 GIF" : "张"
-    }
-
-    private var contentReferenceName: String {
-        filter == .gif ? " GIF" : "图片"
-    }
-
-    private var allLoadedMessage: String {
+    private var allLoadedMessage: AppDisplayMessage {
         filter == .gif ? "已加载全部 GIF" : "已加载全部图片"
     }
 
-    private var continuationMessage: String {
+    private var continuationMessage: AppDisplayMessage {
         filter == .gif
             ? "连续三页没有新的可用 GIF，可以继续浏览。"
             : "连续三页没有新的可用图片，可以继续查找。"
     }
 
     /// 聚合搜索仍有可用结果时，把局部来源故障合并进同一次 VoiceOver 公告。
-    private func announceIncludingSourceIssues(_ message: String) {
+    private func announceIncludingSourceIssues(_ message: AppDisplayMessage) {
         guard !sourceIssues.isEmpty else {
             announce(message)
             return
         }
-        let issueSummary = sourceIssues.map(\.message).joined(separator: "；")
-        announce("\(message)；部分数据源不可用：\(issueSummary)")
+        guard let issueSummary = AppDisplayMessage.joined(
+            sourceIssues.map(\.appDisplayMessage)
+        ) else {
+            announce(message)
+            return
+        }
+        announce(.localized(
+            "%@；部分数据源不可用：%@",
+            .message(message),
+            .message(issueSummary)
+        ))
     }
 
     /// 使用唯一事件标识发布，即使相同错误再次发生也能重新播报。
-    private func announce(_ message: String) {
+    private func announce(_ message: AppDisplayMessage) {
         accessibilityEvent = SearchAccessibilityEvent(message: message)
     }
 
@@ -777,11 +806,15 @@ final class SearchModel: ObservableObject {
         state = failure
         switch failure {
         case let .network(message):
-            announce("网络不可用：\(message)")
+            announce(.localized("网络不可用：%@", .message(message)))
         case let .rateLimited(message):
-            announce("请求过于频繁：\(message)")
+            announce(.localized("请求过于频繁：%@", .message(message)))
         case let .failed(message):
-            announce(filter == .gif ? "加载 GIF 失败：\(message)" : "搜索失败：\(message)")
+            announce(
+                filter == .gif
+                    ? .localized("加载 GIF 失败：%@", .message(message))
+                    : .localized("搜索失败：%@", .message(message))
+            )
         case .idle, .searching, .results, .empty:
             break
         }

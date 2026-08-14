@@ -7,6 +7,7 @@ struct DiscoverView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var searchModel: SearchModel
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.locale) private var locale
     @State private var queryDraft = ""
     @State private var filterDraft: SearchFilter = .avatars
     @State private var isSwitchingContentMode = false
@@ -15,7 +16,6 @@ struct DiscoverView: View {
 
     var body: some View {
         searchableContent
-            .navigationTitle("发现")
             .onAppear(perform: synchronizeCriteriaDrafts)
             .onChange(of: queryDraft) { _, query in
                 commitQueryAfterViewUpdate(query)
@@ -33,7 +33,9 @@ struct DiscoverView: View {
             }
             .onChange(of: searchModel.accessibilityEvent) { _, event in
                 guard let event else { return }
-                AccessibilityNotification.Announcement(event.message).post()
+                AccessibilityNotification.Announcement(
+                    event.message.resolved(locale: locale)
+                ).post()
             }
     }
 
@@ -79,7 +81,7 @@ struct DiscoverView: View {
 
             Picker("内容类型", selection: $filterDraft) {
                 ForEach(SearchFilter.contentTypes) { filter in
-                    Text(filter.title).tag(filter)
+                    Text(filter.localizedTitle).tag(filter)
                 }
             }
             .labelsHidden()
@@ -91,11 +93,12 @@ struct DiscoverView: View {
                 GiphyAttributionLink()
             } else {
                 if let message = model.libraryAvailability.unavailableDescription {
+                    let resolvedMessage = message.resolved(locale: locale)
                     Label("收藏不可用", systemImage: "heart.slash")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                        .help(message)
-                        .accessibilityLabel(message)
+                        .help(resolvedMessage)
+                        .accessibilityLabel(Text(verbatim: resolvedMessage))
                 }
                 Spacer(minLength: 0)
             }
@@ -149,7 +152,9 @@ struct DiscoverView: View {
             searchModel.filter = filter
             if filter == .gif {
                 AccessibilityNotification.Announcement(
-                    "已切换到 GIF；可以搜索 GIPHY GIF 和 Sticker"
+                    AppDisplayMessage
+                        .localized("已切换到 GIF；可以搜索 GIPHY GIF 和 Sticker")
+                        .resolved(locale: locale)
                 ).post()
             }
             // SearchModel 会在自己的下一次主队列轮次清空旧结果；等它先提交再恢复内容渲染。
@@ -209,7 +214,6 @@ struct DiscoverView: View {
                     Divider()
                 }
                 LibraryGridView(
-                    title: nil,
                     records: searchModel.results,
                     favoriteIDs: model.favoriteIDs,
                     emptyTitle: isGiphyMode ? "没有可用 GIF" : "没有结果",
@@ -257,7 +261,7 @@ struct DiscoverView: View {
                 systemImage: isGiphyMode ? "photo.stack" : "photo.on.rectangle.angled"
             )
         } description: {
-            Text(emptySearchDescription)
+            emptySearchDescription
         } actions: {
             switch searchModel.paginationState {
             case .loadingSources:
@@ -269,7 +273,10 @@ struct DiscoverView: View {
             case .needsContinuation:
                 Button(isGiphyMode ? "继续浏览" : "继续查找", action: searchModel.continueLoadingNextPage)
             case .failed:
-                Button("重新加载更多\(contentName)", action: searchModel.retryLoadingNextPage)
+                Button(
+                    "重新加载更多\(Text(contentName))",
+                    action: searchModel.retryLoadingNextPage
+                )
             case .unavailable, .exhausted:
                 EmptyView()
             }
@@ -277,39 +284,43 @@ struct DiscoverView: View {
     }
 
     /// 空结果页依据分页状态区分正常扫描暂停、网络失败和真正无更多结果。
-    private var emptySearchDescription: String {
+    private var emptySearchDescription: Text {
         switch searchModel.paginationState {
         case let .needsContinuation(message), let .failed(message):
-            return message
+            return Text(verbatim: message.resolved(locale: locale))
         case .exhausted:
             return isGiphyMode
-                ? "已浏览全部 GIPHY 内容。"
-                : "已加载全部结果，可以换一个关键词或内容类型。"
+                ? Text("已浏览全部 GIPHY 内容。")
+                : Text("已加载全部结果，可以换一个关键词或内容类型。")
         case .loadingSources:
-            return "已收到部分结果，其他图片数据源仍在加载。"
+            return Text("已收到部分结果，其他图片数据源仍在加载。")
         case .unavailable, .ready, .loading:
             return isGiphyMode
-                ? "可以继续浏览 GIPHY Emoji、GIF 和 Sticker。"
-                : "可以继续查找后续页面，或换一个关键词和内容类型。"
+                ? Text("可以继续浏览 GIPHY Emoji、GIF 和 Sticker。")
+                : Text("可以继续查找后续页面，或换一个关键词和内容类型。")
         }
     }
 
     /// 空白状态使用系统组件，确保字体缩放和 VoiceOver 行为一致。
-    private func unavailable(_ title: String, symbol: String, description: String) -> some View {
+    private func unavailable(
+        _ title: LocalizedStringKey,
+        symbol: String,
+        description: LocalizedStringKey
+    ) -> some View {
         ContentUnavailableView(title, systemImage: symbol, description: Text(description))
     }
 
     /// 错误状态保留具体原因，并允许在相同查询条件下重新执行。
     private func errorView(
-        _ title: String,
+        _ title: LocalizedStringKey,
         symbol: String,
-        message: String,
+        message: AppDisplayMessage,
         showsSettings: Bool = false
     ) -> some View {
         ContentUnavailableView {
             Label(title, systemImage: symbol)
         } description: {
-            Text(message)
+            Text(verbatim: message.resolved(locale: locale))
         } actions: {
             if showsSettings {
                 Button("打开设置") { openSettings() }
@@ -338,11 +349,11 @@ struct DiscoverView: View {
             && !searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var searchPrompt: String {
+    private var searchPrompt: LocalizedStringKey {
         isGiphyMode ? "搜索 GIPHY GIF 或 Sticker" : "搜索头像或图片"
     }
 
-    private var searchingDescription: String {
+    private var searchingDescription: LocalizedStringKey {
         if hasGiphyQuery { return "正在搜索 GIPHY GIF 与 Sticker…" }
         if isGiphyMode { return "正在读取 GIPHY 内容…" }
         if filterDraft == .avatars { return "正在生成头像…" }
@@ -356,19 +367,19 @@ struct DiscoverView: View {
         }
     }
 
-    private var giphySearchingAccessibilityLabel: String {
+    private var giphySearchingAccessibilityLabel: LocalizedStringKey {
         if hasGiphyQuery { return "正在搜索 GIPHY GIF 与 Sticker" }
         return isGiphyMode ? "正在读取 GIPHY 内容" : "正在搜索"
     }
 
-    private var resultEmptyDescription: String {
+    private var resultEmptyDescription: LocalizedStringKey {
         guard isGiphyMode else { return "换一个关键词再试。" }
         return hasGiphyQuery
             ? "GIPHY 没有返回匹配的 GIF 或 Sticker，换一个关键词再试。"
             : "GIPHY 当前没有返回可显示的 Emoji、GIF 或 Sticker。"
     }
 
-    private var contentName: String {
+    private var contentName: LocalizedStringKey {
         isGiphyMode ? "GIF" : "图片"
     }
 
@@ -382,7 +393,11 @@ struct DiscoverView: View {
     private var sourceIssueBar: some View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(searchModel.sourceIssues, id: \.sourceID) { issue in
-                Label(issue.message, systemImage: "exclamationmark.triangle")
+                Label {
+                    Text(verbatim: issue.appDisplayMessage.resolved(locale: locale))
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
                     .lineLimit(2)
             }
         }
@@ -438,7 +453,7 @@ private struct PhotoSourceFilterBar: View {
         isEnabled: Bool
     ) -> some View {
         let isSelected = selection == option && isEnabled
-        let disabledHelp = option == .all
+        let disabledHelp: LocalizedStringKey = option == .all
             ? "没有在设置中启用可用的图片服务商"
             : "未在设置中启用"
 
@@ -450,7 +465,7 @@ private struct PhotoSourceFilterBar: View {
                     Image(systemName: "checkmark")
                         .font(.caption2.weight(.semibold))
                 }
-                Text(option.title)
+                Text(option.localizedTitle)
                     .font(.caption)
                     .lineLimit(1)
             }
@@ -483,7 +498,9 @@ private struct PhotoSourceFilterBar: View {
         .opacity(isEnabled ? 1 : 0.5)
         .help(isEnabled ? enabledHelp(for: option) : disabledHelp)
         .accessibilityLabel(
-            isEnabled ? option.title : "\(option.title)，\(disabledHelp)"
+            isEnabled
+                ? option.localizedTitle
+                : "\(Text(option.localizedTitle))，\(Text(disabledHelp))"
         )
         .accessibilityValue(
             isEnabled ? (isSelected ? "已选择" : "未选择") : disabledHelp
@@ -491,7 +508,9 @@ private struct PhotoSourceFilterBar: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func enabledHelp(for option: PhotoSourceFilterSelection) -> String {
-        option == .all ? "显示全部已启用来源" : "仅显示 \(option.title) 图片"
+    private func enabledHelp(for option: PhotoSourceFilterSelection) -> LocalizedStringKey {
+        option == .all
+            ? "显示全部已启用来源"
+            : "仅显示 \(Text(option.localizedTitle)) 图片"
     }
 }

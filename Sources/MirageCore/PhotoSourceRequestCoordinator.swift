@@ -26,14 +26,23 @@ struct CoordinatedPhotoSource: PhotoSourceSearching, Sendable {
         cursor: PhotoSourceCursor?,
         pageSize: Int
     ) async throws -> PhotoSourcePage {
-        try await coordinator.search(
-            source: source,
-            policy: policy,
-            query: query,
-            cursor: cursor,
-            pageSize: pageSize,
-            configurationPartition: configurationPartition
-        )
+        do {
+            return try await coordinator.search(
+                source: source,
+                policy: policy,
+                query: query,
+                cursor: cursor,
+                pageSize: pageSize,
+                configurationPartition: configurationPartition
+            )
+        } catch is PhotoSourceBatchStoreError {
+            // 存储细节不跨越 Core 边界；App 与 File Provider 统一收到可归类的来源故障。
+            throw PhotoSourceDeferredError(
+                sourceID: sourceID,
+                issueKind: .unavailable,
+                retryAt: nil
+            )
+        }
     }
 }
 
@@ -266,14 +275,22 @@ actor PhotoSourceRequestCoordinator {
         query: String,
         configurationPartition: String
     ) async throws {
-        _ = try await search(
-            source: source,
-            policy: policy.connectionTestPolicy(),
-            query: query,
-            cursor: nil,
-            pageSize: 1,
-            configurationPartition: configurationPartition
-        )
+        do {
+            _ = try await search(
+                source: source,
+                policy: policy.connectionTestPolicy(),
+                query: query,
+                cursor: nil,
+                pageSize: 1,
+                configurationPartition: configurationPartition
+            )
+        } catch is PhotoSourceBatchStoreError {
+            throw PhotoSourceDeferredError(
+                sourceID: source.sourceID,
+                issueKind: .unavailable,
+                retryAt: nil
+            )
+        }
     }
 
     private static func fetchBatch(

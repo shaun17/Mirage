@@ -8,6 +8,7 @@ struct PhotoSourceCredentialSettingsSection: View {
     let isTesting: Bool
     let onTestConnection: (PhotoSourceID) -> Void
 
+    @Environment(\.locale) private var locale
     @State private var showsCredential = false
 
     var body: some View {
@@ -26,7 +27,11 @@ struct PhotoSourceCredentialSettingsSection: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Text(isTesting ? "测试中" : "测试")
+                        if isTesting {
+                            Text("测试中")
+                        } else {
+                            Text("测试")
+                        }
                     }
                     .frame(minWidth: 52)
                 }
@@ -71,8 +76,8 @@ struct PhotoSourceCredentialSettingsSection: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .disabled(isWorking)
-            .help(showsCredential ? "隐藏 API Key" : "显示 API Key")
-            .accessibilityLabel(showsCredential ? "隐藏 API Key" : "显示 API Key")
+            .help(showsCredential ? Text("隐藏 API Key") : Text("显示 API Key"))
+            .accessibilityLabel(showsCredential ? Text("隐藏 API Key") : Text("显示 API Key"))
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, minHeight: 42)
@@ -98,7 +103,7 @@ struct PhotoSourceCredentialSettingsSection: View {
 
                 Link(destination: url) {
                     HStack(spacing: 5) {
-                        Text(credentialAcquisitionLabel)
+                        Text(LocalizedStringKey(credentialAcquisitionLabel))
                             .fontWeight(.semibold)
                         Image(systemName: "arrow.up.right")
                             .font(.caption.weight(.semibold))
@@ -117,13 +122,14 @@ struct PhotoSourceCredentialSettingsSection: View {
         }
     }
 
-    private func connectionStatus(_ message: String) -> some View {
+    private func connectionStatus(_ message: AppDisplayMessage) -> some View {
         let succeeded = model.successfulConnectionSourceIDs.contains(descriptor.id)
 
-        return Label(
-            message,
-            systemImage: succeeded ? "checkmark.circle.fill" : "info.circle"
-        )
+        return Label {
+            Text(verbatim: message.resolved(locale: locale))
+        } icon: {
+            Image(systemName: succeeded ? "checkmark.circle.fill" : "info.circle")
+        }
         .font(.caption)
         .foregroundStyle(succeeded ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
     }

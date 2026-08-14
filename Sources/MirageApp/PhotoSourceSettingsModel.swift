@@ -9,10 +9,10 @@ final class PhotoSourceSettingsModel: ObservableObject {
     @Published private(set) var snapshot = PhotoSourcePreferencesSnapshot()
     @Published private(set) var workingSourceIDs = Set<PhotoSourceID>()
     @Published private(set) var scheduledSourceIDs = Set<PhotoSourceID>()
-    @Published private(set) var connectionMessages: [PhotoSourceID: String] = [:]
+    @Published private(set) var connectionMessages: [PhotoSourceID: AppDisplayMessage] = [:]
     @Published private(set) var successfulConnectionSourceIDs = Set<PhotoSourceID>()
     @Published var credentialDrafts: [PhotoSourceID: String] = [:]
-    @Published var notice: String?
+    @Published var notice: AppDisplayMessage?
     @Published private var enabledSurfaceDrafts: [PhotoSourceID: Set<PhotoSourceSurface>] = [:]
     @Published private(set) var isLoading = false
 
@@ -73,7 +73,11 @@ final class PhotoSourceSettingsModel: ObservableObject {
                 }
             } catch {
                 didFail = true
-                notice = "无法读取 \(descriptor.displayName) API Key：\(error.localizedDescription)"
+                notice = .localized(
+                    "无法读取 %@ API Key：%@",
+                    .text(descriptor.displayName),
+                    .message(.error(error))
+                )
             }
         }
         guard !Task.isCancelled else { return }
@@ -143,7 +147,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
         guard !isLoading, workingSourceIDs.isEmpty else { return }
         guard let descriptor = PhotoSourceRegistry.descriptor(for: sourceID),
               descriptor.availability == .available else {
-            notice = "\(sourceName(sourceID)) 正在适配。"
+            notice = .localized("%@ 正在适配。", .text(sourceName(sourceID)))
             return
         }
 
@@ -157,7 +161,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
         do {
             try validateDraftConfiguration(for: descriptor)
         } catch {
-            notice = error.localizedDescription
+            notice = .error(error)
             return
         }
 
@@ -186,9 +190,14 @@ final class PhotoSourceSettingsModel: ObservableObject {
                         try await restoreCredential(previousCredential, for: sourceID)
                     } catch let restorationError {
                         let didReload = await reloadCredentialState(for: sourceID)
-                        notice = didReload
-                            ? "设置未保存，API Key 也无法恢复；已重新载入当前实际状态：\(restorationError.localizedDescription)"
-                            : "设置未保存，API Key 无法恢复且状态无法重新读取；请关闭设置后重试。"
+                        if didReload {
+                            notice = .localized(
+                                "设置未保存，API Key 也无法恢复；已重新载入当前实际状态：%@",
+                                .message(.error(restorationError))
+                            )
+                        } else {
+                            notice = "设置未保存，API Key 无法恢复且状态无法重新读取；请关闭设置后重试。"
+                        }
                         return
                     }
                 }
@@ -205,7 +214,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
                 await configurationDidChange(sourceID)
             }
         } catch {
-            notice = error.localizedDescription
+            notice = .error(error)
         }
     }
 
@@ -216,7 +225,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
               workingSourceIDs.isEmpty,
               scheduledSourceIDs.isEmpty else { return }
         guard PhotoSourceRegistry.descriptor(for: sourceID)?.availability == .available else {
-            notice = "\(sourceName(sourceID)) 正在适配。"
+            notice = .localized("%@ 正在适配。", .text(sourceName(sourceID)))
             return
         }
         let draft = normalizedCredentialDraft(for: sourceID)
@@ -239,7 +248,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
         } catch {
             guard shouldPublishTestResult(for: sourceID, testedDraft: draft) else { return }
             successfulConnectionSourceIDs.remove(sourceID)
-            connectionMessages[sourceID] = error.localizedDescription
+            connectionMessages[sourceID] = .error(error)
         }
     }
 
@@ -358,7 +367,7 @@ final class PhotoSourceSettingsModel: ObservableObject {
         do {
             try validateAllDraftConfigurations()
         } catch {
-            notice = error.localizedDescription
+            notice = .error(error)
             return
         }
 

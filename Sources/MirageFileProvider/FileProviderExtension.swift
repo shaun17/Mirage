@@ -131,7 +131,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         Self.logger.error(
             "拒绝创建：name=\(itemTemplate.filename, privacy: .public) parent=\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public) type=\(itemTemplate.contentType?.identifier ?? "-", privacy: .public) requester=\(request.requestingExecutable?.lastPathComponent ?? "-", privacy: .public)"
         )
-        completionHandler(nil, [], false, ProviderError.readOnly("创建条目"))
+        completionHandler(nil, [], false, ProviderError.readOnly(.createItem))
         progress.completedUnitCount = 1
         return progress
     }
@@ -147,7 +147,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         completionHandler: @escaping ((any NSFileProviderItem)?, NSFileProviderItemFields, Bool, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(nil, [], false, ProviderError.readOnly("修改条目"))
+        completionHandler(nil, [], false, ProviderError.readOnly(.modifyItem))
         progress.completedUnitCount = 1
         return progress
     }
@@ -161,7 +161,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(ProviderError.readOnly("删除条目"))
+        completionHandler(ProviderError.readOnly(.deleteItem))
         progress.completedUnitCount = 1
         return progress
     }

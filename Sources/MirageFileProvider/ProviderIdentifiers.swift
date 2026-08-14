@@ -269,6 +269,23 @@ struct RecordReference: Hashable, Sendable {
 
 /// 将内部错误收敛到 File Provider 接受的错误域。
 enum ProviderError {
+    enum ReadOnlyOperation {
+        case createItem
+        case modifyItem
+        case deleteItem
+
+        fileprivate var messageKey: String {
+            switch self {
+            case .createItem:
+                return "Mirage 为只读数据源，不能创建条目。"
+            case .modifyItem:
+                return "Mirage 为只读数据源，不能修改条目。"
+            case .deleteItem:
+                return "Mirage 为只读数据源，不能删除条目。"
+            }
+        }
+    }
+
     /// 未知条目必须返回 noSuchItem，系统据此清理陈旧占位符。
     static func noSuchItem(_ identifier: NSFileProviderItemIdentifier) -> Error {
         NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
@@ -284,11 +301,15 @@ enum ProviderError {
     /// 必须返回 `cannotSynchronize` 这个**终态**错误：早先返回 Cocoa 的
     /// `NSFileWriteNoPermissionError`，系统把它当成可重试失败，于是对同一批条目
     /// 每秒数次地反复调用 `createItem`，把缩略图请求彻底饿死——表现为目录里图片全黑。
-    static func readOnly(_ operation: String) -> Error {
+    static func readOnly(_ operation: ReadOnlyOperation) -> Error {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.cannotSynchronize.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "Mirage 为只读数据源，不能\(operation)。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    operation.messageKey
+                )
+            ]
         )
     }
 
@@ -297,7 +318,11 @@ enum ProviderError {
         NSError(
             domain: NSCocoaErrorDomain,
             code: NSFileReadUnsupportedSchemeError,
-            userInfo: [NSLocalizedDescriptionKey: "请求的条目是目录，不是可下载文件。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "请求的条目是目录，不是可下载文件。"
+                )
+            ]
         )
     }
 
@@ -320,7 +345,11 @@ enum ProviderError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.versionNoLongerAvailable.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "请求的头像版本已更新，旧版本不再可用。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "请求的头像版本已更新，旧版本不再可用。"
+                )
+            ]
         )
     }
 
@@ -329,7 +358,11 @@ enum ProviderError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.syncAnchorExpired.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "同步锚点已过期，需要重新枚举。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "同步锚点已过期，需要重新枚举。"
+                )
+            ]
         )
     }
 
@@ -338,7 +371,11 @@ enum ProviderError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.pageExpired.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "搜索分页位置已失效，请重新搜索。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "搜索分页位置已失效，请重新搜索。"
+                )
+            ]
         )
     }
 
@@ -347,7 +384,11 @@ enum ProviderError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.pageExpired.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "推荐分页位置已失效，请重新打开 Mirage。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "推荐分页位置已失效，请重新打开 Mirage。"
+                )
+            ]
         )
     }
 
@@ -356,7 +397,11 @@ enum ProviderError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.Code.pageExpired.rawValue,
-            userInfo: [NSLocalizedDescriptionKey: "推荐内容已刷新，请重新打开 Mirage 目录。"]
+            userInfo: [
+                NSLocalizedDescriptionKey: ProviderLocalization.current.string(
+                    "推荐内容已刷新，请重新打开 Mirage 目录。"
+                )
+            ]
         )
     }
 }

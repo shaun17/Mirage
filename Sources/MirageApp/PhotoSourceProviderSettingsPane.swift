@@ -53,7 +53,7 @@ struct PhotoSourceProviderSettingsPane: View {
                         .background(requirementColor.opacity(0.10), in: Capsule())
                 }
 
-                Text(descriptor.summary)
+                Text(LocalizedStringKey(descriptor.summary))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -124,9 +124,9 @@ struct PhotoSourceProviderSettingsPane: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .disabled(isWorking || enableRequiresCredential)
-                    .help(enableRequiresCredential ? "请先填写 API Key" : "")
+                    .help(enableRequiresCredential ? Text("请先填写 API Key") : Text(""))
                     .accessibilityLabel("\(descriptor.displayName)，启用此数据源")
-                    .accessibilityHint(enableRequiresCredential ? "请先填写 API Key" : "")
+                    .accessibilityHint(enableRequiresCredential ? Text("请先填写 API Key") : Text(""))
             }
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 72)
@@ -150,7 +150,7 @@ struct PhotoSourceProviderSettingsPane: View {
         .frame(maxWidth: .infinity, minHeight: 240)
     }
 
-    private var requirementLabel: String {
+    private var requirementLabel: LocalizedStringKey {
         switch descriptor.availability {
         case .adapting: return "正在适配"
         case .available:
@@ -162,7 +162,7 @@ struct PhotoSourceProviderSettingsPane: View {
         descriptor.availability == .available ? .accentColor : .secondary
     }
 
-    private var usageDescription: String {
+    private var usageDescription: LocalizedStringKey {
         if descriptor.supports(.app), descriptor.supports(.fileProvider) {
             return "在搜索、下载和 Finder 中使用 \(descriptor.displayName)"
         }
