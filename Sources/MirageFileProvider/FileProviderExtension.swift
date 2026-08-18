@@ -19,6 +19,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     let tasks = ProviderTaskBag()
     let searchService: ImageSearchService
     let searchCache = ProviderSearchCache()
+    /// Finder 冷启动会同时提交多批缩略图请求；扩展实例内统一限制总下载并发。
+    let thumbnailLoadGate = ProviderThumbnailLoadGate(maximumConcurrentLoads: 4)
 
     /// 每个系统域建立独立扩展实例，并保存对应 manager。
     required init(domain: NSFileProviderDomain) {

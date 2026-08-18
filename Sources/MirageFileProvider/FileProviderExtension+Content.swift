@@ -122,22 +122,24 @@ extension FileProviderExtension {
         let relay = ProviderTaskRelay()
         let operationID = UUID()
         tasks.insert(relay, id: operationID)
-        let task = Task { [repository, tasks, relay] in
+        let task = Task { [repository, tasks, relay, thumbnailLoadGate] in
             defer { tasks.remove(id: operationID) }
             let finished = await ProviderThumbnailBatch.run(
                 identifiers: itemIdentifiers,
                 maximumConcurrency: 4,
                 fetch: { identifier in
-                    guard let record = try await repository.record(for: identifier) else {
-                        throw ProviderError.noSuchItem(identifier)
+                    try await thumbnailLoadGate.withPermit {
+                        guard let record = try await repository.record(for: identifier) else {
+                            throw ProviderError.noSuchItem(identifier)
+                        }
+                        try Task.checkCancellation()
+                        let data = try await repository.imageData(
+                            at: record.thumbnailURL,
+                            maximumBytes: 5 * 1024 * 1024
+                        )
+                        try Task.checkCancellation()
+                        return try Self.thumbnailData(from: data, requestedSize: size)
                     }
-                    try Task.checkCancellation()
-                    let data = try await repository.imageData(
-                        at: record.thumbnailURL,
-                        maximumBytes: 5 * 1024 * 1024
-                    )
-                    try Task.checkCancellation()
-                    return try Self.thumbnailData(from: data, requestedSize: size)
                 },
                 deliver: { identifier, result in
                     deliveryLock.withLock {

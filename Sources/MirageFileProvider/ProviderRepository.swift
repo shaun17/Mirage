@@ -4,6 +4,11 @@ import Foundation
 
 /// 将扩展需要的数据视图隔离在单一适配器中，并复用 Core 的共享推荐仓库。
 actor ProviderRepository: ProviderSearchResultStoring {
+    /// 冷启动没有推荐快照时，预算需覆盖系统代理故障切换与一次真实远端响应。
+    private static let coldStartDiscoveryTimeout: Duration = .seconds(30)
+    /// Finder 无缩略图缓存时会直接访问 CDN；给代理切换保留余量，同时保持请求有界。
+    private static let remoteImageTimeout: TimeInterval = 30
+
     private let storage: AppGroupStorage?
     private let manager: NSFileProviderManager?
     private let discoveryFeed: (any DiscoveryFeedProviding)?
@@ -876,7 +881,11 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 throw DownloadError.invalidResponse
             }
         }
-        return try await BoundedDownloader(url: url, maximumBytes: maximumBytes).download()
+        return try await BoundedDownloader(
+            url: url,
+            maximumBytes: maximumBytes,
+            timeoutInterval: Self.remoteImageTimeout
+        ).download()
     }
 
     /// 成功物化图片后记录最近使用，底层元数据继续保留供其他 occurrence 和在途请求使用。
@@ -1100,7 +1109,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
             service: service,
             diceBear: avatarProvider,
             // The Met 需要先查 ID、再并发读取作品详情；给单页完整预算，避免合法来源被短超时误判为空。
-            networkTimeout: .seconds(15),
+            networkTimeout: Self.coldStartDiscoveryTimeout,
             catalogKey: { [photoEnvironment, filterKey] in
                 let sourceKey = await photoEnvironment.recommendationCatalogKey(
                     for: .fileProvider

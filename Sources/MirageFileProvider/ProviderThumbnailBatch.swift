@@ -1,6 +1,64 @@
 @preconcurrency import FileProvider
 import Foundation
 
+/// File Provider 可能同时发起多批缩略图请求；所有批次共用这个取消安全许可池。
+///
+/// 单个 `ProviderThumbnailBatch` 的并发上限只约束一批请求。Finder 冷启动且没有缩略图缓存时，
+/// 会并行提交多批请求，如果没有跨批次上限，扩展会瞬间建立几十条独立网络连接。
+actor ProviderThumbnailLoadGate {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private let maximumConcurrentLoads: Int
+    private var activeLoads = 0
+    private var waiters: [Waiter] = []
+
+    init(maximumConcurrentLoads: Int) {
+        self.maximumConcurrentLoads = max(maximumConcurrentLoads, 1)
+    }
+
+    func withPermit<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        guard activeLoads >= maximumConcurrentLoads else {
+            activeLoads += 1
+            return
+        }
+
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(Waiter(id: id, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
+    }
+
+    private func release() {
+        if !waiters.isEmpty {
+            waiters.removeFirst().continuation.resume()
+        } else {
+            activeLoads = max(activeLoads - 1, 0)
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+}
+
 /// 把一批缩略图请求变成有界并发的下载。
 ///
 /// 系统每批请求约 8 张可见项的缩略图：串行逐张会让一整行图标等满一轮轮网络往返，

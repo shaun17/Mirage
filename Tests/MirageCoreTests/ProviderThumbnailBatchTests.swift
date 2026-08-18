@@ -44,6 +44,93 @@ final class ProviderThumbnailBatchTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(gauge.maxObserved, 2, "批次必须真正并行")
     }
 
+    /// Finder 冷启动会并行提交多批请求；跨批次也必须共享同一个总并发上限。
+    func testSharedLoadGateBoundsConcurrentBatches() async {
+        let gate = ProviderThumbnailLoadGate(maximumConcurrentLoads: 4)
+        let gauge = ConcurrencyGauge()
+
+        let results = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+            for batch in 0..<3 {
+                group.addTask {
+                    await ProviderThumbnailBatch.run(
+                        identifiers: Self.identifiers((batch * 8)..<((batch + 1) * 8)),
+                        maximumConcurrency: 4,
+                        fetch: { identifier in
+                            try await gate.withPermit {
+                                gauge.enter()
+                                defer { gauge.exit() }
+                                try await Task.sleep(for: .milliseconds(60))
+                                return Data(identifier.rawValue.utf8)
+                            }
+                        },
+                        deliver: { _, _ in }
+                    )
+                }
+            }
+
+            var values: [Bool] = []
+            for await result in group { values.append(result) }
+            return values
+        }
+
+        XCTAssertEqual(results, [true, true, true])
+        XCTAssertLessThanOrEqual(gauge.maxObserved, 4, "多批请求的总并发不能超过扩展上限")
+        XCTAssertGreaterThanOrEqual(gauge.maxObserved, 2, "许可池仍应允许并行下载")
+    }
+
+    /// 排队请求被 Finder 取消后必须退出等待，且不能占住后续请求所需的许可。
+    func testSharedLoadGateRecoversAfterQueuedRequestIsCancelled() async {
+        let gate = ProviderThumbnailLoadGate(maximumConcurrentLoads: 1)
+        let holderStarted = AsyncLatch()
+        let releaseHolder = AsyncLatch()
+
+        let holder = Task {
+            try await gate.withPermit {
+                await holderStarted.open()
+                await releaseHolder.wait()
+                return Data("holder".utf8)
+            }
+        }
+        await holderStarted.wait()
+
+        let queued = Task {
+            try await gate.withPermit { Data("queued".utf8) }
+        }
+        try? await Task.sleep(for: .milliseconds(60))
+        queued.cancel()
+
+        do {
+            _ = try await queued.value
+            XCTFail("排队请求取消后不应执行")
+        } catch is CancellationError {
+            // 预期路径：取消的 waiter 从队列移除并以取消错误结束。
+        } catch {
+            XCTFail("排队请求应以 CancellationError 结束：\(error)")
+        }
+
+        await releaseHolder.open()
+        do {
+            _ = try await holder.value
+        } catch {
+            XCTFail("持有许可的请求不应失败：\(error)")
+        }
+
+        let recovered = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+            group.addTask {
+                (try? await gate.withPermit { true }) ?? false
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(1))
+                return false
+            }
+
+            let firstResult = await group.next() ?? false
+            group.cancelAll()
+            return firstResult
+        }
+        XCTAssertTrue(recovered, "取消 waiter 后许可池必须继续服务后续请求")
+    }
+
     /// 单张图片失败只影响它自己的回调，其余条目照常交付，批次整体仍算完成。
     func testSingleFailureDoesNotStopBatch() async {
         let identifiers = Self.identifiers(0..<6)
@@ -156,5 +243,26 @@ private final class ConcurrencyGauge: @unchecked Sendable {
 
     var maxObserved: Int {
         lock.withLock { peak }
+    }
+}
+
+/// 测试用一次性异步门闩，避免依赖生产代码内部计数来协调并发顺序。
+private actor AsyncLatch {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
     }
 }
