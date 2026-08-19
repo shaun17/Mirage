@@ -2,6 +2,33 @@ import MirageCore
 import FileProvider
 import Foundation
 
+enum ProviderImageRepresentation: Sendable, Equatable {
+    case content
+    case thumbnail
+
+    /// 优先使用与系统请求匹配的地址；同一候选的另一个地址作为失效或损坏时的兜底。
+    func urls(for record: RemoteImageRecord) -> [URL] {
+        switch self {
+        case .content:
+            return record.imageURL == record.thumbnailURL
+                ? [record.imageURL]
+                : [record.imageURL, record.thumbnailURL]
+        case .thumbnail:
+            return record.imageURL == record.thumbnailURL
+                ? [record.thumbnailURL]
+                : [record.thumbnailURL, record.imageURL]
+        }
+    }
+}
+
+typealias ProviderRemoteImageLoading = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> Data
+
+struct ProviderResolvedImageData: Sendable {
+    let data: Data
+    /// 远程候选成功时记录其权威元数据；本地副本没有来源 sidecar，不能猜测后写回 Recent。
+    let recordForRecent: RemoteImageRecord?
+}
+
 /// 将扩展需要的数据视图隔离在单一适配器中，并复用 Core 的共享推荐仓库。
 actor ProviderRepository: ProviderSearchResultStoring {
     /// 冷启动没有推荐快照时，预算需覆盖系统代理故障切换与一次真实远端响应。
@@ -16,7 +43,13 @@ actor ProviderRepository: ProviderSearchResultStoring {
     private let sourcePreferences: (any PhotoSourcePreferencesReading)?
     private let photoEnvironment: PhotoSearchEnvironment?
     private let filterPreferences: DiscoveryFilterPreferencesStore?
+    private let remoteImageLoader: ProviderRemoteImageLoading
     private var filteredDiscoveryFeeds: [String: DiscoveryFeedRepository] = [:]
+
+    /// 收藏副本的真实内容摘要进入版本，重建或修复时 Finder 不会继续复用旧失败状态。
+    private static func favoriteRenditionContentVersion(_ hash: String?) -> String? {
+        hash.map { "favorite-rendition-v1:\($0)" }
+    }
 
     /// Finder 头像分页按绝对 offset 生成；每次调用仍受头像协议单次 20 条限制。
     private static let avatarChunkSize = 20
@@ -36,6 +69,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         self.discoveryFeed = nil
         self.photoEnvironment = environment
         self.filterPreferences = filterPreferences
+        self.remoteImageLoader = Self.defaultRemoteImageLoader
     }
 
     /// 测试注入共享存储与推荐仓库，验证 File Provider 位置语义而不访问真实 App Group。
@@ -45,7 +79,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
         discoveryFeed: any DiscoveryFeedProviding,
         diceBear: any AvatarProviding = AvatarCatalogClient(includesPicrewDiscovery: true),
         sourcePreferences: (any PhotoSourcePreferencesReading)? = nil,
-        filterPreferences: DiscoveryFilterPreferencesStore? = nil
+        filterPreferences: DiscoveryFilterPreferencesStore? = nil,
+        remoteImageLoader: @escaping ProviderRemoteImageLoading = ProviderRepository.defaultRemoteImageLoader
     ) {
         self.storage = storage
         self.manager = manager
@@ -54,6 +89,7 @@ actor ProviderRepository: ProviderSearchResultStoring {
         self.sourcePreferences = sourcePreferences
         self.photoEnvironment = nil
         self.filterPreferences = filterPreferences
+        self.remoteImageLoader = remoteImageLoader
     }
 
     /// 推荐仓库只运行结构化调用任务，扩展失效时无需维护额外游离任务。
@@ -690,7 +726,8 @@ actor ProviderRepository: ProviderSearchResultStoring {
         try Task.checkCancellation()
         guard let occurrence else { return nil }
         if reference.view == .favorite {
-            return await isAvailableFavoriteInFileProvider(occurrence.record) ? occurrence : nil
+            guard await isAvailableFavoriteInFileProvider(occurrence.record) else { return nil }
+            return try await occurrenceWithFavoriteRenditionVersion(occurrence, storage: storage)
         }
         // 头像 scope 已由当前筛选、来源命名空间和已发布成员共同授权；Picrew 仍不进入
         // 普通图片、搜索或最近使用目录。
@@ -702,7 +739,24 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 return nil
             }
         }
-        return occurrence
+        guard reference.view == .recent else { return occurrence }
+        return try await occurrenceWithFavoriteRenditionVersion(occurrence, storage: storage)
+    }
+
+    private func occurrenceWithFavoriteRenditionVersion(
+        _ occurrence: ProviderOccurrence,
+        storage: AppGroupStorage
+    ) async throws -> ProviderOccurrence {
+        let renditionVersion = try await storage.favoriteRenditionVersion(
+            id: occurrence.record.id
+        )
+        return ProviderOccurrence(
+            reference: occurrence.reference,
+            record: occurrence.record,
+            lastUsedDate: occurrence.lastUsedDate,
+            discoveryGeneration: occurrence.discoveryGeneration,
+            contentVersionToken: Self.favoriteRenditionContentVersion(renditionVersion)
+        )
     }
 
     /// 每次从持久化搜索快照恢复，确保其他扩展进程的最新原子提交不会被内存缓存遮蔽。
@@ -717,7 +771,9 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 最近使用条目保持 Core 中的访问时间倒序。
     func recentItems() async throws -> [ProviderItem] {
         try Task.checkCancellation()
-        let records = try await requireStorage().readRecent()
+        let storage = try requireStorage()
+        let records = try await storage.readRecent()
+        let renditionVersions = try await storage.favoriteRenditionVersions()
         try Task.checkCancellation()
         let enabledSourceIDs = await enabledFinderPhotoSourceIDs()
         var items: [ProviderItem] = []
@@ -727,7 +783,10 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 ProviderItem(
                     record: record.image,
                     view: .recent,
-                    lastUsedDate: record.accessedAt
+                    lastUsedDate: record.accessedAt,
+                    contentVersionToken: Self.favoriteRenditionContentVersion(
+                        renditionVersions[record.id]
+                    )
                 )
             )
         }
@@ -737,14 +796,24 @@ actor ProviderRepository: ProviderSearchResultStoring {
     /// 收藏不再受来源开关过滤；只排除无法在 Finder 中合法、稳定物化的内容。
     func favoriteItems() async throws -> [ProviderItem] {
         try Task.checkCancellation()
-        let records = try await requireStorage().readFavoriteRecords()
+        let storage = try requireStorage()
+        let records = try await storage.readFavoriteRecords()
+        let renditionVersions = try await storage.favoriteRenditionVersions()
         try Task.checkCancellation()
         var available: [RemoteImageRecord] = []
         available.reserveCapacity(records.count)
         for record in records where await isAvailableFavoriteInFileProvider(record) {
             available.append(record)
         }
-        return available.map { ProviderItem(record: $0, view: .favorite) }
+        return available.map {
+            ProviderItem(
+                record: $0,
+                view: .favorite,
+                contentVersionToken: Self.favoriteRenditionContentVersion(
+                    renditionVersions[$0.id]
+                )
+            )
+        }
     }
 
     /// 测试注入未提供设置时保持历史语义；生产环境严格隐藏未获 File Provider 授权的来源。
@@ -861,6 +930,144 @@ actor ProviderRepository: ProviderSearchResultStoring {
         }
     }
 
+    /// Recent 与 Favorites 虽是不同 occurrence，但同一稳定记录优先复用 App Group 收藏副本。
+    /// 收藏旧 URL 失效时，最近一次成功物化的记录与共享 item 可作为回填候选。
+    func imageData(
+        for identifier: NSFileProviderItemIdentifier,
+        record: RemoteImageRecord,
+        representation: ProviderImageRepresentation,
+        maximumBytes: Int
+    ) async throws -> ProviderResolvedImageData {
+        try Task.checkCancellation()
+        let storage = try requireStorage()
+        let reference = ProviderIdentifiers.recordReference(from: identifier)
+        let usesFavoriteRendition = reference?.view == .favorite || reference?.view == .recent
+        if usesFavoriteRendition,
+           record.source.allowsMediaCaching,
+           let cached = try? await storage.readFavoriteRendition(
+               id: record.id,
+               maximumBytes: maximumBytes
+           ) {
+            return ProviderResolvedImageData(
+                data: cached,
+                recordForRecent: await recentRecordForCachedRendition(
+                    occurrenceRecord: record,
+                    storage: storage
+                )
+            )
+        }
+
+        let candidates = await imageRecordCandidates(
+            for: reference,
+            occurrenceRecord: record,
+            storage: storage
+        )
+        let favoriteAuthorityRecord: RemoteImageRecord?
+        if usesFavoriteRendition, record.source.allowsMediaCaching {
+            favoriteAuthorityRecord = (try? await storage.readFavoriteRecords())?
+                .first(where: { $0.id == record.id && $0.source == record.source })
+        } else {
+            favoriteAuthorityRecord = nil
+        }
+        var attemptedURLs = Set<URL>()
+        var finalError: Error = DownloadError.invalidResponse
+        for candidate in candidates where candidate.id == record.id && candidate.source == record.source {
+            for url in representation.urls(for: candidate) {
+                guard attemptedURLs.insert(url).inserted else { continue }
+                do {
+                    let data = try await imageData(at: url, maximumBytes: maximumBytes)
+                    let rendition = try await standardizedRendition(
+                        from: data,
+                        maximumBytes: maximumBytes,
+                        maximumPixels: representation == .thumbnail
+                            ? 50_000_000
+                            : ImageTranscoder.defaultMaximumPixels
+                    )
+                    try Task.checkCancellation()
+                    // 长期副本只接受该候选的原图；独立缩略图 URL 只用于本次回调，避免低清结果永久抢占。
+                    if representation == .content,
+                       url == candidate.imageURL,
+                       let favoriteAuthorityRecord {
+                        _ = try? await storage.commitFavoriteRenditionIfFavorited(
+                            rendition,
+                            for: favoriteAuthorityRecord
+                        )
+                    }
+                    return ProviderResolvedImageData(data: data, recordForRecent: candidate)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    finalError = error
+                }
+            }
+        }
+        throw finalError
+    }
+
+    /// 本地副本没有 URL sidecar；Recent 记账使用当前已知的最新同 ID 元数据，避免把旧收藏 URL 写回。
+    private func recentRecordForCachedRendition(
+        occurrenceRecord: RemoteImageRecord,
+        storage: AppGroupStorage
+    ) async -> RemoteImageRecord {
+        if let current = try? await storage.readItem(id: occurrenceRecord.id),
+           current.id == occurrenceRecord.id,
+           current.source == occurrenceRecord.source {
+            return current
+        }
+        if let recentRecords = try? await storage.readRecent(),
+           let recent = recentRecords.first(where: {
+               $0.id == occurrenceRecord.id && $0.image.source == occurrenceRecord.source
+           }) {
+            return recent.image
+        }
+        return occurrenceRecord
+    }
+
+    /// Favorite 优先采用带成功访问时间的 Recent 记录，避免先等待已知可能过期的冻结 URL。
+    private func imageRecordCandidates(
+        for reference: RecordReference?,
+        occurrenceRecord: RemoteImageRecord,
+        storage: AppGroupStorage
+    ) async -> [RemoteImageRecord] {
+        var candidates: [RemoteImageRecord] = []
+        if reference?.view == .favorite {
+            if let recentRecords = try? await storage.readRecent(),
+               let recent = recentRecords.first(where: { $0.id == occurrenceRecord.id }) {
+                candidates.append(recent.image)
+            }
+            if let current = try? await storage.readItem(id: occurrenceRecord.id) {
+                candidates.append(current)
+            }
+            candidates.append(occurrenceRecord)
+        } else {
+            candidates.append(occurrenceRecord)
+            if let current = try? await storage.readItem(id: occurrenceRecord.id) {
+                candidates.append(current)
+            }
+        }
+        return candidates
+    }
+
+    /// 下载成功不等于图片有效；在返回前完成受限解码，让损坏候选继续回退后续 URL。
+    private func standardizedRendition(
+        from data: Data,
+        maximumBytes: Int,
+        maximumPixels: Int
+    ) async throws -> Data {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try ImageTranscoder(
+                maximumBytes: maximumBytes,
+                maximumPixels: maximumPixels
+            ).transcode(data)
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     /// 远程来源继续走有界 HTTPS 下载；动态人像只能从已冻结的 App Group 快照读取。
     func imageData(at url: URL, maximumBytes: Int) async throws -> Data {
         if url.scheme == AvatarSnapshotReference.scheme {
@@ -881,10 +1088,14 @@ actor ProviderRepository: ProviderSearchResultStoring {
                 throw DownloadError.invalidResponse
             }
         }
-        return try await BoundedDownloader(
+        return try await remoteImageLoader(url, maximumBytes)
+    }
+
+    fileprivate static let defaultRemoteImageLoader: ProviderRemoteImageLoading = { url, maximumBytes in
+        try await BoundedDownloader(
             url: url,
             maximumBytes: maximumBytes,
-            timeoutInterval: Self.remoteImageTimeout
+            timeoutInterval: ProviderRepository.remoteImageTimeout
         ).download()
     }
 
@@ -1172,18 +1383,21 @@ struct ProviderOccurrence: Sendable {
     let record: RemoteImageRecord
     let lastUsedDate: Date?
     let discoveryGeneration: UInt64?
+    let contentVersionToken: String?
 
     /// 非 recent 视图没有独立的最近使用时间。
     init(
         reference: RecordReference,
         record: RemoteImageRecord,
         lastUsedDate: Date? = nil,
-        discoveryGeneration: UInt64? = nil
+        discoveryGeneration: UInt64? = nil,
+        contentVersionToken: String? = nil
     ) {
         self.reference = reference
         self.record = record
         self.lastUsedDate = lastUsedDate
         self.discoveryGeneration = discoveryGeneration
+        self.contentVersionToken = contentVersionToken
     }
 }
 

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// File Provider 树中可枚举、可下载但不可修改的条目。
 final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     /// 转码规则变化时必须推进内容版本，使 Finder 丢弃旧缩略图与物化文件。
-    private static let transcodingAlgorithmVersion = "center-crop-png-512-fixed-1.25m-v5"
+    private static let transcodingAlgorithmVersion = "center-crop-png-512-fixed-1.25m-v6"
     /// 能力变化必须进入元数据版本，系统才能刷新占位文件的可回收标记。
     private static let capabilitySchemaVersion = "read-content-policy-lazy-v1"
 
@@ -70,14 +70,16 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         view: ProviderView,
         lastUsedDate: Date? = nil,
         documentSize: NSNumber? = nil,
-        discoveryGeneration: UInt64? = nil
+        discoveryGeneration: UInt64? = nil,
+        contentVersionToken: String? = nil
     ) {
         self.init(
             record: record,
             reference: RecordReference(recordID: record.id, view: view),
             lastUsedDate: lastUsedDate,
             documentSize: documentSize,
-            discoveryGeneration: discoveryGeneration
+            discoveryGeneration: discoveryGeneration,
+            contentVersionToken: contentVersionToken
         )
     }
 
@@ -87,7 +89,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
         reference: RecordReference,
         lastUsedDate: Date? = nil,
         documentSize: NSNumber? = nil,
-        discoveryGeneration: UInt64? = nil
+        discoveryGeneration: UInt64? = nil,
+        contentVersionToken: String? = nil
     ) {
         itemIdentifier = reference.itemIdentifier
         parentItemIdentifier = reference.parentItemIdentifier
@@ -109,7 +112,8 @@ final class ProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
                 record.mimeType ?? "",
                 record.width.map(String.init) ?? "",
                 record.height.map(String.init) ?? "",
-                Self.transcodingAlgorithmVersion
+                Self.transcodingAlgorithmVersion,
+                contentVersionToken ?? ""
             ].joined(separator: "|"),
             metadata: [
                 Self.filename(for: record),

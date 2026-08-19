@@ -132,6 +132,221 @@ final class AppGroupStorageTests: XCTestCase {
         XCTAssertNil(persistedPageAfterReset)
     }
 
+    /// 收藏标准副本按稳定 ID 落盘，并可由指向同一 App Group 的另一个 storage 实例读取。
+    func testFavoriteRenditionPersistsAcrossStorageInstances() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(41)
+        let rendition = try Self.favoriteRenditionPNG()
+        _ = try await firstStorage.toggleFavorite(favorite)
+
+        let committed = try await firstStorage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        let restored = try await secondStorage.readFavoriteRendition(id: favorite.id)
+        let versions = try await secondStorage.favoriteRenditionVersions()
+        let singleVersion = try await secondStorage.favoriteRenditionVersion(id: favorite.id)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: temporaryURL.appendingPathComponent("favorite-renditions-v1", isDirectory: true),
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "png" }
+
+        XCTAssertTrue(committed)
+        XCTAssertEqual(restored, rendition)
+        XCTAssertEqual(versions[favorite.id], StableImageID.dataHash(rendition))
+        XCTAssertEqual(singleVersion, versions[favorite.id])
+        XCTAssertEqual(files.count, 1)
+        let key = files[0].deletingPathExtension().lastPathComponent
+        XCTAssertEqual(key.count, 64)
+        XCTAssertTrue(key.allSatisfy { $0.isHexDigit && !$0.isUppercase })
+        XCTAssertFalse(files[0].lastPathComponent.contains(favorite.id))
+    }
+
+    /// toggle 与幂等 remove 都必须删除副本；取消后的迟到下载不得重新写回文件。
+    func testRemovingFavoriteDeletesRenditionAndRejectsLateCommit() async throws {
+        let firstStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let secondStorage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(42)
+        let rendition = try Self.favoriteRenditionPNG()
+        _ = try await firstStorage.toggleFavorite(favorite)
+        let initialCommit = try await firstStorage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        XCTAssertTrue(initialCommit)
+
+        _ = try await secondStorage.toggleFavorite(favorite)
+
+        let afterToggleRemoval = try await firstStorage.readFavoriteRendition(id: favorite.id)
+        let lateCommit = try await firstStorage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        XCTAssertNil(afterToggleRemoval)
+        XCTAssertFalse(lateCommit)
+
+        _ = try await firstStorage.toggleFavorite(favorite)
+        let recommitted = try await firstStorage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        XCTAssertTrue(recommitted)
+        _ = try await secondStorage.removeFavorite(id: favorite.id)
+        _ = try await firstStorage.removeFavorite(id: favorite.id)
+
+        let afterDirectRemoval = try await secondStorage.readFavoriteRendition(id: favorite.id)
+        XCTAssertNil(afterDirectRemoval)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: temporaryURL.appendingPathComponent("favorite-renditions-v1", isDirectory: true),
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "png" }
+        XCTAssertTrue(files.isEmpty)
+    }
+
+    /// 同 ID 在取消后重新收藏了新快照时，旧下载任务不能抢先占用新收藏的本地副本。
+    func testLateCommitFromOlderFavoriteSnapshotCannotPopulateReaddedFavorite() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let oldFavorite = Self.record(45)
+        let refreshedFavorite = RemoteImageRecord(
+            id: oldFavorite.id,
+            title: oldFavorite.title,
+            source: oldFavorite.source,
+            imageURL: URL(string: "https://example.com/refreshed-full.jpg")!,
+            thumbnailURL: URL(string: "https://example.com/refreshed-thumb.jpg")!,
+            license: oldFavorite.license,
+            width: oldFavorite.width,
+            height: oldFavorite.height,
+            mimeType: oldFavorite.mimeType
+        )
+        _ = try await storage.toggleFavorite(oldFavorite)
+        _ = try await storage.removeFavorite(id: oldFavorite.id)
+        _ = try await storage.toggleFavorite(refreshedFavorite)
+
+        let staleCommit = try await storage.commitFavoriteRenditionIfFavorited(
+            try Self.favoriteRenditionPNG(),
+            for: oldFavorite
+        )
+        let availableIDsBeforeFreshCommit = try await storage.favoriteRenditionIDs()
+        let freshCommit = try await storage.commitFavoriteRenditionIfFavorited(
+            try Self.favoriteRenditionPNG(),
+            for: refreshedFavorite
+        )
+        let availableIDsAfterFreshCommit = try await storage.favoriteRenditionIDs()
+
+        XCTAssertFalse(staleCommit)
+        XCTAssertFalse(availableIDsBeforeFreshCommit.contains(oldFavorite.id))
+        XCTAssertTrue(freshCommit)
+        XCTAssertTrue(availableIDsAfterFreshCommit.contains(oldFavorite.id))
+    }
+
+    /// GIPHY 收藏允许保存对象 ID，但来源策略禁止任何媒体副本落盘。
+    func testGiphyFavoriteRejectsRenditionPersistence() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let giphyID = "rendition-policy"
+        let favorite = RemoteImageRecord(
+            id: StableImageID.giphy(id: giphyID),
+            title: "GIPHY Favorite",
+            source: .giphy,
+            giphyContentType: .gif,
+            giphyID: giphyID,
+            imageURL: URL(string: "https://media1.giphy.com/media/rendition-policy/giphy.gif")!,
+            thumbnailURL: URL(string: "https://media1.giphy.com/media/rendition-policy/200w.gif")!,
+            sourcePageURL: URL(string: "https://giphy.com/gifs/rendition-policy")!,
+            license: .giphy,
+            mimeType: "image/gif"
+        )
+        _ = try await storage.toggleFavorite(favorite)
+
+        let committed = try await storage.commitFavoriteRenditionIfFavorited(
+            try Self.favoriteRenditionPNG(),
+            for: favorite
+        )
+
+        XCTAssertFalse(committed)
+        let stored = try await storage.readFavoriteRendition(id: favorite.id)
+        XCTAssertNil(stored)
+        let renditionDirectory = temporaryURL.appendingPathComponent(
+            "favorite-renditions-v1",
+            isDirectory: true
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: renditionDirectory.path))
+    }
+
+    /// File Provider 域重建只清理可再生成目录，不得删除用户收藏的本地标准副本。
+    func testResetFileProviderGeneratedCachesPreservesFavoriteRendition() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(43)
+        let rendition = try Self.favoriteRenditionPNG()
+        _ = try await storage.toggleFavorite(favorite)
+        let committed = try await storage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        XCTAssertTrue(committed)
+
+        try await storage.resetFileProviderGeneratedCaches()
+
+        let restored = try await storage.readFavoriteRendition(id: favorite.id)
+        XCTAssertEqual(restored, rendition)
+    }
+
+    /// 提交和读取都执行硬大小上限与 PNG 边界校验，损坏数据不得进入共享缓存。
+    func testFavoriteRenditionValidatesPNGAndMaximumBytes() async throws {
+        let storage = try AppGroupStorage(baseURL: temporaryURL)
+        let favorite = Self.record(44)
+        _ = try await storage.toggleFavorite(favorite)
+
+        do {
+            _ = try await storage.commitFavoriteRenditionIfFavorited(
+                Data("not-png".utf8),
+                for: favorite
+            )
+            XCTFail("损坏图片不应进入收藏副本")
+        } catch {
+            XCTAssertEqual(error as? FavoriteRenditionStorageError, .invalidPNG)
+        }
+
+        let tooLarge = Data(
+            repeating: 0,
+            count: AppGroupStorage.maximumFavoriteRenditionBytes + 1
+        )
+        do {
+            _ = try await storage.commitFavoriteRenditionIfFavorited(tooLarge, for: favorite)
+            XCTFail("超出上限的图片不应进入收藏副本")
+        } catch {
+            XCTAssertEqual(
+                error as? FavoriteRenditionStorageError,
+                .dataTooLarge(
+                    actualBytes: tooLarge.count,
+                    maximumBytes: AppGroupStorage.maximumFavoriteRenditionBytes
+                )
+            )
+        }
+
+        let rendition = try Self.favoriteRenditionPNG()
+        let committed = try await storage.commitFavoriteRenditionIfFavorited(
+            rendition,
+            for: favorite
+        )
+        XCTAssertTrue(committed)
+        do {
+            _ = try await storage.readFavoriteRendition(
+                id: favorite.id,
+                maximumBytes: rendition.count - 1
+            )
+            XCTFail("读取也必须执行调用方给出的大小上限")
+        } catch {
+            XCTAssertEqual(
+                error as? FavoriteRenditionStorageError,
+                .dataTooLarge(
+                    actualBytes: rendition.count,
+                    maximumBytes: rendition.count - 1
+                )
+            )
+        }
+    }
+
     /// 删除 items 前必须把旧 ID-only 收藏与搜索快照迁移到各自的权威存储。
     func testResetFileProviderGeneratedCachesMigratesLegacyUserState() async throws {
         let storage = try AppGroupStorage(baseURL: temporaryURL)
@@ -1240,6 +1455,14 @@ final class AppGroupStorageTests: XCTestCase {
             mimeType: "image/png"
         )
     }
+
+    private static func favoriteRenditionPNG() throws -> Data {
+        try ImageTranscoder().transcode(sourcePNG)
+    }
+
+    private static let sourcePNG = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )!
 
     /// 模拟旧版只保存 recordIDs 的搜索 backing 文件。
     private struct LegacySearchBackingFixture: Encodable {

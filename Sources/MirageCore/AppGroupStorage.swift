@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import ImageIO
 
 /// 发现页快照的来源；网络失败时明确标记为确定性兜底数据。
 public enum DiscoveryFeedSource: String, Codable, Equatable, Sendable {
@@ -269,6 +270,20 @@ public enum FavoriteStorageError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
+public enum FavoriteRenditionStorageError: Error, LocalizedError, Equatable, Sendable {
+    case dataTooLarge(actualBytes: Int, maximumBytes: Int)
+    case invalidPNG
+
+    public var errorDescription: String? {
+        switch self {
+        case let .dataTooLarge(actualBytes, maximumBytes):
+            return "收藏图片副本超过大小限制（\(actualBytes) / \(maximumBytes) 字节）。"
+        case .invalidPNG:
+            return "收藏图片副本不是有效的 PNG 数据。"
+        }
+    }
+}
+
 /// Finder 持有的推荐 generation 已被历史窗口淘汰，需要从第一页重新枚举。
 public enum DiscoveryFeedStorageError: Error, Equatable, Sendable {
     case snapshotExpired
@@ -287,6 +302,7 @@ public actor AppGroupStorage {
     public static let appGroupIdentifier = "N4TQ2P9B46.group.com.wenren.Mirage"
     public static let maximumAvatarSnapshotBytes = 2 * 1024 * 1024
     public static let maximumAvatarSnapshotCount = 256
+    public static let maximumFavoriteRenditionBytes = ImageTranscoder.outputFileSize
 
     private let fileManager: FileManager
     private let baseURL: URL
@@ -297,6 +313,7 @@ public actor AppGroupStorage {
     private let discoverySnapshotsURL: URL
     private let discoveryPagesURL: URL
     private let avatarSnapshotsURL: URL
+    private let favoriteRenditionsURL: URL
     private let favoritesURL: URL
     private let discoverySnapshotURL: URL
     private let discoveryGenerationStateURL: URL
@@ -344,6 +361,10 @@ public actor AppGroupStorage {
         )
         self.avatarSnapshotsURL = canonicalURL.appendingPathComponent(
             "avatar-snapshots",
+            isDirectory: true
+        )
+        self.favoriteRenditionsURL = canonicalURL.appendingPathComponent(
+            "favorite-renditions-v1",
             isDirectory: true
         )
         self.favoritesURL = canonicalURL.appendingPathComponent("favorites.json")
@@ -413,6 +434,103 @@ public actor AppGroupStorage {
             try pruneAvatarSnapshotsUnlocked()
             return data
         }
+    }
+
+    /// 只向仍处于收藏状态、且来源允许媒体缓存的记录提交标准 PNG 副本。
+    /// 下载与转码必须在调用前完成；锁内二次确认避免取消收藏后的迟到任务重新落盘。
+    @discardableResult
+    public func commitFavoriteRenditionIfFavorited(
+        _ data: Data,
+        for record: RemoteImageRecord
+    ) throws -> Bool {
+        try validateFavoriteRendition(data)
+        return try withExclusiveFileLock(named: "favorites") {
+            let snapshot = try readFavoriteSnapshotUnlocked()
+            let storedRecord = Self.recordsByID(snapshot.records)[record.id]
+            guard snapshot.recordIDs.contains(record.id),
+                  storedRecord == record,
+                  storedRecord?.source.allowsMediaCaching == true else {
+                return false
+            }
+
+            let url = favoriteRenditionURL(id: record.id)
+            if fileManager.fileExists(atPath: url.path),
+               (try? readFavoriteRenditionUnlocked(
+                   id: record.id,
+                   maximumBytes: Self.maximumFavoriteRenditionBytes
+               )) != nil {
+                return true
+            }
+            try? fileManager.removeItem(at: url)
+            try fileManager.createDirectory(
+                at: favoriteRenditionsURL,
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+            return true
+        }
+    }
+
+    /// 读取当前收藏的本地标准 PNG；未收藏、不允许缓存或尚未生成时返回 nil。
+    public func readFavoriteRendition(
+        id: String,
+        maximumBytes: Int = AppGroupStorage.maximumFavoriteRenditionBytes
+    ) throws -> Data? {
+        guard maximumBytes > 0 else {
+            throw FavoriteRenditionStorageError.dataTooLarge(
+                actualBytes: 0,
+                maximumBytes: maximumBytes
+            )
+        }
+        return try withExclusiveFileLock(named: "favorites") {
+            let snapshot = try readFavoriteSnapshotUnlocked()
+            let storedRecord = Self.recordsByID(snapshot.records)[id]
+            guard snapshot.recordIDs.contains(id),
+                  storedRecord?.source.allowsMediaCaching == true else {
+                return nil
+            }
+            return try readFavoriteRenditionUnlocked(id: id, maximumBytes: maximumBytes)
+        }
+    }
+
+    /// 返回当前有效收藏副本的内容摘要；File Provider 用真实字节版本推进 occurrence。
+    /// 损坏文件不会出现在结果中，App 下次激活时会把它当作缺失副本重新生成。
+    public func favoriteRenditionVersions() throws -> [String: String] {
+        try withExclusiveFileLock(named: "favorites") {
+            let snapshot = try readFavoriteSnapshotUnlocked()
+            let recordsByID = Self.recordsByID(snapshot.records)
+            var versions: [String: String] = [:]
+            versions.reserveCapacity(snapshot.recordIDs.count)
+            for id in snapshot.recordIDs
+            where recordsByID[id]?.source.allowsMediaCaching == true {
+                guard let data = try? readFavoriteRenditionUnlocked(
+                    id: id,
+                    maximumBytes: Self.maximumFavoriteRenditionBytes
+                ) else { continue }
+                versions[id] = StableImageID.dataHash(data)
+            }
+            return versions
+        }
+    }
+
+    /// 单项回查只校验目标副本，避免 Finder 批量缩略图请求反复扫描全部收藏。
+    public func favoriteRenditionVersion(id: String) throws -> String? {
+        try withExclusiveFileLock(named: "favorites") {
+            let snapshot = try readFavoriteSnapshotUnlocked()
+            let storedRecord = Self.recordsByID(snapshot.records)[id]
+            guard snapshot.recordIDs.contains(id),
+                  storedRecord?.source.allowsMediaCaching == true,
+                  let data = try readFavoriteRenditionUnlocked(
+                      id: id,
+                      maximumBytes: Self.maximumFavoriteRenditionBytes
+                  ) else { return nil }
+            return StableImageID.dataHash(data)
+        }
+    }
+
+    /// App 的补齐队列只关心哪些稳定 ID 已有有效副本。
+    public func favoriteRenditionIDs() throws -> Set<String> {
+        Set(try favoriteRenditionVersions().keys)
     }
 
     /// 将一个条目的元数据写进独立 JSON，避免修改共享大文件。
@@ -929,6 +1047,9 @@ public actor AppGroupStorage {
                 try writeItem(record)
             }
             try writeFavoriteSnapshotUnlocked(snapshot)
+            for removedID in Set(current.recordIDs).subtracting(uniqueIDs) {
+                removeFavoriteRenditionUnlocked(id: removedID)
+            }
         }
     }
 
@@ -965,16 +1086,21 @@ public actor AppGroupStorage {
             let current = try readFavoriteSnapshotUnlocked()
             var ids = current.recordIDs
             var recordsByID = Self.recordsByID(current.records)
+            let removedFavorite: Bool
             if let existingIndex = ids.firstIndex(of: item.id) {
                 ids.remove(at: existingIndex)
                 recordsByID.removeValue(forKey: item.id)
+                removedFavorite = true
             } else {
                 guard let persistedItem = item.persistentFavoriteRecord() else {
                     throw FavoriteStorageError.missingGiphyIdentifier
                 }
+                // 上次进程若在索引提交后、文件清理前终止，不得把孤儿副本复用于一次新收藏。
+                removeFavoriteRenditionUnlocked(id: item.id)
                 ids.append(item.id)
                 recordsByID[item.id] = persistedItem
                 try writeItem(persistedItem)
+                removedFavorite = false
             }
             let snapshot = FavoriteSnapshot(
                 schemaVersion: Self.favoritesSchemaVersion,
@@ -982,6 +1108,9 @@ public actor AppGroupStorage {
                 records: ids.compactMap { recordsByID[$0] }
             )
             try writeFavoriteSnapshotUnlocked(snapshot)
+            if removedFavorite {
+                removeFavoriteRenditionUnlocked(id: item.id)
+            }
             return try makeLibrarySnapshot(favorites: snapshot, recentLimit: recentLimit)
         }
     }
@@ -1002,6 +1131,7 @@ public actor AppGroupStorage {
                 records: ids.compactMap { recordsByID[$0] }
             )
             try writeFavoriteSnapshotUnlocked(snapshot)
+            removeFavoriteRenditionUnlocked(id: id)
             return try makeLibrarySnapshot(favorites: snapshot, recentLimit: recentLimit)
         }
     }
@@ -1850,6 +1980,67 @@ public actor AppGroupStorage {
             throw AvatarSnapshotStorageError.invalidKey
         }
         return avatarSnapshotsURL.appendingPathComponent("\(reference.key).png", isDirectory: false)
+    }
+
+    private func readFavoriteRenditionUnlocked(
+        id: String,
+        maximumBytes: Int
+    ) throws -> Data? {
+        let url = favoriteRenditionURL(id: id)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        let expectedSize = values.fileSize ?? 0
+        guard expectedSize <= maximumBytes else {
+            throw FavoriteRenditionStorageError.dataTooLarge(
+                actualBytes: expectedSize,
+                maximumBytes: maximumBytes
+            )
+        }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        try validateFavoriteRendition(data, maximumBytes: maximumBytes)
+        return data
+    }
+
+    private func validateFavoriteRendition(
+        _ data: Data,
+        maximumBytes: Int = AppGroupStorage.maximumFavoriteRenditionBytes
+    ) throws {
+        guard data.count <= maximumBytes else {
+            throw FavoriteRenditionStorageError.dataTooLarge(
+                actualBytes: data.count,
+                maximumBytes: maximumBytes
+            )
+        }
+        let signature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        let endChunk: [UInt8] = [
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+            0xAE, 0x42, 0x60, 0x82
+        ]
+        guard data.starts(with: signature), data.suffix(endChunk.count) == Data(endChunk) else {
+            throw FavoriteRenditionStorageError.invalidPNG
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) == 1,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              image.width == ImageTranscoder.outputSize,
+              image.height == ImageTranscoder.outputSize else {
+            throw FavoriteRenditionStorageError.invalidPNG
+        }
+    }
+
+    private func favoriteRenditionURL(id: String) -> URL {
+        favoriteRenditionsURL.appendingPathComponent(Self.fileKey(id) + ".png", isDirectory: false)
+    }
+
+    /// 清理失败只会留下不可见孤儿文件，不能把已成功提交的取消收藏回滚为失败。
+    private func removeFavoriteRenditionUnlocked(id: String) {
+        let url = favoriteRenditionURL(id: id)
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            NSLog("Mirage 收藏图片副本清理失败：%@", String(describing: error))
+        }
     }
 
     /// 动态人像不进入长期收藏；保留最近 256 份即可覆盖推荐快照、Finder 页面与最近使用。

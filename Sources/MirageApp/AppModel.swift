@@ -26,6 +26,13 @@ final class AppModel: ObservableObject {
     private var storage: AppGroupStorage?
     private var startupTask: Task<Void, Never>?
     private var providerCheckTask: Task<Void, Never>?
+    private var favoriteRenditionTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+    /// 两条串行 lane 将收藏下载限制为最多 2 路，避免连续收藏触发无界解码峰值。
+    private var favoriteRenditionLaneTails: [Task<Void, Never>?] = [nil, nil]
+    private var nextFavoriteRenditionLane = 0
+    private var favoriteRenditionSignalTask: Task<Void, Never>?
+    private var isFavoriteRenditionSignalPending = false
+    private var hasAppliedLibrarySnapshot = false
     private var latestLibraryRevision: UInt64 = 0
     private var persistedFavorites: [RemoteImageRecord] = []
     private var liveGiphyFavoritesByID: [String: RemoteImageRecord] = [:]
@@ -104,7 +111,15 @@ final class AppModel: ObservableObject {
         do {
             let snapshot = try await storage.readLibrarySnapshot()
             try Task.checkCancellation()
-            applyLibrarySnapshot(snapshot)
+            guard applyLibrarySnapshot(snapshot) else { return }
+            do {
+                try await scheduleMissingFavoriteRenditions(from: snapshot, storage: storage)
+            } catch {
+                retryPendingFavoriteRenditionSignalIfNeeded()
+                throw error
+            }
+            retryPendingFavoriteRenditionSignalIfNeeded()
+            guard snapshot.revision == latestLibraryRevision else { return }
             await refreshGiphyFavorites(for: snapshot)
         } catch is CancellationError {
             return
@@ -154,7 +169,22 @@ final class AppModel: ObservableObject {
             } else {
                 snapshot = try await storage.removeFavorite(id: record.id)
             }
-            applyLibrarySnapshot(snapshot)
+            _ = applyLibrarySnapshot(snapshot)
+            let currentFavorite = persistedFavorites.first { $0.id == record.id }
+            if currentFavorite == nil {
+                favoriteRenditionTasks.removeValue(forKey: record.id)?.task.cancel()
+                retryPendingFavoriteRenditionSignalIfNeeded()
+            } else if let currentFavorite,
+                      currentFavorite.source.allowsMediaCaching {
+                let sourceRecord = record == currentFavorite
+                    ? record
+                    : currentFavorite
+                scheduleFavoriteRendition(
+                    from: sourceRecord,
+                    for: currentFavorite,
+                    storage: storage
+                )
+            }
             do {
                 try await domainManager.signalFavoritesChanged()
             } catch {
@@ -176,9 +206,162 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 收藏关系先落盘并刷新 UI；媒体副本在后台生成，失败时保留收藏并由 Finder 按需重试。
+    private func scheduleFavoriteRendition(
+        from sourceRecord: RemoteImageRecord,
+        for favoriteRecord: RemoteImageRecord,
+        storage: AppGroupStorage
+    ) {
+        favoriteRenditionTasks.removeValue(forKey: favoriteRecord.id)?.task.cancel()
+        let token = UUID()
+        let lane = nextFavoriteRenditionLane
+        nextFavoriteRenditionLane = (nextFavoriteRenditionLane + 1) % favoriteRenditionLaneTails.count
+        let predecessor = favoriteRenditionLaneTails[lane]
+        let task = Task(priority: .utility) { [weak self, storage, sourceRecord, favoriteRecord] in
+            await predecessor?.value
+            guard !Task.isCancelled else { return }
+            let committed = await Self.persistFavoriteRendition(
+                from: sourceRecord,
+                for: favoriteRecord,
+                storage: storage
+            )
+            guard !Task.isCancelled, let self,
+                  self.favoriteRenditionTasks[favoriteRecord.id]?.token == token else { return }
+            self.favoriteRenditionTasks.removeValue(forKey: favoriteRecord.id)
+            if committed {
+                self.isFavoriteRenditionSignalPending = true
+            }
+            self.retryPendingFavoriteRenditionSignalIfNeeded()
+        }
+        favoriteRenditionLaneTails[lane] = task
+        favoriteRenditionTasks[favoriteRecord.id] = (token, task)
+    }
+
+    /// 升级后的既有收藏也会懒补齐；已缓存或正在下载的记录不会重复排队。
+    private func scheduleMissingFavoriteRenditions(
+        from snapshot: LibrarySnapshot,
+        storage: AppGroupStorage
+    ) async throws {
+        let cachedIDs = try await storage.favoriteRenditionIDs()
+        try Task.checkCancellation()
+        guard snapshot.revision == latestLibraryRevision else { return }
+        let currentFavoritesByID = Dictionary(
+            persistedFavorites.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let recentByID = Dictionary(
+            snapshot.recent.map { ($0.id, $0.image) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for record in snapshot.favorites
+        where record.source.allowsMediaCaching
+            && !cachedIDs.contains(record.id)
+            && favoriteIDs.contains(record.id)
+            && currentFavoritesByID[record.id] == record
+            && favoriteRenditionTasks[record.id] == nil {
+            let sourceRecord: RemoteImageRecord
+            if let recent = recentByID[record.id], recent.source == record.source {
+                sourceRecord = recent
+            } else {
+                sourceRecord = record
+            }
+            scheduleFavoriteRendition(
+                from: sourceRecord,
+                for: record,
+                storage: storage
+            )
+        }
+    }
+
+    /// 短 debounce 合并同批完成事件，但不等待慢任务；失败保持 pending，等待下次刷新重试。
+    private func retryPendingFavoriteRenditionSignalIfNeeded() {
+        guard isFavoriteRenditionSignalPending,
+              favoriteRenditionSignalTask == nil else { return }
+        let task = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                self?.favoriteRenditionSignalTask = nil
+                return
+            }
+            guard let self else { return }
+            // 先消费本轮 pending；若 signal 等待期间又有副本完成，新变化会重新置为 pending。
+            self.isFavoriteRenditionSignalPending = false
+            do {
+                try await self.domainManager.signalFavoritesChanged()
+                self.favoriteRenditionSignalTask = nil
+                self.retryPendingFavoriteRenditionSignalIfNeeded()
+            } catch {
+                self.isFavoriteRenditionSignalPending = true
+                self.favoriteRenditionSignalTask = nil
+                NSLog("Mirage 收藏图片副本已保存，但 Finder 刷新失败：%@", String(describing: error))
+            }
+        }
+        favoriteRenditionSignalTask = task
+    }
+
+    /// 网络与图片转码均离开 MainActor；提交前存储层会再次确认该 ID 仍处于收藏状态。
+    private nonisolated static func persistFavoriteRendition(
+        from sourceRecord: RemoteImageRecord,
+        for favoriteRecord: RemoteImageRecord,
+        storage: AppGroupStorage
+    ) async -> Bool {
+        guard sourceRecord.id == favoriteRecord.id,
+              sourceRecord.source == favoriteRecord.source,
+              favoriteRecord.source.allowsMediaCaching else { return false }
+        // 长期副本只从完整内容生成；独立缩略图地址只能用于临时预览，不能永久占用收藏副本。
+        let candidateURLs = [sourceRecord.imageURL]
+        var finalError: Error?
+
+        for url in candidateURLs {
+            do {
+                try Task.checkCancellation()
+                let sourceData: Data
+                if url.scheme == AvatarSnapshotReference.scheme,
+                   let reference = AvatarSnapshotReference(url: url),
+                   let snapshot = try await storage.readAvatarSnapshot(key: reference.key) {
+                    sourceData = snapshot
+                } else {
+                    sourceData = try await BoundedDownloader(
+                        url: url,
+                        maximumBytes: ImageTranscoder.defaultMaximumBytes,
+                        timeoutInterval: 30
+                    ).download()
+                }
+                try Task.checkCancellation()
+                let rendition = try ImageTranscoder().transcode(sourceData)
+                try Task.checkCancellation()
+                return try await storage.commitFavoriteRenditionIfFavorited(
+                    rendition,
+                    for: favoriteRecord
+                )
+            } catch is CancellationError {
+                return false
+            } catch {
+                finalError = error
+                continue
+            }
+        }
+        if let finalError {
+            NSLog(
+                "Mirage 收藏图片副本生成失败（%@）：%@",
+                favoriteRecord.id,
+                String(describing: finalError)
+            )
+        }
+        return false
+    }
+
     /// 只发布更新的资料库快照，防止较早发起但较晚恢复的任务覆盖新状态。
-    private func applyLibrarySnapshot(_ snapshot: LibrarySnapshot) {
-        guard snapshot.revision > latestLibraryRevision else { return }
+    @discardableResult
+    private func applyLibrarySnapshot(_ snapshot: LibrarySnapshot) -> Bool {
+        guard !hasAppliedLibrarySnapshot
+                || snapshot.revision >= latestLibraryRevision else { return false }
+        if hasAppliedLibrarySnapshot,
+           snapshot.revision == latestLibraryRevision {
+            return true
+        }
+        hasAppliedLibrarySnapshot = true
         latestLibraryRevision = snapshot.revision
         persistedFavorites = snapshot.favorites
         favoriteIDs = snapshot.favoriteIDs
@@ -187,6 +370,7 @@ final class AppModel: ObservableObject {
         }
         rebuildFavoritePresentation()
         recent = snapshot.recent
+        return true
     }
 
     /// GIPHY 收藏快照只有对象 ID；媒体 URL 每次启动通过官方批量接口临时恢复。

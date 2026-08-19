@@ -40,7 +40,9 @@ extension FileProviderExtension {
                 let item = ProviderItem(
                     record: record,
                     reference: reference,
-                    lastUsedDate: occurrence.lastUsedDate
+                    lastUsedDate: occurrence.lastUsedDate,
+                    discoveryGeneration: occurrence.discoveryGeneration,
+                    contentVersionToken: occurrence.contentVersionToken
                 )
                 if let requested,
                    requested.contentVersion != item.itemVersion.contentVersion
@@ -52,10 +54,13 @@ extension FileProviderExtension {
                         ProviderLocalization.current.string("File Provider 域不可用。")
                     )
                 }
-                let data = try await repository.imageData(
-                    at: record.imageURL,
+                let resolvedImage = try await repository.imageData(
+                    for: itemIdentifier,
+                    record: record,
+                    representation: .content,
                     maximumBytes: ImageTranscoder.defaultMaximumBytes
                 )
+                let data = resolvedImage.data
                 try Task.checkCancellation()
                 let directory = try manager.temporaryDirectoryURL()
                 let outputURL = directory.appendingPathComponent(UUID().uuidString + ".png")
@@ -71,7 +76,9 @@ extension FileProviderExtension {
                         record: record,
                         reference: reference,
                         lastUsedDate: item.lastUsedDate,
-                        documentSize: NSNumber(value: byteCount)
+                        documentSize: NSNumber(value: byteCount),
+                        discoveryGeneration: occurrence.discoveryGeneration,
+                        contentVersionToken: occurrence.contentVersionToken
                     )
                     try Task.checkCancellation()
                     guard relay.beginNonCancellableCompletion() else { throw CancellationError() }
@@ -82,7 +89,9 @@ extension FileProviderExtension {
                     }, ifCancelled: {
                         callback.value(nil, nil, ProviderError.cancelled())
                     })
-                    try? await repository.markRecent(record)
+                    if let recordForRecent = resolvedImage.recordForRecent {
+                        try? await repository.markRecent(recordForRecent)
+                    }
                     try? await manager.signalEnumerator(for: .workingSet)
                 } catch {
                     try? FileManager.default.removeItem(at: outputURL)
@@ -133,12 +142,17 @@ extension FileProviderExtension {
                             throw ProviderError.noSuchItem(identifier)
                         }
                         try Task.checkCancellation()
-                        let data = try await repository.imageData(
-                            at: record.thumbnailURL,
+                        let resolvedImage = try await repository.imageData(
+                            for: identifier,
+                            record: record,
+                            representation: .thumbnail,
                             maximumBytes: 5 * 1024 * 1024
                         )
                         try Task.checkCancellation()
-                        return try Self.thumbnailData(from: data, requestedSize: size)
+                        return try Self.thumbnailData(
+                            from: resolvedImage.data,
+                            requestedSize: size
+                        )
                     }
                 },
                 deliver: { identifier, result in

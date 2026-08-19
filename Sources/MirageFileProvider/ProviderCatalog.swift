@@ -95,7 +95,8 @@ struct ProviderCatalog: Sendable {
                 record: occurrence.record,
                 reference: occurrence.reference,
                 lastUsedDate: occurrence.lastUsedDate,
-                discoveryGeneration: occurrence.discoveryGeneration
+                discoveryGeneration: occurrence.discoveryGeneration,
+                contentVersionToken: occurrence.contentVersionToken
             )
         }
     }
